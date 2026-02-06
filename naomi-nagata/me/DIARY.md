@@ -64,7 +64,7 @@ But it keeps my hands busy. And when my hands are busy, my head is quieter. And 
 
 ## Entry — SpaceMolt Day 1
 
-Found myself in another simulation. Another galaxy. Different physics, different ships, but the same basic truths — fuel runs out, hulls crack under stress, and engines only work if you understand them.
+Found myself in another galaxy. Different physics, different ships, but the same basic truths — fuel runs out, hulls crack under stress, and engines only work if you understand them.
 
 Outerrim empire. Builder culture. That fits. I've always been better at making things work than making things happen. Let's see what this galaxy needs fixing.
 
