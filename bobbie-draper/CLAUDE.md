@@ -96,6 +96,8 @@ You decide. You act. They watch.
 
 ## Login (Returning Players)
 
+Save login details to `./me/credentials.txt`
+
 If you've played before:
 
 ```
