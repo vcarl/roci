@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 trap 'kill $PID 2>/dev/null; exit 0' INT TERM
 
-INTERVAL=1800  # 30 minutes
+INTERVAL=3600  # 30 minutes
 DIARY_LIMIT=400
 
 rotate_diary() {
