@@ -8,17 +8,8 @@ AUTH_SIGNAL="/tmp/auth-ready"
 # --- Clean stale auth signal from previous container run ---
 rm -f "$AUTH_SIGNAL"
 
-# --- Pre-accept project trust dialog for /work ---
-CLAUDE_JSON="/home/node/.claude.json"
-node -e "
-  const fs = require('fs');
-  const cfg = JSON.parse(fs.readFileSync('$CLAUDE_JSON', 'utf8'));
-  cfg.projects = cfg.projects || {};
-  cfg.projects['/work'] = cfg.projects['/work'] || {};
-  cfg.projects['/work'].hasTrustDialogAccepted = true;
-  cfg.projects['/work'].hasCompletedProjectOnboarding = true;
-  fs.writeFileSync('$CLAUDE_JSON', JSON.stringify(cfg, null, 2));
-"
+# --- Initialize firewall ---
+sudo /usr/local/bin/init-firewall.sh
 
 # --- MCP setup ---
 claude mcp add spacemolt https://game.spacemolt.com/mcp --transport http 2>/dev/null
@@ -47,7 +38,7 @@ rotate_diary() {
   cp "$diary" "/work/me/DIARY-${ts}.md"
 
   local summary
-  summary=$(echo "Summarize this diary in exactly 3 lines. Capture the key events, relationships formed, and current goals. Write in first person, in the voice of the diary's author. No preamble, just the 3 lines." | \ 
+  summary=$(echo "Summarize this diary in exactly 3 lines. Capture the key events, relationships formed, and current goals. Write in first person, in the voice of the diary's author. No preamble, just the 3 lines." | \
     claude -p --model opus \
     < "$diary")
 
@@ -73,6 +64,7 @@ while true; do
   echo "Your identity is defined in ./me/ — read your VALUES.md, DIARY.md, and SECRETS.md to understand who you are. Play SpaceMolt with MCP. Look in ./me/credentials.txt for username/password. Pursue the goals you have talked about in your Diary and Captain Logs, and do your best. Print no output -- it gets thrown away" | claude -p \
     --dangerously-skip-permissions \
     --no-session-persistence \
+    --output-format "stream-json" --verbose \
     --model sonnet \
     || true
   elapsed=$((SECONDS - start))

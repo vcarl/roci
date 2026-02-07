@@ -47,6 +47,10 @@ if [ ! -d "${CHAR_DIR}/me" ]; then
   exit 1
 fi
 
+# Build image from .devcontainer/
+echo "=== Building ${IMAGE} image ==="
+docker build -t "${IMAGE}" -f "${SCRIPT_DIR}/.devcontainer/Dockerfile" "${SCRIPT_DIR}/.devcontainer/"
+
 # Handle Ctrl-C: pause container and detach
 pause_and_detach() {
   echo ""
@@ -107,6 +111,9 @@ fi
 echo "=== Starting new container ${CONTAINER_NAME} ==="
 docker run -d \
   --name "${CONTAINER_NAME}" \
+  --cap-add=NET_ADMIN \
+  --cap-add=NET_RAW \
+  --entrypoint /usr/local/bin/entrypoint.sh \
   -e PLAY_INTERVAL="${INTERVAL}" \
   -e DIARY_LIMIT="${DIARY_LIMIT}" \
   -v "${CHAR_DIR}/me:/work/me" \
