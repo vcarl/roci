@@ -63,6 +63,9 @@ EOF
 }
 
 # --- Game loop ---
+SLEEP_PID=""
+trap 'kill "$SLEEP_PID" 2>/dev/null || true' USR1
+
 while true; do
   echo "--- Starting new session at $(date) ---"
   rotate_diary
@@ -75,7 +78,10 @@ while true; do
   elapsed=$((SECONDS - start))
   remaining=$((PLAY_INTERVAL - elapsed))
   if [ "$remaining" -gt 0 ]; then
-    echo "=== Next session in ${remaining}s ==="
-    sleep "$remaining"
+    echo "=== Next session in ${remaining}s (press 'r' to start now) ==="
+    sleep "$remaining" &
+    SLEEP_PID=$!
+    wait "$SLEEP_PID" 2>/dev/null || true
+    SLEEP_PID=""
   fi
 done

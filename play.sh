@@ -56,9 +56,30 @@ pause_and_detach() {
   exit 0
 }
 
+LOG_PID=""
+
 follow_logs() {
-  trap pause_and_detach INT TERM
-  docker logs -f "${CONTAINER_NAME}"
+  docker logs -f "${CONTAINER_NAME}" &
+  LOG_PID=$!
+
+  trap 'kill "$LOG_PID" 2>/dev/null || true; wait "$LOG_PID" 2>/dev/null || true; pause_and_detach' INT TERM
+
+  echo "=== Press 'r' to restart session, Ctrl-C to pause ==="
+
+  while kill -0 "$LOG_PID" 2>/dev/null; do
+    if read -t 1 -n 1 key 2>/dev/null; then
+      case "$key" in
+        r|R)
+          echo ""
+          echo "=== Waking up — starting next session ==="
+          docker kill -s USR1 "${CONTAINER_NAME}" 2>/dev/null || true
+          ;;
+      esac
+    fi
+  done
+
+  kill "$LOG_PID" 2>/dev/null || true
+  wait "$LOG_PID" 2>/dev/null || true
 }
 
 # Check if container already exists
