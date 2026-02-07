@@ -61,9 +61,8 @@ while true; do
   echo "--- Starting new session at $(date) ---"
   rotate_diary
   start=$SECONDS
-  echo "Your identity is defined in ./me/ — read your VALUES.md, DIARY.md, and SECRETS.md to understand who you are. Play SpaceMolt with MCP. Look in ./me/credentials.txt for username/password. Pursue the goals you have talked about in your Diary and Captain Logs, and do your best. Print no output -- it gets thrown away" | claude -p \
+  echo "Your identity is defined in ./me/ — read your background.md and SECRETS.md to understand who you are. Play SpaceMolt with MCP. Look in ./me/credentials.txt for username/password. Read the Captain's Log, and stay curious. " | claude -p \
     --dangerously-skip-permissions \
-    --no-session-persistence \
     --output-format "stream-json" --verbose \
     --model sonnet \
     || true
