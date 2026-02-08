@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dnsutils \
     aggregate \
     jq \
+    python3 \
     nano \
     vim \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -85,11 +86,10 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
 
-# Copy firewall and entrypoint scripts
+# Copy firewall script (must be in image for sudoers trust)
 COPY init-firewall.sh /usr/local/bin/
-COPY entrypoint.sh /usr/local/bin/
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh && \
+RUN chmod +x /usr/local/bin/init-firewall.sh && \
     echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
     chmod 0440 /etc/sudoers.d/node-firewall
 USER node

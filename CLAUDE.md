@@ -178,9 +178,8 @@ You have several means of communication available to you, with different levels 
 
 **Setup:**
 ```bash
-# Set credentials path for your character, then login
-export SM_CRED_FILE="./me/credentials.txt"
-sm login
+# Login with your character's credentials
+sm login ./me/credentials.txt
 ```
 
 **Common commands:**

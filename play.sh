@@ -20,7 +20,7 @@ CHAR_DIR="${SCRIPT_DIR}/${CHARACTER}"
 CONTAINER_NAME="spacemolt-${CHARACTER}"
 IMAGE="spacemolt-player"
 INTERVAL=6000
-DIARY_LIMIT=400
+DIARY_LIMIT=200
 
 # Parse remaining args
 while [ $# -gt 0 ]; do
@@ -113,15 +113,17 @@ docker run -d \
   --name "${CONTAINER_NAME}" \
   --cap-add=NET_ADMIN \
   --cap-add=NET_RAW \
-  --entrypoint /usr/local/bin/entrypoint.sh \
   -e PLAY_INTERVAL="${INTERVAL}" \
   -e DIARY_LIMIT="${DIARY_LIMIT}" \
   -v "${CHAR_DIR}/me:/work/me:consistent" \
-  -v "${CHAR_DIR}/workspace:/work/workspace:consistent" \
+  -v "${SCRIPT_DIR}/workspace:/work/workspace:consistent" \
   -v "${SCRIPT_DIR}/docs:/work/docs:rw,consistent" \
   -v "${SCRIPT_DIR}/CLAUDE.md:/work/CLAUDE.md:ro,cached" \
   -v "${SCRIPT_DIR}/.claude:/work/.claude:ro,cached" \
-  "${IMAGE}"
+  -v "${SCRIPT_DIR}/.devcontainer/entrypoint.sh:/work/.devcontainer/entrypoint.sh:ro,consistent" \
+  -v "${SCRIPT_DIR}/.devcontainer/gather-context.sh:/work/.devcontainer/gather-context.sh:ro,cached" \
+  "${IMAGE}" \
+  bash /work/.devcontainer/entrypoint.sh
 
 echo "=== Container started. Opening interactive auth session ==="
 echo "=== Complete the OAuth login in your browser, then exit claude (Ctrl-C or /exit) ==="
