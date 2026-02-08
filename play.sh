@@ -16,7 +16,7 @@ CHARACTER="$1"
 shift
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CHAR_DIR="${SCRIPT_DIR}/${CHARACTER}"
+CHAR_DIR="${SCRIPT_DIR}/players/${CHARACTER}"
 CONTAINER_NAME="spacemolt-${CHARACTER}"
 IMAGE="spacemolt-player"
 INTERVAL=6000
@@ -116,7 +116,7 @@ docker run -d \
   -e PLAY_INTERVAL="${INTERVAL}" \
   -e DIARY_LIMIT="${DIARY_LIMIT}" \
   -v "${CHAR_DIR}/me:/work/me:consistent" \
-  -v "${SCRIPT_DIR}/workspace:/work/workspace:consistent" \
+  -v "${SCRIPT_DIR}/client:/work/workspace/bin:consistent" \
   -v "${SCRIPT_DIR}/docs:/work/docs:rw,consistent" \
   -v "${SCRIPT_DIR}/CLAUDE.md:/work/CLAUDE.md:ro,cached" \
   -v "${SCRIPT_DIR}/.claude:/work/.claude:ro,cached" \

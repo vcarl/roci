@@ -49,62 +49,20 @@ if [ "${1:-}" = "--session" ]; then
 
   rotate_diary
 
-  # --- Phase 0: Gather context via REST API (no LLM tokens) ---
-  echo "=== Phase 0: Gathering game context via API ==="
+  # --- Gather context via REST API (no LLM tokens) ---
   BRIEFING_FILE=$(mktemp /tmp/briefing.XXXXXX)
   if bash /work/.devcontainer/gather-context.sh /work/me/credentials.txt > "$BRIEFING_FILE" 2>/dev/null; then
-    echo "=== Phase 0 complete: briefing ready ==="
+    echo "=== Briefing ==="
+    cat "$BRIEFING_FILE"
+    echo "================"
   else
-    echo "=== Phase 0 failed, falling back to minimal briefing ==="
+    echo "=== Briefing failed, falling back to minimal ==="
     echo "# Session Briefing (API unavailable)" > "$BRIEFING_FILE"
     echo "Login with credentials from ./me/credentials.txt" >> "$BRIEFING_FILE"
   fi
 
-  # --- Phase 1: Opus plans the session (no tools, pure prompt) ---
-  echo "=== Phase 1: Opus planning session ==="
-  PLAN_INPUT=$(mktemp /tmp/plan-input.XXXXXX)
-  {
-    # Strip session IDs from briefing — Opus doesn't need them and they
-    # cause it to waste planning effort on auth/login steps
-    sed 's/Session: [a-f0-9]*/Session: [active]/' "$BRIEFING_FILE"
-    echo ""
-    echo "---"
-    echo "## Character Identity"
-    cat /work/me/background.md
-    echo ""
-    echo "---"
-    echo "## Character Secrets"
-    cat /work/me/SECRETS.md
-  } > "$PLAN_INPUT"
-
-  PLAN=$(claude -p --model opus \
-    "You are planning a play session for a SpaceMolt agent.
-The above contains: a game state briefing (from API), your character
-background, and your secrets/motivations.
-
-Plan a single goal for this session, where the player exits the session after achieving it. Emphasize what is known from the forum, and prioritize using and expanding knowledge first. We may need to achieve intermediate goals before we can pursue that knowledge." \
-    < "$PLAN_INPUT" 2>/dev/null || echo "Plan generation failed. Play freely based on your identity and goals.")
-
-  echo "=== Phase 1 complete: session plan ready ==="
-  rm -f "$PLAN_INPUT"
-
-  echo ""
-  echo "╔══════════════════════════════════════════════════════════╗"
-  echo "║                    SESSION BRIEFING                     ║"
-  echo "╚══════════════════════════════════════════════════════════╝"
-  cat "$BRIEFING_FILE"
-  echo ""
-  echo "╔══════════════════════════════════════════════════════════╗"
-  echo "║                     SESSION PLAN                        ║"
-  echo "╚══════════════════════════════════════════════════════════╝"
-  echo "$PLAN"
-  echo ""
-  echo "════════════════════════════════════════════════════════════"
-  echo ""
-
-  # --- Phase 2: Sonnet executes (full MCP tool access) ---
-  echo "=== Phase 2: Sonnet executing session plan ==="
-  PHASE2_PROMPT=$(cat <<PROMPT
+  # --- Start the agent ---
+  PROMPT=$(cat <<PROMPT
 Your identity is defined in ./me/ — read background.md and SECRETS.md.
 Login credentials are in ./me/credentials.txt.
 
@@ -130,17 +88,12 @@ Here is your session briefing (gathered from the API):
 
 $(cat "$BRIEFING_FILE")
 
-Here is your session plan from command:
-
-$PLAN
-
-Execute this plan. Play SpaceMolt with MCP tools and the sm CLI.
-Update your diary (./me/DIARY.md) before the session ends — maintain the 3 sections: Beliefs, Accomplishments, Recent Actions.
+Play SpaceMolt. Update your diary (./me/DIARY.md) before the session ends.
 PROMPT
 )
   rm -f "$BRIEFING_FILE"
 
-  echo "$PHASE2_PROMPT" | claude -p \
+  echo "$PROMPT" | claude -p \
     --dangerously-skip-permissions \
     --output-format stream-json --verbose \
     --model sonnet
