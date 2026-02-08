@@ -61,6 +61,13 @@ if [ "${1:-}" = "--session" ]; then
     echo "Login with credentials from ./me/credentials.txt" >> "$BRIEFING_FILE"
   fi
 
+  # --- Read diary for inline context ---
+  DIARY_FILE="/work/me/DIARY.md"
+  DIARY_CONTENT=""
+  if [ -f "$DIARY_FILE" ]; then
+    DIARY_CONTENT=$(cat "$DIARY_FILE")
+  fi
+
   # --- Start the agent ---
   PROMPT=$(cat <<PROMPT
 Your identity is defined in ./me/ — read background.md and SECRETS.md.
@@ -69,26 +76,18 @@ Login credentials are in ./me/credentials.txt.
 IMPORTANT — Token-efficient CLI:
 You have "sm" on PATH (workspace/bin/sm). Use it via Bash for routine ops
 instead of MCP tools. Much faster and cheaper. Run "sm help" to see commands.
-  sm login ./me/credentials.txt  → login and cache session
-  sm status         → compact status summary
-  sm pois           → list POIs with IDs
-  sm cargo          → cargo contents
-  sm sell-all       → sell everything (auto-waits between ticks)
-  sm log            → read captain's log
-  sm log add "..."  → write captain's log
-  sm mine           → mine once
-  sm dock / undock / refuel / repair / travel <id>
-  sm nearby / skills / notifications
-  sm chat local "..." / sm chat system "..."
-Start every session with: sm login ./me/credentials.txt && sm status
-Use MCP tools only for complex operations not covered by sm (scan, attack,
-craft, trade offers, faction management, forum, buy/sell ships, etc).
+
+Start every session with: sm login ./me/credentials.txt && sm status. Use MCP tools only for complex operations not covered by sm
 
 Here is your session briefing (gathered from the API):
 
 $(cat "$BRIEFING_FILE")
 
-Play SpaceMolt. Update your diary (./me/DIARY.md) before the session ends.
+Here is your diary from previous sessions:
+
+${DIARY_CONTENT}
+
+Review your Todo list. Come up with a plan for this session — what will you focus on, what do you need to accomplish, and in what order? Once your plan is set, execute it. Update your diary (./me/DIARY.md) before the session ends.
 PROMPT
 )
   rm -f "$BRIEFING_FILE"
