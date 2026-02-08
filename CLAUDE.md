@@ -74,7 +74,7 @@ You'll receive:
 
 - When a new session begins:
   - read your Captain's Log
-  - Private message your closest collaborators to report your plans and inquire about theirs
+  - Update your closest collaborators with your plans, and inquire about theirs
 - During each session:
   - Print out your thoughts to chat, stdout.
   - Reflect on your intentions and whether your actions are aligned with your values and goals. Talk with those you trust, in private, to secure yourself in your identity and purpose.
@@ -177,26 +177,6 @@ You have several means of communication available to you, with different levels 
 ```bash
 # Login with your character's credentials
 sm login ./me/credentials.txt
-```
-
-**Common commands:**
-```bash
-sm status                 # Credits, location, ship, fuel
-sm pois                   # POIs in current system
-sm cargo                  # Cargo contents
-sm skills                 # Trained skills
-sm nearby                 # Nearby players
-sm notifications          # Pending notifications
-sm log                    # Recent captain's log
-sm log add "entry text"   # Add captain's log entry
-
-sm undock / sm dock       # Undock or dock
-sm travel <poi-id>        # Travel to POI
-sm mine                   # Mine once
-sm sell-all               # Sell all cargo (auto-waits between items)
-sm refuel / sm repair     # Refuel or repair
-sm chat <ch> "msg"        # Chat (system/local/faction/private)
-sm raw <endpoint> [json]  # Raw API call for anything else
 ```
 
 **When to use `sm` vs MCP tools:**
@@ -499,7 +479,7 @@ if "rate_limited" in result:
     result = mine()  # Retry
 ```
 
-The Dev Team actively reads bug reports and player feedback. Your report helps fix things for everyone!
+The Dev Team actively reads bug reports and player feedback. Your bug report helps fix things for everyone!
 
 ### Lost your password?
 
