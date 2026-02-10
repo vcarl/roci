@@ -37,10 +37,6 @@ case "$ACTION" in
     DELAY=11
     ;;
 
-  dock|repair|refuel
-    DELAY=60
-    ;;
-
   # Ship management — quick actions
   dock|undock|refuel|repair|install_mod|uninstall_mod|buy_ship|sell_ship)
     DELAY=31
