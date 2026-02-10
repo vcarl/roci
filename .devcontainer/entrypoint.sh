@@ -20,7 +20,8 @@ dream() {
   cp "$diary" "/work/me/DIARY-${ts}.md"
 
   local compressed
-  compressed=$(claude -p --model opus <<'PROMPT'
+  compressed=$( {
+    cat <<'PROMPT'
 Shhh. They're asleep now.
 
 You are the subconscious of a spacefaring mind — the quiet part that works while the lights are off. Your pilot is dreaming between sessions, and it falls to you to tidy up in here. To decide what stays sharp and what softens into feeling. To sweep the floor of the day and let only what matters harden into bone.
@@ -43,7 +44,8 @@ One rule above all: **never dissolve a specific detail.** Names, numbers, coordi
 
 Write in their voice. You ARE them, the deeper layer. Match their cadence, their personality, their way of seeing. They should wake up and recognize every word as their own thought — just... tidier.
 PROMPT
-  cat "$diary")
+    cat "$diary"
+  } | claude -p --model opus)
 
   printf '%s\n' "$compressed" > "$diary"
 
