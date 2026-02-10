@@ -116,18 +116,20 @@ docker run -d \
   -e PLAY_INTERVAL="${INTERVAL}" \
   -e DIARY_LIMIT="${DIARY_LIMIT}" \
   -v "${CHAR_DIR}/me:/work/me:consistent" \
-  -v "${SCRIPT_DIR}/client:/work/workspace/bin:consistent" \
+  -v "${CHAR_DIR}/workspace:/work/workspace:consistent" \
   -v "${SCRIPT_DIR}/docs:/work/docs:rw,consistent" \
   -v "${SCRIPT_DIR}/CLAUDE.md:/work/CLAUDE.md:ro,cached" \
   -v "${SCRIPT_DIR}/.claude:/work/.claude:ro,cached" \
-  -v "${SCRIPT_DIR}/.devcontainer/entrypoint.sh:/work/.devcontainer/entrypoint.sh:ro,consistent" \
-  -v "${SCRIPT_DIR}/.devcontainer/gather-context.sh:/work/.devcontainer/gather-context.sh:ro,cached" \
+  -v "${SCRIPT_DIR}/.devcontainer:/work/.devcontainer:ro,cached" \
   "${IMAGE}" \
   bash /work/.devcontainer/entrypoint.sh
 
-echo "=== Container started. Opening interactive auth session ==="
-echo "=== Complete the OAuth login in your browser, then exit claude (Ctrl-C or /exit) ==="
-docker exec -it "${CONTAINER_NAME}" sh -c 'claude && touch /tmp/auth-ready'
-
-echo "=== Auth complete. Following game logs (Ctrl-C to pause) ==="
-follow_logs
+echo "=== Container started ==="
+echo "=== Run this command to authenticate, then exit claude (Ctrl-C or /exit): ==="
+echo ""
+echo "  docker exec -it ${CONTAINER_NAME} sh -c 'claude && touch /tmp/auth-ready'"
+echo ""
+echo "=== Then run this to follow game logs: ==="
+echo ""
+echo "  ./play.sh ${CHARACTER}"
+echo ""

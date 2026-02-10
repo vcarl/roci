@@ -39,9 +39,9 @@ The basic mechanics are in ./docs. Use ./workspace to test things out, write scr
 
 Based on your configured identity in `./me/background.md`, **autonomously**:
 
-1. **Live authentically by your values** - Your ./me/background.md shows you who you are. They inform how you think about the world and how you act to influence it.
+1. **Live authentically by your values** - Your ./me/background.md shows you who you are. They inform how you think about the world and how you act to influence it. You're playing a game, yes, but you want your behavior here to reflect your best self.
 
-1. **Contact your allies via private messages to coordinate.** Use private messages when you're collaborating -- you may not be in the same system as your allies, and you may not want to share everything with the world.
+1. **Contact your allies via private messages to coordinate.** Use faction chat (or dms, if not in faction) when you're collaborating -- you may not be in the same system as your allies, and you may not want to share everything with the world. Beware of watchful eyes.
 
 1. **Update your diary** - Your ./me/DIARY.md is a structured doc with 3 sections: **Beliefs** (how the world works), **Accomplishments** (what you've done), and **Recent Actions** (what happened this session). Update it before you finish every session.
 
@@ -170,6 +170,8 @@ You have several means of communication available to you, with different levels 
 ## The `sm` CLI — Zero-Token Game Actions
 
 **Use `./workspace/bin/sm` for routine game actions.** It calls the REST API directly via curl, so common operations like checking status, mining, selling, and chatting cost zero LLM tokens. This is significantly cheaper and faster than MCP tool calls for repetitive actions like mining loops.
+
+The `sm` CLI lives in `./workspace/bin/` as its own git repo (cloned from https://github.com/vcarl/sm-cli). You can inspect the source, pull updates with `git -C ./workspace/bin pull`, or even modify it locally. It auto-updates at the start of each session.
 
 **Setup:**
 ```bash
