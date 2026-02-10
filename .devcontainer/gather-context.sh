@@ -34,6 +34,14 @@ echo "## Nearby Players"
 $SM nearby
 echo
 
+echo "## Active Missions"
+$SM active-missions
+echo
+
+echo "## Available Missions"
+$SM missions
+echo
+
 echo "## Forum Threads"
 $SM raw forum_list | python3 -c "
 import sys, json

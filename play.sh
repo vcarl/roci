@@ -115,10 +115,10 @@ docker run -d \
   --cap-add=NET_RAW \
   -e PLAY_INTERVAL="${INTERVAL}" \
   -e DIARY_LIMIT="${DIARY_LIMIT}" \
-  -v "${CHAR_DIR}/me:/work/me:consistent" \
+  -v "${CHAR_DIR}:/work:consistent" \
   -v "${SCRIPT_DIR}/client:/work/workspace/bin:consistent" \
   -v "${SCRIPT_DIR}/docs:/work/docs:rw,consistent" \
-  -v "${SCRIPT_DIR}/CLAUDE.md:/work/CLAUDE.md:ro,cached" \
+  -v "${SCRIPT_DIR}/CLAUDE.md:/work/CLAUDE.md:ro,consistent" \
   -v "${SCRIPT_DIR}/.claude:/work/.claude:ro,cached" \
   -v "${SCRIPT_DIR}/.devcontainer/entrypoint.sh:/work/.devcontainer/entrypoint.sh:ro,consistent" \
   -v "${SCRIPT_DIR}/.devcontainer/gather-context.sh:/work/.devcontainer/gather-context.sh:ro,cached" \
