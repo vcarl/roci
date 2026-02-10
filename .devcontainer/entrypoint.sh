@@ -56,12 +56,10 @@ if [ "${1:-}" = "--session" ]; then
   PROMPT="${PROMPT//{{DIARY}}/${DIARY_CONTENT}}"
   rm -f "$BRIEFING_FILE"
 
-  echo "$PROMPT" | claude -p \
+  exec claude -p \
     --dangerously-skip-permissions \
     --output-format stream-json --verbose \
-    --model sonnet
-
-  exit 0
+    --model sonnet <<< "$PROMPT"
 fi
 
 # ── Setup mode (default): runs once as container CMD ──────────────────
