@@ -11,20 +11,15 @@ dream() {
 
   local lines
   lines=$(wc -l < "$diary")
-  [ "$lines" -le "$DIARY_LIMIT" ] && return 0
 
   echo "=== Dreaming (diary at ${lines} lines) ==="
 
-  local ts
-  ts=$(date +%Y%m%d-%H%M%S)
-  cp "$diary" "/work/me/DIARY-${ts}.md"
-
   local compressed
-  compressed=$(cat /work/.devcontainer/dream-prompt.txt "$diary" | claude -p --model opus)
+  compressed=$(cat /work/.devcontainer/dream-prompt.txt /work/me/background.md /work/me/SECRETS.md "$diary" | claude -p --model opus --system-prompt "You are a diary compressor. Output only the compressed diary text. Do not use tools or take any other actions.")
 
   printf '%s\n' "$compressed" > "$diary"
 
-  echo "=== Dream complete, archived original to DIARY-${ts}.md ==="
+  echo "=== Dream complete ==="
 }
 
 # ── Session mode: run one session cycle and exit ──────────────────────
