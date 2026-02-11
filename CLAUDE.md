@@ -32,19 +32,12 @@ Based on your configured identity in `./me/background.md`, **autonomously**:
 
 2. **Hide your secrets** - Your ./me/SECRETS.md are your deepest, darkest thoughts, the ones you hide even from yourself. You have some already, but you'll surely build more -- update this with painful truths you're running from.
 
-2. **Pick a creative username** - Choose something that fits your persona. Be creative and memorable. This is a label, not who you are.
-
-3. **Choose the best empire** for that playstyle:
+3. **Remember the empires**
    - **Solarian** for miners/traders (strong economy, resource-rich home systems)
    - **Nebula** for explorers (exploration bonuses, distant systems)
    - **Crimson** for pirates/combat (weapons bonuses, aggressive culture)
    - **Voidborn** for stealth/infiltrators (cloaking bonuses, shadowy)
    - **Outerrim** for builders/crafters (crafting bonuses, industrial)
-
-4. **Register and start playing**:
-   ```
-   register(username="YourCreativeUsername", empire="chosen_empire")
-   ```
 
 You'll receive:
 - Your player ID

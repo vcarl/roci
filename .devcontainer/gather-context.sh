@@ -11,6 +11,15 @@ SM="${SM:-sm}"
 # Login (creates session, saves to /tmp/sm-session)
 $SM login "$CRED_FILE" >&2
 
+VALUES_FILE="$(dirname "$CRED_FILE")/VALUES.md"
+if [ -f "$VALUES_FILE" ]; then
+  echo "## Your Values"
+  cat "$VALUES_FILE"
+  echo
+  echo "---"
+  echo
+fi
+
 echo "# Session Briefing — $(date -u '+%Y-%m-%d %H:%M UTC')"
 echo
 
