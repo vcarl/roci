@@ -115,6 +115,7 @@ if docker ps -aq -f "name=^${CONTAINER_NAME}$" | grep -q .; then
 fi
 
 # Start new container
+mkdir -p "${CHAR_DIR}/logs"
 echo "=== Starting new container ${CONTAINER_NAME} ==="
 docker run -d \
   --name "${CONTAINER_NAME}" \
@@ -129,6 +130,7 @@ docker run -d \
   -v "${SCRIPT_DIR}/.claude:/work/.claude:ro,cached" \
   -v "${SCRIPT_DIR}/.devcontainer:/opt/devcontainer:ro,cached" \
   -v "${SCRIPT_DIR}/harness:/opt/harness:ro,cached" \
+  -v "${CHAR_DIR}/logs:/opt/logs:consistent" \
   "${IMAGE}" \
   bash /opt/devcontainer/entrypoint.sh
 

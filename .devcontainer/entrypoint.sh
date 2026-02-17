@@ -39,10 +39,11 @@ if [ "${1:-}" = "--session" ]; then
   PROMPT="${PROMPT//{{DIARY}}/${DIARY_CONTENT}}"
   rm -f "$BRIEFING_FILE"
 
-  exec claude -p \
+  claude -p \
     --dangerously-skip-permissions \
     --output-format stream-json --verbose \
-    --model sonnet <<< "$PROMPT"
+    --model sonnet <<< "$PROMPT" \
+    2>&1 | python3 -u /opt/devcontainer/stream-demux.py /opt/logs
 fi
 
 # ── Setup mode (default): runs once as container CMD ──────────────────
