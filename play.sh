@@ -6,7 +6,8 @@ usage() {
   echo ""
   echo "  ./play.sh jim-holden              Start or attach to game session"
   echo "  ./play.sh jim-holden --interval 60  Start with custom interval"
-  echo "  ./play.sh jim-holden stop          Stop and remove container"
+  echo "  ./play.sh jim-holden stop          Stop container (preserves filesystem)"
+  echo "  ./play.sh jim-holden destroy       Stop and remove container"
   exit 1
 }
 
@@ -27,6 +28,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     stop)
       echo "=== Stopping ${CONTAINER_NAME} ==="
+      docker stop "${CONTAINER_NAME}" 2>/dev/null || true
+      echo "=== Stopped (container preserved). Use 'destroy' to remove. ==="
+      exit 0
+      ;;
+    destroy)
+      echo "=== Destroying ${CONTAINER_NAME} ==="
       docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
       echo "=== Removed ==="
       exit 0
