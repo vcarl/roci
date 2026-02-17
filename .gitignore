@@ -1,3 +1,4 @@
 .ds_store
 __pycache__/
 players/*/workspace/bin/
+players/*/sm

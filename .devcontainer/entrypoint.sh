@@ -96,7 +96,7 @@ if [ "${1:-}" = "--session" ]; then
   exec claude -p \
     --dangerously-skip-permissions \
     --output-format stream-json --verbose \
-    --model opus <<< "$PROMPT"
+    --model sonnet <<< "$PROMPT"
 fi
 
 # ── Setup mode (default): runs once as container CMD ──────────────────
