@@ -62,10 +62,46 @@ def main():
                 elif block_type == "tool_use":
                     name = block.get("name", "?")
                     inp = block.get("input", {})
-                    inp_str = json.dumps(inp, indent=2)
+                    if name == "Bash":
+                        label = inp.get("command", json.dumps(inp))
+                    elif name == "Read":
+                        label = inp.get("file_path", json.dumps(inp))
+                    elif name == "Edit":
+                        label = inp.get("file_path", json.dumps(inp))
+                    elif name == "Write":
+                        label = inp.get("file_path", json.dumps(inp))
+                    elif name == "Grep":
+                        label = f'{inp.get("pattern", "")} {inp.get("path", "")}'.strip()
+                    elif name == "Glob":
+                        label = inp.get("pattern", json.dumps(inp))
+                    else:
+                        label = truncate(json.dumps(inp), 200)
 
-                    thoughts.write(f"\n\n[{ts()}] >>> {name}\n{truncate(inp_str, 300)}\n\n")
+                    thoughts.write(f"\n\n[{ts()}] >>> {name}: {label}\n")
                     thoughts.flush()
+
+        # Tool results come as type "user" with tool_use_result
+        elif msg_type == "user":
+            result = obj.get("tool_use_result", None)
+            if result is None:
+                continue
+
+            if isinstance(result, str):
+                content = result
+            elif isinstance(result, dict):
+                content = result.get("stdout", "") or result.get("content", "")
+                stderr = result.get("stderr", "")
+                if stderr:
+                    content += f"\nSTDERR: {stderr}"
+            else:
+                content = str(result)
+
+            lines = content.split("\n")
+            if len(lines) > 40:
+                content = "\n".join(lines[:40]) + f"\n... ({len(lines) - 40} more lines)"
+
+            thoughts.write(f"{content}\n\n")
+            thoughts.flush()
 
         elif msg_type == "result":
             thoughts.write(f"\n\n[{ts()}] === session complete ===\n")
