@@ -127,17 +127,12 @@ docker run -d \
   -v "${SCRIPT_DIR}/docs:/work/docs:rw,consistent" \
   -v "${SCRIPT_DIR}/CLAUDE.md:/work/CLAUDE.md:ro,cached" \
   -v "${SCRIPT_DIR}/.claude:/work/.claude:ro,cached" \
-  -v "${SCRIPT_DIR}/.devcontainer:/work/.devcontainer:ro,cached" \
-  -v "${SCRIPT_DIR}/harness:/work/harness:ro,cached" \
+  -v "${SCRIPT_DIR}/.devcontainer:/opt/devcontainer:ro,cached" \
+  -v "${SCRIPT_DIR}/harness:/opt/harness:ro,cached" \
   "${IMAGE}" \
-  bash /work/.devcontainer/entrypoint.sh
+  bash /opt/devcontainer/entrypoint.sh
 
-echo "=== Container started ==="
-echo "=== Run this command to authenticate, then exit claude (Ctrl-C or /exit): ==="
+echo "=== Container started. Authenticate, then /exit: ==="
 echo ""
-echo "  docker exec -it ${CONTAINER_NAME} sh -c 'claude && touch /tmp/auth-ready'"
-echo ""
-echo "=== Then run this to follow game logs: ==="
-echo ""
-echo "  ./play.sh ${CHARACTER}"
+echo "docker exec -it ${CONTAINER_NAME} sh -c 'claude && touch /tmp/auth-ready' && ./play.sh ${CHARACTER}"
 echo ""

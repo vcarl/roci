@@ -76,7 +76,7 @@ export function buildSessionPrompt(options: {
 }
 
 /**
- * Reads the credentials file in spacemolt's format (key=value lines).
+ * Reads the credentials file ("Username: x\nPassword: y" format).
  */
 export function parseCredentialsFile(path: string): { username: string; password: string } | null {
 	if (!existsSync(path)) return null;
@@ -85,10 +85,10 @@ export function parseCredentialsFile(path: string): { username: string; password
 	for (const line of content.split("\n")) {
 		const trimmed = line.trim();
 		if (!trimmed || trimmed.startsWith("#")) continue;
-		const eqIdx = trimmed.indexOf("=");
-		if (eqIdx === -1) continue;
-		const key = trimmed.slice(0, eqIdx).trim();
-		const value = trimmed.slice(eqIdx + 1).trim();
+		const colonIdx = trimmed.indexOf(":");
+		if (colonIdx === -1) continue;
+		const key = trimmed.slice(0, colonIdx).trim().toLowerCase();
+		const value = trimmed.slice(colonIdx + 1).trim();
 		creds[key] = value;
 	}
 	if (creds.username && creds.password) {

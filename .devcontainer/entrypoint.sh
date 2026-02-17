@@ -6,28 +6,22 @@ DIARY_LIMIT="${DIARY_LIMIT:-80}"
 
 # ── Session mode: run one session cycle and exit ──────────────────────
 if [ "${1:-}" = "--session" ]; then
-  export PATH="/work/workspace/bin:${PATH}"
+  export PATH="/home/node/.bun/bin:/work/workspace/bin:${PATH}"
 
   # --- Ensure sm-cli is up to date ---
   SM_CLI_DIR="/work/workspace/bin"
   if [ -d "$SM_CLI_DIR/.git" ]; then
     git -C "$SM_CLI_DIR" pull --ff-only 2>/dev/null || true
-  elif [ -d "$SM_CLI_DIR" ]; then
-    # Directory exists but isn't a git repo — init and pull
-    git -C "$SM_CLI_DIR" init
-    git -C "$SM_CLI_DIR" remote add origin https://github.com/vcarl/sm-cli.git
-    git -C "$SM_CLI_DIR" fetch origin main 2>/dev/null || true
-    git -C "$SM_CLI_DIR" reset origin/main 2>/dev/null || true
-  else
-    git clone https://github.com/vcarl/sm-cli.git "$SM_CLI_DIR"
+  elif [ ! -x "$SM_CLI_DIR/sm" ]; then
+    git clone https://github.com/vcarl/sm-cli.git "$SM_CLI_DIR" 2>/dev/null || true
   fi
 
   # --- Dream: compress diary between sessions (TypeScript harness) ---
-  bun run /work/harness/src/dream.ts /work/me/credentials.txt --diary-limit "$DIARY_LIMIT"
+  bun run /opt/harness/src/dream.ts /work/me/credentials.txt --diary-limit "$DIARY_LIMIT"
 
   # --- Gather context via REST API (TypeScript harness, no LLM tokens) ---
   BRIEFING_FILE=$(mktemp /tmp/briefing.XXXXXX)
-  bun run /work/harness/src/gather-context.ts /work/me/credentials.txt > "$BRIEFING_FILE"
+  bun run /opt/harness/src/gather-context.ts /work/me/credentials.txt > "$BRIEFING_FILE"
   echo "=== Briefing ==="
   cat "$BRIEFING_FILE"
   echo "================"
@@ -40,7 +34,7 @@ if [ "${1:-}" = "--session" ]; then
   fi
 
   # --- Build session prompt from template ---
-  PROMPT=$(</work/.devcontainer/session-prompt.txt)
+  PROMPT=$(</opt/devcontainer/session-prompt.txt)
   PROMPT="${PROMPT//{{BRIEFING}}/$(cat "$BRIEFING_FILE")}"
   PROMPT="${PROMPT//{{DIARY}}/${DIARY_CONTENT}}"
   rm -f "$BRIEFING_FILE"
@@ -65,7 +59,6 @@ export PATH="/work/workspace/bin:${PATH}"
 
 # --- Wait for auth ---
 echo "=== Waiting for authentication ==="
-echo "Run 'docker exec -it <container> sh -c \"claude && touch /tmp/auth-ready\"' to authenticate"
 while [ ! -f "$AUTH_SIGNAL" ]; do
   sleep 2
 done
@@ -80,7 +73,7 @@ while true; do
   echo "--- Starting new session at $(date) ---"
   start=$SECONDS
 
-  bash /work/.devcontainer/entrypoint.sh --session &
+  bash /opt/devcontainer/entrypoint.sh --session &
   WORK_PID=$!
   wait "$WORK_PID" 2>/dev/null || true
   WORK_PID=""

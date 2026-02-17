@@ -84,16 +84,8 @@ async function runNightmare(
 	console.error(`=== Nightmare (secrets at ${secretsLines} lines) ===`);
 
 	// Build input: nightmare prompt + background + secrets
-	const nightmarePromptPath = join(meDir, "..", "..", ".devcontainer", "nightmare-prompt.txt");
-	// Also check /work/.devcontainer for container context
-	const containerPromptPath = "/work/.devcontainer/nightmare-prompt.txt";
-	const promptPath = existsSync(nightmarePromptPath)
-		? nightmarePromptPath
-		: existsSync(containerPromptPath)
-			? containerPromptPath
-			: null;
-
-	if (!promptPath) {
+	const promptPath = "/opt/devcontainer/nightmare-prompt.txt";
+	if (!existsSync(promptPath)) {
 		console.error("Error: nightmare-prompt.txt not found");
 		process.exit(1);
 	}
@@ -139,15 +131,8 @@ async function runDream(
 
 	// Choose the right prompt
 	const promptFilename = dreamType === "good" ? "good-dream-prompt.txt" : "dream-prompt.txt";
-	const devcontainerPath = join(meDir, "..", "..", ".devcontainer", promptFilename);
-	const containerPath = `/work/.devcontainer/${promptFilename}`;
-	const promptPath = existsSync(devcontainerPath)
-		? devcontainerPath
-		: existsSync(containerPath)
-			? containerPath
-			: null;
-
-	if (!promptPath) {
+	const promptPath = `/opt/devcontainer/${promptFilename}`;
+	if (!existsSync(promptPath)) {
 		console.error(`Error: ${promptFilename} not found`);
 		process.exit(1);
 	}
