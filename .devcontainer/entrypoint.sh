@@ -22,9 +22,10 @@ if [ "${1:-}" = "--session" ]; then
   # --- Gather context via REST API (TypeScript harness, no LLM tokens) ---
   BRIEFING_FILE=$(mktemp /tmp/briefing.XXXXXX)
   bun run /opt/harness/src/gather-context.ts /work/me/credentials.txt > "$BRIEFING_FILE"
-  echo "=== Briefing ==="
-  cat "$BRIEFING_FILE"
-  echo "================"
+  THOUGHTS_LOG="/opt/logs/thoughts.log"
+  echo "=== Briefing ===" | tee -a "$THOUGHTS_LOG"
+  cat "$BRIEFING_FILE" | tee -a "$THOUGHTS_LOG"
+  echo "================" | tee -a "$THOUGHTS_LOG"
 
   # --- Read diary for inline context ---
   DIARY_FILE="/work/me/DIARY.md"
