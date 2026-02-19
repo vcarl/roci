@@ -131,6 +131,7 @@ docker run -d \
   -v "${SCRIPT_DIR}/in-game-CLAUDE.md:/work/CLAUDE.md:ro,cached" \
   -v "${SCRIPT_DIR}/.claude:/work/.claude:ro,cached" \
   -v "${SCRIPT_DIR}/.devcontainer:/opt/devcontainer:ro,cached" \
+  -v "${SCRIPT_DIR}/shared-resources/sm-cli:/work/workspace/bin:consistent" \
   -v "${SCRIPT_DIR}/harness:/opt/harness:ro,cached" \
   -v "${CHAR_DIR}/logs:/opt/logs:consistent" \
   "${IMAGE}" \
