@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Effect, Ref, Stream } from "effect"
 import { Claude, type ClaudeModel, ClaudeError } from "../services/Claude.js"
 import { CharacterLog, type LogEntry } from "../logging/log-writer.js"
 import { demuxStream } from "../logging/log-demux.js"
@@ -85,7 +85,14 @@ Run \`sm --help\` for the full list of commands. Key commands:
 - \`sm cargo\` — check cargo
 - \`sm nearby\` — see nearby players
 
-Stay focused on your specific goal. When you've achieved it or cannot make further progress, stop.`
+Stay focused on your specific goal. When you've achieved it or cannot make further progress, stop.
+
+When you are finished (goal achieved or no further progress possible), write a brief
+COMPLETION REPORT as your final message summarizing:
+- What you accomplished
+- What commands you ran and their outcomes
+- Whether you believe the goal was met
+- Any issues or blockers encountered`
 }
 
 function buildStateSummary(state: GameState, situation: Situation): string {
@@ -111,7 +118,7 @@ function buildStateSummary(state: GameState, situation: Situation): string {
   return lines.join("\n")
 }
 
-/** Spawn a subagent in a container. Returns when the subagent finishes. */
+/** Spawn a subagent in a container. Returns the accumulated subagent text output. */
 export const runSubagent = (input: SubagentInput) =>
   Effect.gen(function* () {
     const claude = yield* Claude
@@ -136,8 +143,13 @@ export const runSubagent = (input: SubagentInput) =>
       outputFormat: "stream-json",
     })
 
-    // Demux the stream into log files
-    yield* demuxStream(input.char, stream, "subagent")
+    // Accumulate text blocks for the completion report
+    const textRef = yield* Ref.make<string[]>([])
+
+    // Demux the stream into log files, accumulating text
+    yield* demuxStream(input.char, stream, "subagent", textRef)
+
+    const collectedText = yield* Ref.get(textRef)
 
     yield* log.action(input.char, {
       timestamp: new Date().toISOString(),
@@ -146,4 +158,6 @@ export const runSubagent = (input: SubagentInput) =>
       type: "subagent_complete",
       task: input.step.task,
     })
+
+    return collectedText.join("\n")
   })

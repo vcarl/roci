@@ -1,8 +1,9 @@
 import { Effect } from "effect"
 import { Claude, ClaudeError } from "../services/Claude.js"
 import type { AiFunction } from "./AiFunction.js"
-import type { Plan } from "./types.js"
+import type { Plan, PlanStep } from "./types.js"
 import type { GameState, Situation, Alert } from "../../../harness/src/types.js"
+import { type StepCompletionResult, buildStateSnapshot } from "../monitor/plan-tracker.js"
 
 export interface BrainPlanInput {
   state: GameState
@@ -11,6 +12,7 @@ export interface BrainPlanInput {
   briefing: string
   background: string
   values: string
+  previousFailure?: string  // what went wrong with the last plan, if replanning after failure
 }
 
 export interface BrainInterruptInput {
@@ -20,6 +22,12 @@ export interface BrainInterruptInput {
   currentPlan: Plan | null
   briefing: string
   background: string
+}
+
+export interface BrainEvaluateInput {
+  step: PlanStep
+  subagentReport: string
+  state: GameState
 }
 
 const PLAN_SYSTEM_PROMPT = `You are a strategic planning AI for a character in the SpaceMolt MMO.
@@ -79,6 +87,10 @@ export const brainPlan: AiFunction<BrainPlanInput, Plan, Claude, ClaudeError> = 
     Effect.gen(function* () {
       const claude = yield* Claude
 
+      const failureSection = input.previousFailure
+        ? `\n## Previous Plan Failed\n${input.previousFailure}\n\nYour previous plan hit a problem. Account for this when making a new plan — you may need to retry the failed step, try a different approach, or adjust the overall strategy.\n`
+        : ""
+
       const prompt = `# Current Game State
 
 ## Briefing
@@ -86,7 +98,7 @@ ${input.briefing}
 
 ## Alerts
 ${input.situation.alerts.map((a) => `[${a.priority}] ${a.message}`).join("\n") || "None"}
-
+${failureSection}
 ## Character Background
 ${input.background}
 
@@ -167,5 +179,48 @@ Output ONLY the JSON plan.`
           new ClaudeError(`Failed to parse brain interrupt output: ${e}`, output),
         )
       }
+    }),
+}
+
+export const brainEvaluate: AiFunction<BrainEvaluateInput, StepCompletionResult, Claude, ClaudeError> = {
+  name: "brain.evaluate",
+  execute: (input) =>
+    Effect.gen(function* () {
+      const claude = yield* Claude
+      const stateSnapshot = buildStateSnapshot(input.state)
+
+      const output = yield* claude.invoke({
+        prompt: `You assigned this task to a sub-agent:
+Goal: "${input.step.goal}"
+Success condition: "${input.step.successCondition}"
+
+The sub-agent reported:
+${input.subagentReport.slice(-2000)}
+
+Current game state after the sub-agent finished:
+${JSON.stringify(stateSnapshot)}
+
+Evaluate: did the sub-agent accomplish the goal? Respond with ONLY JSON:
+{"complete": true/false, "reason": "brief explanation of what happened and why you consider this complete or not"}`,
+        model: "opus",
+        systemPrompt: "You are the strategic brain evaluating whether your sub-agent accomplished the task you assigned. Be pragmatic — if reasonable progress was made toward the goal, consider it complete. Only mark incomplete if the agent clearly failed, gave up, or did something unrelated. Keep your reason under 50 words.",
+        outputFormat: "text",
+        maxTurns: 1,
+      })
+
+      // Try to extract JSON from possible markdown fences
+      let json = output.trim()
+      const fenceMatch = json.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+      if (fenceMatch) {
+        json = fenceMatch[1]
+      }
+      const parsed = JSON.parse(json)
+
+      return {
+        complete: parsed.complete as boolean,
+        reason: parsed.reason as string,
+        matchedCondition: null,
+        relevantState: stateSnapshot,
+      } satisfies StepCompletionResult
     }),
 }

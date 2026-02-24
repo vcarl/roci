@@ -2,12 +2,12 @@ import { Effect, Ref, Fiber, Schedule, Duration } from "effect"
 import { GameApi } from "../services/GameApi.js"
 import { CharacterFs, type CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
-import { brainPlan, brainInterrupt } from "../ai/brain.js"
+import { brainPlan, brainInterrupt, brainEvaluate } from "../ai/brain.js"
 import { runSubagent } from "../ai/subagent.js"
 import { detectInterrupts } from "./interrupt.js"
-import { isStepComplete } from "./plan-tracker.js"
+import { isStepComplete, buildStateSnapshot } from "./plan-tracker.js"
 import type { Plan } from "../ai/types.js"
-import { logToConsole } from "../logging/console-renderer.js"
+import { logToConsole, logStateBar, logPlanTransition, logStepResult } from "../logging/console-renderer.js"
 
 export interface TickLoopConfig {
   char: CharacterConfig
@@ -24,9 +24,11 @@ export const tickLoop = (config: TickLoopConfig) =>
 
     const planRef = yield* Ref.make<Plan | null>(null)
     const stepRef = yield* Ref.make(0)
-    const subagentFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, unknown> | null>(null)
+    const subagentFiberRef = yield* Ref.make<Fiber.RuntimeFiber<string, unknown> | null>(null)
     const tickCountRef = yield* Ref.make(0)
     const stepStartTickRef = yield* Ref.make(0)
+    const subagentReportRef = yield* Ref.make("")
+    const previousFailureRef = yield* Ref.make<string | null>(null)
 
     const tick = Effect.gen(function* () {
       const tickCount = yield* Ref.updateAndGet(tickCountRef, (n) => n + 1)
@@ -35,6 +37,9 @@ export const tickLoop = (config: TickLoopConfig) =>
       const state = yield* api.collectState()
       const situation = api.classify(state)
       const briefing = api.briefing(state, situation)
+
+      // State bar each tick
+      yield* logStateBar(config.char.name, state, situation)
 
       // 2. Check for interrupts
       const criticals = detectInterrupts(situation)
@@ -88,17 +93,38 @@ export const tickLoop = (config: TickLoopConfig) =>
       if (currentFiber) {
         const poll = yield* Fiber.poll(currentFiber)
         if (poll._tag === "Some") {
-          // Subagent finished
-          yield* logToConsole(config.char.name, "monitor", "Subagent completed")
+          // Subagent finished — re-poll fresh state and evaluate with brain
+          yield* logToConsole(config.char.name, "monitor", "Subagent completed, evaluating...")
 
           const plan = yield* Ref.get(planRef)
           const step = yield* Ref.get(stepRef)
 
           if (plan && step < plan.steps.length) {
-            // Check success condition
             const currentStep = plan.steps[step]
-            const success = isStepComplete(currentStep, state, situation)
 
+            // Re-poll state after subagent's last action
+            const freshState = yield* api.collectState()
+            const report = yield* Ref.get(subagentReportRef)
+
+            // Brain evaluates whether the subagent delivered
+            const result = yield* brainEvaluate.execute({
+              step: currentStep,
+              subagentReport: report,
+              state: freshState,
+            }).pipe(
+              Effect.catchAll((e) =>
+                Effect.succeed({
+                  complete: true as const,
+                  reason: `Brain evaluation failed (${e}), trusting subagent completion`,
+                  matchedCondition: null,
+                  relevantState: buildStateSnapshot(freshState),
+                }),
+              ),
+            )
+
+            yield* logStepResult(config.char.name, step, result)
+
+            // Enriched step_complete log entry
             yield* log.action(config.char, {
               timestamp: new Date().toISOString(),
               source: "monitor",
@@ -106,15 +132,31 @@ export const tickLoop = (config: TickLoopConfig) =>
               type: "step_complete",
               stepIndex: step,
               task: currentStep.task,
-              successConditionMet: success,
+              goal: currentStep.goal,
+              successCondition: currentStep.successCondition,
+              successConditionMet: result.complete,
+              reason: result.reason,
+              stateSnapshot: result.relevantState,
+              subagentReport: report.slice(-500),
             })
 
-            yield* Ref.set(stepRef, step + 1)
+            if (result.complete) {
+              yield* Ref.set(stepRef, step + 1)
+            } else {
+              // Step failed — replan with failure context
+              const failureContext = `Step ${step + 1} [${currentStep.task}] "${currentStep.goal}" failed: ${result.reason}\nSubagent report: ${report.slice(-300) || "(no report)"}`
+              yield* logToConsole(config.char.name, "monitor",
+                `Step ${step + 1} failed, requesting new plan...`)
+              yield* Ref.set(previousFailureRef, failureContext)
+              yield* Ref.set(planRef, null)
+              yield* Ref.set(stepRef, 0)
+            }
           }
 
           yield* Ref.set(subagentFiberRef, null)
+          yield* Ref.set(subagentReportRef, "")
         } else {
-          // Subagent still running — check timeout
+          // Subagent still running — check mid-run success + timeout
           const plan = yield* Ref.get(planRef)
           const step = yield* Ref.get(stepRef)
           const startTick = yield* Ref.get(stepStartTickRef)
@@ -122,16 +164,18 @@ export const tickLoop = (config: TickLoopConfig) =>
           if (plan && step < plan.steps.length) {
             const currentStep = plan.steps[step]
 
-            // Check if the step's success condition is met even while subagent runs
-            if (isStepComplete(currentStep, state, situation)) {
-              yield* logToConsole(config.char.name, "monitor", `Step ${step} success condition met while subagent running — interrupting`)
+            // Mid-run state-based check
+            const midRunResult = isStepComplete(currentStep, state, situation)
+            if (midRunResult.complete) {
+              yield* logToConsole(config.char.name, "monitor",
+                `Step ${step + 1} condition met mid-run: ${midRunResult.reason}`)
               yield* Fiber.interrupt(currentFiber).pipe(Effect.catchAll(() => Effect.void))
               yield* Ref.set(subagentFiberRef, null)
               yield* Ref.set(stepRef, step + 1)
             }
             // Check timeout
             else if (tickCount - startTick >= currentStep.timeoutTicks) {
-              yield* logToConsole(config.char.name, "monitor", `Step ${step} timed out — interrupting`)
+              yield* logToConsole(config.char.name, "monitor", `Step ${step + 1} timed out — interrupting`)
               yield* Fiber.interrupt(currentFiber).pipe(Effect.catchAll(() => Effect.void))
               yield* Ref.set(subagentFiberRef, null)
               yield* Ref.set(stepRef, step + 1)
@@ -152,6 +196,8 @@ export const tickLoop = (config: TickLoopConfig) =>
         const background = yield* charFs.readBackground(config.char)
         const values = yield* charFs.readValues(config.char)
 
+        const previousFailure = yield* Ref.get(previousFailureRef)
+
         const newPlan = yield* brainPlan.execute({
           state,
           situation,
@@ -159,7 +205,10 @@ export const tickLoop = (config: TickLoopConfig) =>
           briefing,
           background,
           values,
+          previousFailure: previousFailure ?? undefined,
         })
+
+        yield* Ref.set(previousFailureRef, null)
 
         yield* log.thought(config.char, {
           timestamp: new Date().toISOString(),
@@ -189,6 +238,9 @@ export const tickLoop = (config: TickLoopConfig) =>
         if (currentPlan && currentStep < currentPlan.steps.length) {
           const planStep = currentPlan.steps[currentStep]
 
+          // Plan transition header
+          yield* logPlanTransition(config.char.name, currentPlan, currentStep)
+
           yield* logToConsole(
             config.char.name,
             "monitor",
@@ -207,8 +259,14 @@ export const tickLoop = (config: TickLoopConfig) =>
             personality,
             values,
           }).pipe(
+            Effect.tap((report) => Ref.set(subagentReportRef, report)),
             Effect.catchAll((e) =>
-              logToConsole(config.char.name, "monitor", `Subagent error: ${e}`),
+              Effect.gen(function* () {
+                const errorReport = `[SUBAGENT ERROR] ${e}`
+                yield* Ref.set(subagentReportRef, errorReport)
+                yield* logToConsole(config.char.name, "monitor", `Subagent error: ${e}`)
+                return ""
+              }),
             ),
             Effect.fork,
           )
@@ -222,9 +280,11 @@ export const tickLoop = (config: TickLoopConfig) =>
     // Run the tick on a schedule
     yield* Effect.repeat(
       tick.pipe(
-        Effect.catchAll((e) =>
-          logToConsole(config.char.name, "monitor", `Tick error: ${e}`),
-        ),
+        Effect.catchAll((e) => {
+          const msg = e instanceof Error ? e.message : String(e)
+          const detail = (e as any)?.cause ? ` (cause: ${(e as any).cause})` : ""
+          return logToConsole(config.char.name, "monitor", `Tick error: ${msg}${detail}`)
+        }),
       ),
       Schedule.spaced(Duration.seconds(config.tickIntervalSeconds)),
     )
