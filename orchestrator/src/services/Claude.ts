@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Stream, Chunk } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
-import { writeFileSync, unlinkSync, mkdtempSync } from "node:fs"
+import { writeFileSync, readFileSync, unlinkSync, mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 
@@ -164,12 +164,14 @@ export const ClaudeLive = Layer.effect(
             setup.push(execCmd)
 
             const shellCmd = setup.join(" && ")
-            const cmd = Command.make("bash", "-c", shellCmd)
+            // Redirect stderr to a temp file so we can reliably capture it
+            // (reading process.stderr after stdout drains loses data)
+            const stderrFile = `/tmp/_roci_stderr_${Date.now()}.txt`
+            const fullCmd = `${shellCmd} 2>${stderrFile}`
+            const cmd = Command.make("bash", "-c", fullCmd)
             const process = yield* executor.start(cmd)
 
             // Collect ALL stdout inside the scope so the process stays alive.
-            // This blocks until the process finishes, then we return the
-            // collected lines as a stream for API compatibility.
             const stdoutLines = yield* process.stdout.pipe(
               Stream.decodeText(),
               Stream.splitLines,
@@ -179,11 +181,14 @@ export const ClaudeLive = Layer.effect(
 
             const exitCode = yield* process.exitCode
 
-            const stderr = yield* process.stderr.pipe(
-              Stream.decodeText(),
-              Stream.runCollect,
-              Effect.map(Chunk.join("")),
-            )
+            // Read stderr from the temp file
+            let stderr = ""
+            try {
+              stderr = readFileSync(stderrFile, "utf-8")
+              unlinkSync(stderrFile)
+            } catch {
+              // stderr file might not exist if the command never ran
+            }
 
             cleanupTempFile(promptFile)
             if (systemFile) cleanupTempFile(systemFile)
@@ -191,15 +196,9 @@ export const ClaudeLive = Layer.effect(
             if (exitCode !== 0) {
               return yield* Effect.fail(
                 new ClaudeError(
-                  `Container exec exited with code ${exitCode}: ${stderr.trim().slice(0, 500)}`,
+                  `Container exec exited with code ${exitCode}.\nCommand: ${shellCmd.slice(0, 300)}\nStderr: ${stderr.trim().slice(0, 500)}\nStdout lines: ${Chunk.size(stdoutLines)}`,
                 ),
               )
-            }
-
-            if (Chunk.isEmpty(stdoutLines)) {
-              console.log(`[DEBUG execInContainer] stdout empty. stderr: ${stderr.trim().slice(0, 300)}`)
-            } else {
-              console.log(`[DEBUG execInContainer] collected ${Chunk.size(stdoutLines)} lines`)
             }
 
             return Stream.fromChunk(stdoutLines)

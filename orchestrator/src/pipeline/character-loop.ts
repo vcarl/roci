@@ -95,7 +95,7 @@ export const characterLoop = (config: CharacterLoopConfig) =>
           },
         ],
         env: {},
-        cmd: ["bash", "-c", "bash /opt/devcontainer/init-firewall.sh && sleep infinity"],
+        cmd: ["bash", "-c", "bash /opt/devcontainer/init-firewall.sh; sleep infinity"],
         capAdd: ["NET_ADMIN", "NET_RAW"],
       })
 
