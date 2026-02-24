@@ -1,0 +1,25 @@
+{
+  "name": "roci-orchestrator",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "start": "tsx src/main.ts",
+    "roci": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "effect": "^3.19.19",
+    "@effect/platform": "^0.94.5",
+    "@effect/platform-node": "^0.104.1",
+    "@effect/cli": "^0.73.2",
+
+    "@effect/printer": "^0.47.0",
+    "@effect/printer-ansi": "^0.47.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
