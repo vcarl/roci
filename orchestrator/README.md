@@ -71,51 +71,60 @@ npm install
 Requires:
 - Node.js 20+
 - Docker
-- `claude` CLI installed and authenticated
-- Game containers need one-time Claude auth (see `roci auth` below)
+- `claude` CLI installed on the host
+
+### Authentication
+
+The orchestrator authenticates subagents using `CLAUDE_CODE_OAUTH_TOKEN`, read from `.env` at the project root. This token is passed to the container at exec time (not baked in), so you can rotate it without recreating the container.
+
+1. Generate a token:
+   ```bash
+   claude setup-token
+   ```
+
+2. Create `.env` in the project root:
+   ```
+   CLAUDE_CODE_OAUTH_TOKEN=<token from above>
+   ```
+
+The `.env` file is gitignored. If the token expires, update `.env` and restart the orchestrator.
 
 ## Usage
 
 ```bash
 # Start one or more characters
-npx tsx src/main.ts start jim-holden
-npx tsx src/main.ts start jim-holden bobbie-draper --tick-interval 45
+./roci start jim-holden
+./roci start jim-holden bobbie-draper --tick-interval 45
 
-# Check status of all characters
-npx tsx src/main.ts status
+# Check container status
+./roci status
 
-# Pause/resume a character (container stays alive)
-npx tsx src/main.ts pause jim-holden
-npx tsx src/main.ts resume jim-holden
+# Pause/resume the shared container
+./roci pause
+./roci resume
 
-# Stop a character's container
-npx tsx src/main.ts stop jim-holden
+# Stop the shared container
+./roci stop
 
-# Authenticate Claude inside a character's container (one-time)
-npx tsx src/main.ts auth jim-holden
+# View recent thoughts for a character
+./roci logs jim-holden
 
-# View recent thoughts
-npx tsx src/main.ts logs jim-holden
-
-# Remove a character's container entirely
-npx tsx src/main.ts destroy jim-holden
+# Remove the shared container entirely
+./roci destroy
 ```
 
 ### First run
 
 1. Build the Docker image (happens automatically on `start`, or manually):
    ```bash
-   docker build -t spacemolt-player -f ../.devcontainer/Dockerfile ../.devcontainer/
+   docker build -t spacemolt-player -f .devcontainer/Dockerfile .devcontainer/
    ```
 
-2. Start a character — this creates the container, initializes the firewall, and begins the monitor loop:
-   ```bash
-   npx tsx src/main.ts start jim-holden
-   ```
+2. Set up `.env` with your Claude auth token (see Authentication above).
 
-3. Authenticate Claude inside the container (one-time per container):
+3. Start a character — this creates the shared `roci-crew` container, initializes the firewall, and begins the monitor loop:
    ```bash
-   docker exec -it roci-jim-holden sh -c 'claude && touch /tmp/auth-ready'
+   ./roci start jim-holden
    ```
 
 4. The orchestrator logs in to the game API, optionally compresses the diary (dream), then starts polling game state and invoking the brain for plans.
