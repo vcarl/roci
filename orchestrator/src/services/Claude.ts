@@ -33,6 +33,7 @@ export class Claude extends Context.Tag("Claude")<
       systemPrompt?: string
       outputFormat?: "text" | "stream-json"
       allowedTools?: string[]
+      env?: Record<string, string>
     }) => Effect.Effect<Stream.Stream<string, ClaudeError>, ClaudeError>
   }
 >() {}
@@ -154,10 +155,19 @@ export const ClaudeLive = Layer.effect(
           // Pipe prompt via stdin to docker exec -i → run-step.sh → claude -p
           const innerCmd = `/opt/scripts/run-step.sh ${opts.playerName} ${extraArgs.join(" ")}`
           const promptStream = Stream.encodeText(Stream.make(opts.prompt))
-          const cmd = Command.make(
-            "docker", "exec", "-i", opts.containerId,
-            "bash", "-c", innerCmd,
-          ).pipe(Command.stdin(promptStream))
+
+          // Build docker exec args, injecting env vars via -e flags
+          const execArgs: string[] = ["exec", "-i"]
+          if (opts.env) {
+            for (const [key, val] of Object.entries(opts.env)) {
+              execArgs.push("-e", `${key}=${val}`)
+            }
+          }
+          execArgs.push(opts.containerId, "bash", "-c", innerCmd)
+
+          const cmd = Command.make("docker", ...execArgs).pipe(
+            Command.stdin(promptStream),
+          )
 
           return Stream.unwrapScoped(
             Effect.gen(function* () {

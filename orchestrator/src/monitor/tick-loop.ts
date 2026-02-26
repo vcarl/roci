@@ -17,6 +17,7 @@ export interface TickLoopConfig {
   playerName: string
   tickIntervalSeconds: number
   projectRoot: string
+  containerEnv?: Record<string, string>
 }
 
 export const tickLoop = (config: TickLoopConfig) =>
@@ -262,6 +263,7 @@ export const tickLoop = (config: TickLoopConfig) =>
             containerId: config.containerId,
             playerName: config.playerName,
             systemPrompt,
+            containerEnv: config.containerEnv,
             step: planStep,
             state,
             situation,

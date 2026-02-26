@@ -11,6 +11,7 @@ export interface SubagentInput {
   containerId: string
   playerName: string
   systemPrompt: string  // in-game-CLAUDE.md content, passed via --system-prompt
+  containerEnv?: Record<string, string>  // env vars passed at docker exec time
   step: PlanStep
   state: GameState
   situation: Situation
@@ -145,6 +146,7 @@ export const runSubagent = (input: SubagentInput) =>
       model: input.step.model,
       systemPrompt: input.systemPrompt,
       outputFormat: "stream-json",
+      env: input.containerEnv,
     })
 
     // Accumulate text blocks for the completion report

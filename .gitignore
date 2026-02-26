@@ -1,6 +1,9 @@
 .ds_store
+node_modules
 __pycache__/
 players/*/workspace/bin/
 shared-resources/sm-cli
 players/*/logs
 players/*/sm
+.claude-credentials.json
+.env

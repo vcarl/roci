@@ -13,6 +13,8 @@ export interface CharacterLoopConfig {
   imageName: string
   /** Shared container ID — set by orchestrator before forking character fibers */
   containerId?: string
+  /** Env vars passed at docker exec time (e.g. CLAUDE_CODE_OAUTH_TOKEN) */
+  containerEnv?: Record<string, string>
 }
 
 /**
@@ -65,5 +67,6 @@ export const characterLoop = (config: CharacterLoopConfig & { containerId: strin
       playerName: config.char.name,
       tickIntervalSeconds: config.tickIntervalSeconds,
       projectRoot: config.projectRoot,
+      containerEnv: config.containerEnv,
     })
   })
