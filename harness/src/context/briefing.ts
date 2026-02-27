@@ -291,7 +291,7 @@ function systemPoiSection(system: SystemState, galaxyMap?: GalaxyMap): string {
 		const typeName = poi.type.replace(/_/g, " ");
 		const dockable = poi.base_id ? " (dockable)" : "";
 		let detail = `- ${poi.name} [${poi.id}] — ${typeName}${dockable}`;
-		if (poi.resources.length > 0) {
+		if (poi.resources && poi.resources.length > 0) {
 			const res = poi.resources
 				.map((r) => `${r.resource_id.replace(/_/g, " ")} ${r.richness}`)
 				.join(", ");

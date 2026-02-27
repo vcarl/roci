@@ -496,8 +496,8 @@ export const eventLoop = (config: EventLoopConfig) =>
       yield* maybeRequestPlan(state, situation, briefing)
       yield* maybeSpawnSubagent(state, situation)
     }).pipe(
-      Effect.catchAll((e) => {
-        const msg = formatError(e)
+      Effect.catchAllCause((cause) => {
+        const msg = cause.toString().slice(0, 500)
         return logToConsole(config.char.name, "error", `Initial planning error: ${msg}`)
       }),
     )
