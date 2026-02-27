@@ -10,7 +10,7 @@ import { isStepComplete, buildStateSnapshot } from "./plan-tracker.js"
 import type { Plan } from "../ai/types.js"
 import type { GameState, Situation, ChatMessage, Alert } from "../../../harness/src/types.js"
 import type { GameEvent, StateUpdateEvent, CombatUpdateEvent, ChatMessageEvent } from "../../../harness/src/ws-types.js"
-import { logToConsole, logStateBar, logPlanTransition, logStepResult, logTickReceived, formatError } from "../logging/console-renderer.js"
+import { logToConsole, logStateBar, logPlanTransition, logStepResult, logTickReceived, formatError, tag } from "../logging/console-renderer.js"
 import * as path from "node:path"
 
 export interface EventLoopConfig {
@@ -484,6 +484,10 @@ export const eventLoop = (config: EventLoopConfig) =>
     yield* Effect.forever(
       Effect.gen(function* () {
         const event = yield* Queue.take(config.events)
+
+        yield* Effect.sync(() =>
+          console.log(`${tag(config.char.name, "queue")} dequeued: ${event.type}`),
+        )
 
         yield* Effect.gen(function* () {
           switch (event.type) {

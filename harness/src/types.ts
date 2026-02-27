@@ -53,6 +53,8 @@ export interface PlayerState {
 	faction_rank: string | null;
 	status_message: string;
 	clan_tag: string;
+	primary_color?: string;
+	secondary_color?: string;
 	is_cloaked: boolean;
 	anonymous: boolean;
 	skills: Record<string, number>;
@@ -62,6 +64,7 @@ export interface PlayerState {
 
 export interface ShipState {
 	id: string;
+	owner_id?: string;
 	class_id: string;
 	name: string;
 	hull: number;
@@ -82,6 +85,10 @@ export interface ShipState {
 	weapon_slots: number;
 	defense_slots: number;
 	utility_slots: number;
+	damage_penalty?: number;
+	speed_penalty?: number;
+	disruption_ticks_remaining?: number;
+	active_buffs?: Array<Record<string, unknown>>;
 	modules: string[];
 	cargo: CargoItem[];
 }
@@ -97,6 +104,7 @@ export interface PoiState {
 	type: string;
 	name: string;
 	description: string;
+	hidden?: boolean;
 	position: { x: number; y: number };
 	resources: PoiResource[];
 	base_id: string | null;
@@ -104,17 +112,29 @@ export interface PoiState {
 
 export interface PoiResource {
 	resource_id: string;
-	richness: number;
+	name?: string;
+	richness: string;
 	remaining: number;
+	remaining_display?: string;
+}
+
+export interface SystemConnection {
+	system_id: string;
+	name: string;
+	distance?: number;
 }
 
 export interface SystemPoi {
 	id: string;
 	name: string;
 	type: string;
-	description: string;
+	description?: string;
 	base_id: string | null;
-	resources: PoiResource[];
+	has_base?: boolean;
+	base_name?: string;
+	online?: number;
+	position?: { x: number; y: number };
+	resources?: PoiResource[];
 }
 
 export interface SystemState {
@@ -123,9 +143,10 @@ export interface SystemState {
 	description: string;
 	empire: string;
 	police_level: number;
-	connections: string[];
+	security_status?: string;
+	connections: SystemConnection[];
 	pois: SystemPoi[];
-	position: { x: number; y: number };
+	position?: { x: number; y: number };
 }
 
 export interface MapSystem {

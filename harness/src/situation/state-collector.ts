@@ -6,6 +6,7 @@ import type {
 	PoiState,
 	PoiResource,
 	SystemState,
+	SystemConnection,
 	SystemPoi,
 	NearbyPlayer,
 	CargoItem,
@@ -221,9 +222,28 @@ export function extractSystem(data: Record<string, unknown> | undefined): System
 					id: (p.id as string) ?? "",
 					name: (p.name as string) ?? "",
 					type: (p.type as string) ?? "",
-					description: (p.description as string) ?? "",
+					description: p.description as string | undefined,
 					base_id: (p.base_id as string | null) ?? null,
-					resources: (p.resources as PoiResource[]) ?? [],
+					has_base: p.has_base as boolean | undefined,
+					base_name: p.base_name as string | undefined,
+					online: p.online as number | undefined,
+					position: p.position as { x: number; y: number } | undefined,
+					resources: p.resources as PoiResource[] | undefined,
+				};
+			})
+		: [];
+
+	const rawConns = (s.connections ?? []) as unknown[];
+	const connections: SystemConnection[] = Array.isArray(rawConns)
+		? rawConns.map((raw) => {
+				if (typeof raw === "string") {
+					return { system_id: raw, name: raw };
+				}
+				const c = raw as Record<string, unknown>;
+				return {
+					system_id: (c.system_id as string) ?? "",
+					name: (c.name as string) ?? "",
+					distance: c.distance as number | undefined,
 				};
 			})
 		: [];
@@ -234,9 +254,10 @@ export function extractSystem(data: Record<string, unknown> | undefined): System
 		description: (s.description as string) ?? "",
 		empire: (s.empire as string) ?? "",
 		police_level: (s.police_level as number) ?? 0,
-		connections: (s.connections as string[]) ?? [],
+		security_status: s.security_status as string | undefined,
+		connections,
 		pois,
-		position: (s.position as { x: number; y: number }) ?? { x: 0, y: 0 },
+		position: s.position as { x: number; y: number } | undefined,
 	};
 }
 

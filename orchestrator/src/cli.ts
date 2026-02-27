@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect"
 import { NodeContext } from "@effect/platform-node"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
+import WebSocket from "ws"
 import { Docker, DockerLive } from "./services/Docker.js"
 import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "./services/CharacterFs.js"
 import { makePromptTemplatesLive } from "./services/PromptTemplates.js"
@@ -158,6 +159,84 @@ const logsCommand = Command.make("logs", { character: logsCharacter }, (args) =>
   }),
 ).pipe(Command.withDescription("Show recent thoughts for a character"))
 
+// --- ws-test command ---
+const wsTestCharacter = Args.text({ name: "character" })
+
+const wsTestCommand = Command.make("ws-test", { character: wsTestCharacter }, (args) =>
+  Effect.gen(function* () {
+    const charFs = yield* CharacterFs
+    const char = makeCharacterConfig(PROJECT_ROOT, args.character)
+    const creds = yield* charFs.readCredentials(char)
+
+    const WS_URL = "wss://game.spacemolt.com/ws"
+    console.log(`[ws-test] Connecting to ${WS_URL} as ${creds.username}...`)
+
+    yield* Effect.async<void, never>((resume) => {
+      const sock = new WebSocket(WS_URL)
+      let msgCount = 0
+
+      sock.on("open", () => {
+        console.log(`[ws-test] Connected`)
+      })
+
+      sock.on("message", (data) => {
+        const raw = data.toString()
+        const chunks = raw.split("\n").filter((s) => s.trim().length > 0)
+        for (const chunk of chunks) {
+        msgCount++
+        try {
+          const parsed = JSON.parse(chunk)
+          const type = parsed.type ?? "unknown"
+          const payloadKeys = parsed.payload ? Object.keys(parsed.payload).join(", ") : "(no payload)"
+          console.log(`[ws-test] #${msgCount} ${type} — keys: ${payloadKeys}`)
+
+          if (type === "welcome") {
+            console.log(`[ws-test] Got welcome, sending login...`)
+            sock.send(JSON.stringify({
+              type: "login",
+              payload: { username: creds.username, password: creds.password },
+            }))
+          }
+
+          if (type === "logged_in") {
+            console.log(`[ws-test] Logged in! Sending get_status every 10s...`)
+            const poll = setInterval(() => {
+              console.log(`[ws-test] Sending get_status`)
+              sock.send(JSON.stringify({ type: "get_status" }))
+            }, 10000)
+            // Send one immediately
+            sock.send(JSON.stringify({ type: "get_status" }))
+            sock.on("close", () => clearInterval(poll))
+          }
+        } catch {
+          console.log(`[ws-test] #${msgCount} (parse error) ${chunk.slice(0, 200)}`)
+        }
+        }
+      })
+
+      sock.on("close", (code, reason) => {
+        console.log(`[ws-test] Closed: code=${code} reason=${reason.toString()}`)
+        resume(Effect.void)
+      })
+
+      sock.on("error", (err) => {
+        console.error(`[ws-test] Error: ${err.message}`)
+      })
+
+      sock.on("ping", () => {
+        console.log(`[ws-test] Received ping`)
+      })
+
+      // Keep alive for 60 seconds then close
+      setTimeout(() => {
+        console.log(`[ws-test] 60s elapsed, ${msgCount} messages received total. Closing.`)
+        sock.close()
+        resume(Effect.void)
+      }, 60000)
+    })
+  }),
+).pipe(Command.withDescription("Bare WebSocket connectivity test — no Effect queue, just raw ws"))
+
 // --- root command ---
 const rociCommand = Command.make("roci").pipe(
   Command.withSubcommands([
@@ -169,6 +248,7 @@ const rociCommand = Command.make("roci").pipe(
     authCommand,
     destroyCommand,
     logsCommand,
+    wsTestCommand,
   ]),
   Command.withDescription("Rocinante crew orchestrator"),
 )

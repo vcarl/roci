@@ -299,9 +299,11 @@ function systemPoiSection(system: SystemState, galaxyMap?: GalaxyMap): string {
 		}
 		lines.push(detail);
 	}
-	const connections = system.connections.map((id) => {
-		const mapEntry = galaxyMap?.get(id);
-		return mapEntry ? `${mapEntry.name} [${id}]` : id;
+	const connections = system.connections.map((conn) => {
+		const mapEntry = galaxyMap?.get(conn.system_id);
+		const label = mapEntry?.name ?? conn.name ?? conn.system_id;
+		const dist = conn.distance ? ` (${conn.distance} GU)` : "";
+		return `${label} [${conn.system_id}]${dist}`;
 	});
 	lines.push(
 		`Connected systems: ${connections.join(", ") || "none"}. Use find_route to plan multi-jump routes.`,

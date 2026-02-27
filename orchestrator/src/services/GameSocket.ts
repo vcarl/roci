@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Queue, Scope, Fiber, Ref, Deferred } from "effect"
+import { Context, Effect, Layer, Queue, Scope, Schedule, Fiber, Ref, Deferred } from "effect"
 import WebSocket from "ws"
 import type { Credentials, GameState, NearbyPlayer } from "../../../harness/src/types.js"
 import type {
@@ -13,6 +13,7 @@ import { tag } from "../logging/console-renderer.js"
 const WS_URL = "wss://game.spacemolt.com/ws"
 const RECONNECT_DELAY_MS = 2000
 const QUEUE_CAPACITY = 500
+const POLL_INTERVAL_MS = 10_000
 
 export class GameSocketError {
   readonly _tag = "GameSocketError"
@@ -91,6 +92,10 @@ export const makeGameSocketLive = () =>
             // Flag to stop reconnect loop on finalization
             const closed = yield* Ref.make(false)
 
+            // Poll state — shared between message handler and poll fiber
+            let pollPending = false
+            let pollTick = 0
+
             const connectAndLogin = Effect.gen(function* () {
               yield* Effect.sync(() =>
                 console.log(`${tag(characterName, "ws")} Connecting to ${WS_URL}...`),
@@ -112,9 +117,12 @@ export const makeGameSocketLive = () =>
 
               // Set up message handler
               socket.on("message", (data) => {
+                const raw = data.toString()
+                // Server may send multiple JSON objects in one WS frame (newline-delimited)
+                const chunks = raw.split("\n").filter((s) => s.trim().length > 0)
+                for (const chunk of chunks) {
                 try {
-                  const raw = data.toString()
-                  const event = parseGameEvent(raw)
+                  const event = parseGameEvent(chunk)
 
                   // If this is the logged_in event, resolve the deferred
                   if (event.type === "logged_in") {
@@ -127,8 +135,38 @@ export const makeGameSocketLive = () =>
                     Effect.runSync(Ref.set(hasLoggedIn, true))
                   }
 
-                  // Offer to queue (drop-oldest if full via sliding behavior)
-                  // Queue.bounded will back-pressure; use offer which drops if full
+                  // Synthesize state_update from get_status poll responses
+                  if (event.type === "ok" && pollPending) {
+                    const payload = (event as { type: "ok"; payload: Record<string, unknown> }).payload
+                    if (payload.player && payload.ship) {
+                      pollPending = false
+                      pollTick++
+                      const synthetic = {
+                        type: "state_update" as const,
+                        payload: {
+                          tick: pollTick,
+                          player: payload.player,
+                          ship: payload.ship,
+                          nearby: (payload.nearby ?? []) as NearbyPlayer[],
+                          in_combat: (payload.in_combat as boolean) ?? false,
+                          ...(payload.travel_progress != null ? {
+                            travel_progress: payload.travel_progress as number,
+                            travel_destination: payload.travel_destination as string,
+                            travel_type: payload.travel_type as "travel" | "jump",
+                            travel_arrival_tick: payload.travel_arrival_tick as number,
+                          } : {}),
+                        },
+                      }
+                      Effect.runFork(
+                        Queue.offer(events, synthetic).pipe(
+                          Effect.catchAll(() => Effect.void),
+                        ),
+                      )
+                      return
+                    }
+                  }
+
+                  // Offer original event to queue
                   Effect.runFork(
                     Queue.offer(events, event).pipe(
                       Effect.catchAll(() => Effect.void),
@@ -137,6 +175,7 @@ export const makeGameSocketLive = () =>
                 } catch (err) {
                   console.error(`${tag(characterName, "ws")} Failed to parse message: ${err}`)
                 }
+                } // end for chunks
               })
 
               // Wait for welcome, then send login
@@ -237,11 +276,25 @@ export const makeGameSocketLive = () =>
               ),
             )
 
-            // Register finalizer to close the WebSocket
+            // Start polling fiber — sends get_status periodically to synthesize state_update events
+            // The server doesn't push state_update to idle players, so we poll instead.
+            const pollFiber = yield* Effect.sync(() => {
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                pollPending = true
+                ws.send(JSON.stringify({ type: "get_status" }))
+              }
+            }).pipe(
+              Effect.repeat(Schedule.spaced(`${POLL_INTERVAL_MS} millis`)),
+              Effect.catchAll(() => Effect.void),
+              Effect.fork,
+            )
+
+            // Register finalizer to close the WebSocket and stop polling
             yield* Scope.addFinalizer(
               yield* Effect.scope,
               Effect.gen(function* () {
                 yield* Ref.set(closed, true)
+                yield* Fiber.interrupt(pollFiber).pipe(Effect.catchAll(() => Effect.void))
                 yield* Effect.sync(() => {
                   if (ws) {
                     ws.close()
