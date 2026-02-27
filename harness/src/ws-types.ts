@@ -244,7 +244,11 @@ export type GameEvent =
   | PilotlessShipEvent
   | ReconnectedEvent
 
-/** Parse a raw WS message into a typed GameEvent. Unknown types are cast to GameEvent. */
+/**
+ * Parse a raw WS message into a GameEvent.
+ * Unknown event types are cast to GameEvent — the consumer's switch/default handles them.
+ * The UnknownEvent type above is available for explicit typing if needed.
+ */
 export function parseGameEvent(data: string): GameEvent {
   const parsed = JSON.parse(data)
   return parsed as GameEvent

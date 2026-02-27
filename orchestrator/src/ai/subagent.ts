@@ -74,7 +74,7 @@ ${personality.slice(0, 800)}
 ${values.slice(0, 500)}
 
 ## Available Commands
-Run \`sm --help\` for the full list of commands. Key commands:
+The \`sm\` CLI is already installed on your PATH — just run it directly. Do NOT try to install, build, or locate it. Run \`sm --help\` for the full list of commands. Key commands:
 - \`sm status\` — check your current state
 - \`sm mine\` — mine resources at current POI
 - \`sm sell [item_id] [qty]\` — sell cargo

@@ -1,97 +1,239 @@
 # Agent Harness
 
-The harness runs autonomous SpaceMolt game sessions inside Docker containers, using Claude Code as the agent runtime. Each session: compress the diary, collect game state, generate a briefing, then hand control to Claude.
+The harness runs autonomous SpaceMolt game sessions inside a shared Docker container, using Claude Code as the agent runtime. An orchestrator on the host manages the game loop: poll state, plan with a brain LLM, dispatch subagents into the container, and capture all output.
 
-## Session Flow
+## System Layers
 
 ```
-play.sh <character>
-  |
-  docker run ... bash /opt/devcontainer/entrypoint.sh
-    |
-    +-- Setup mode: firewall, wait for auth, game loop
-          |
-          +-- Session mode (--session), repeats every PLAY_INTERVAL:
-                |
-                1. dream.ts        Compress diary/secrets via claude -p --model opus
-                2. gather-context.ts   Collect game state, generate NL briefing
-                3. claude -p           Run agent session with briefing + diary
-                      |
-                      stream-demux.py    Split stream-json into logs
+┌──────────────────────────────────────────────────────────────────┐
+│  CLI                                                             │
+│  $ roci start test-pilot       (cli.ts → orchestrator.ts)        │
+│  $ roci stop | pause | resume | destroy | status | logs          │
+├──────────────────────────────────────────────────────────────────┤
+│  Orchestrator                                                    │
+│  Load .env, ensure shared container, fork 1 fiber per character  │
+│  (orchestrator.ts)                                               │
+├──────────────────────────────────────────────────────────────────┤
+│  Character Loop                                                  │
+│  Login to game API, dream (compress diary), start tick loop      │
+│  (character-loop.ts)                                             │
+├──────────────────────────────────────────────────────────────────┤
+│  Tick Loop                              every 30s                │
+│  Poll state → detect interrupts → check subagent → plan → spawn │
+│  (tick-loop.ts)                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│  Brain (Opus on host)          │  Subagent (!opus, in Docker)    |
+│  brainPlan — strategic plan    │  docker exec -i → run-step.sh   │
+│  brainInterrupt — replan       │  claude -p --stream-json        │
+│  brainEvaluate — judge result  │  runs sm commands via Bash tool │
+├──────────────────────────────────────────────────────────────────┤
+│  Stream Pipeline                                                 │
+│  stdout line → stream.jsonl (raw) → parse → demuxEvent           │
+│  stderr → forked fiber drain → surface after stream ends         │
+│  (Claude.ts, log-demux.ts)                                       │
+├──────────────────────────────────────────────────────────────────┤
 ```
 
-## Components
+## Tick Loop State Machine
 
-### TypeScript Harness (`harness/`)
+```
+                         ┌──────────────────────────────────────────────┐
+                         │                                              │
+                         ▼                                              │
+                   ┌───────────┐                                        │
+            ┌─────►│ POLL STATE │                                       │
+            │      └─────┬─────┘                                        │
+            │            │                                              │
+            │            ▼                                              │
+            │      ┌───────────────┐   critical        ┌────────────┐  │
+            │      │DETECT         │──────────────────►│ INTERRUPT   │  │
+            │      │INTERRUPTS     │   alerts          │ kill fiber  │  │
+            │      └───────┬───────┘                   │ brainInter… │  │
+            │              │ none                       └──────┬─────┘  │
+            │              ▼                                   │        │
+            │      ┌───────────────┐                    set plan, step=0
+            │      │ CHECK         │                           │        │
+            │      │ SUBAGENT      │◄──────────────────────────┘        │
+            │      └───┬───┬───┬───┘                                    │
+            │          │   │   │                                        │
+            │   ┌──────┘   │   └──────────────┐                        │
+            │   │ done     │ running          │ no fiber               │
+            │   ▼          ▼                  │                        │
+            │ ┌──────┐  ┌──────────────┐      │                        │
+            │ │EVAL  │  │ MID-RUN      │      │                        │
+            │ │brain │  │ condition met?│      │                        │
+            │ │Eval… │  │ timed out?   │      │                        │
+            │ └──┬───┘  └──────┬───────┘      │                        │
+            │    │             │               │                        │
+            │    ▼             ▼               ▼                        │
+            │ complete?   interrupt?    ┌─────────────┐                 │
+            │  ├─yes──►step++          │NEED PLAN?    │                 │
+            │  └─no───►replan          │plan=null or  │                 │
+            │          (set plan=null)  │step>=len     │                 │
+            │                          └──────┬───────┘                 │
+            │                                 │ yes                     │
+            │                                 ▼                         │
+            │                          ┌─────────────┐                  │
+            │                          │ BRAIN PLAN   │                 │
+            │                          │ (Opus)       │                 │
+            │                          └──────┬───────┘                 │
+            │                                 │                         │
+            │                                 ▼                         │
+            │                          ┌─────────────┐                  │
+            │                          │ SPAWN       │                  │
+            │                          │ SUBAGENT    │──────────────────┘
+            │                          │ (fork fiber)│
+            │                          └─────────────┘
+            │
+        wait 30s
+```
 
-Runs before the agent wakes up. Mounted at `/opt/harness/` (invisible to the agent).
+## Sequence Diagram: Subagent Execution
 
-**gather-context.ts** — Replaces the old bash gather-context.sh with richer sensing:
-- Authenticates via the game API directly (parses `Username: / Password:` credentials)
-- Parallel API queries: status, POI, system, cargo (+ market, missions, orders, storage when docked)
-- Classifies situation: Docked / InSpace / InTransit / InCombat
-- Detects priority alerts: critical (combat, hull <20%), high (low fuel/hull), medium (cargo full, completable missions), low (cargo nearly full, unread chat)
-- Fetches galaxy map for system name resolution
-- Collects social state (chat history, forum threads)
-- Generates a natural language briefing with market prices, nearby ships, mission status
-- Outputs structured markdown to stdout
-
-**dream.ts** — Diary compression between sessions:
-- Rolls dream type: nightmare (compresses SECRETS.md), good dream (nurturing DIARY.md compression), or normal
-- Nightmare chance scales with secrets length (up to 15%)
-- Pipes content through `claude -p --model opus` for compression
-
-### Infrastructure (`.devcontainer/`)
-
-Mounted at `/opt/devcontainer/` (invisible to the agent).
-
-- **entrypoint.sh** — Session runner. Setup mode waits for auth, then loops sessions. Session mode runs dream, gather-context, injects briefing + diary into session-prompt.txt, launches claude.
-- **stream-demux.py** — Parses claude's stream-json output into:
-  - `thoughts.log` — Agent text, tool calls (shows raw commands), tool results (40-line snip)
-  - `raw.jsonl` — Full stream-json for debugging
-- **session-prompt.txt** — Template with `{{BRIEFING}}` and `{{DIARY}}` placeholders
-- **dream-prompt.txt / good-dream-prompt.txt / nightmare-prompt.txt** — Compression prompts
-- **Dockerfile** — node:20 + bun + Claude Code + zsh + firewall tools
-- **init-firewall.sh** — Whitelists GitHub, npm, Anthropic, SpaceMolt; blocks everything else
+```
+  Orchestrator          Docker Container          Log Files        Console
+  (host)                (roci-crew)
+  │                     │                         │                │
+  │ docker exec -i      │                         │                │
+  │ -e OAUTH_TOKEN=...  │                         │                │
+  │────────────────────►│                         │                │
+  │  stdin: prompt      │                         │                │
+  │                     │ run-step.sh             │                │
+  │                     │ cd /work/players/<name> │                │
+  │                     │ claude -p --stream-json │                │
+  │                     │         │               │                │
+  │                     │         │ $ sm status   │                │
+  │                     │         │─────────► …   │                │
+  │                     │         │◄───────── …   │                │
+  │                     │         │ $ sm market   │                │
+  │                     │         │─────────► …   │                │
+  │                     │         │◄───────── …   │                │
+  │                     │         │ $ sm sell ... │                │
+  │                     │         │─────────► …   │                │
+  │                     │         │◄───────── …   │                │
+  │                     │         │               │                │
+  │◄════════════════════╡ stdout: stream-json lines                │
+  │  (each line)        │         │               │                │
+  │─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ►│                │
+  │  log.raw(line)      │         │       stream.jsonl (verbatim)  │
+  │                     │         │               │                │
+  │  parseStreamJson(line)        │               │                │
+  │  ├─ ok ──► demuxEvent         │               │                │
+  │  │   │─ assistant:text ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ► │
+  │  │   │                        │               │  [name:assistant:text]
+  │  │   │─ assistant:tool_use ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ► │
+  │  │   │                        │               │  [name:assistant:tool_use]
+  │  │   │─ user:tool_result ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─► │
+  │  │   │                        │               │  [name:user:tool_result]
+  │  │   └─ result ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ► │
+  │  │                            │               │  [name:result] |
+  │  └─ parse fail ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ► │
+  │                               │               │  [name:raw]    |
+  │                               │               │                │
+  │◄════════════════════╡ stream ends             │                │
+  │                     │         │               │                │
+  │  waitForExit        │         │               │                │
+  │  ├─ join stderr fiber         │               │                │
+  │  ├─ get exit code   │         │               │                │
+  │  │                  │         │               │                │
+  │  ├─ exitCode != 0 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ►│
+  │  │   fail with ClaudeError    │               │  [name:stderr]
+  │  │                  │         │               │  [name:error]
+  │  └─ exitCode == 0   │         │               │                │
+  │     return text     │         │               │                │
+  │                     │         │               │                │
+```
 
 ## Container Layout
 
-What the agent sees (`/work/`):
+Single shared container `roci-crew`, all characters isolated via `--add-dir`.
 
-| Path | Purpose | Writable |
-|------|---------|----------|
-| `me/` | Credentials, background, diary, secrets, values | yes |
-| `workspace/` | sm CLI, scripts, data | yes |
-| `docs/` | Game documentation | yes |
-| `CLAUDE.md` | Agent instructions | no |
-| `.claude/` | Claude Code settings | no |
+**Volume mounts:**
 
-What the agent doesn't see (`/opt/`):
+| Host Path | Container Path | Access |
+|-----------|---------------|--------|
+| `players/` | `/work/players` | RW |
+| `shared-resources/workspace/` | `/work/shared/workspace` | RW |
+| `shared-resources/spacemolt-docs/` | `/work/shared/spacemolt-docs` | RW |
+| `docs/` | `/work/shared/docs` | RW |
+| `shared-resources/sm-cli/` | `/work/sm-cli` | RW |
+| `.claude/` | `/work/.claude` | RO |
+| `.devcontainer/` | `/opt/devcontainer` | RO |
+| `harness/` | `/opt/harness` | RO |
+| `scripts/` | `/opt/scripts` | RO |
+
+**What the subagent sees** (via `--add-dir` in `run-step.sh`):
 
 | Path | Purpose |
 |------|---------|
-| `/opt/devcontainer/` | Entrypoint, prompts, demux, firewall |
+| `/work/players/<name>/` | CWD — credentials, background, diary, secrets, values |
+| `/work/shared/` | Shared workspace, game docs |
+| `/work/sm-cli/` | sm CLI source |
+
+**What the subagent doesn't see:**
+
+| Path | Purpose |
+|------|---------|
+| `/opt/scripts/` | run-step.sh |
 | `/opt/harness/` | TypeScript sensing harness |
-| `/opt/logs/` | Session logs (thoughts.log, raw.jsonl) |
+| `/opt/devcontainer/` | Dockerfile, firewall script |
 
-## Monitoring
+## Log Files
 
-```bash
-# Watch agent thoughts in real-time (play.sh does this automatically)
-tail -f players/<character>/logs/thoughts.log
+Per character at `players/<name>/logs/`:
 
-# Debug with full stream-json
-tail -f players/<character>/logs/raw.jsonl
+| File | Contents | Written by |
+|------|----------|-----------|
+| `stream.jsonl` | Every raw stdout line, verbatim | `log.raw()` |
+| `thoughts.jsonl` | Assistant text blocks (LLM thinking) | `log.thought()` |
+| `actions.jsonl` | Tool use, tool results, subagent lifecycle | `log.action()` |
+| `words.jsonl` | sm chat/forum commands (social actions) | `log.word()` |
 
-# Press 'r' in play.sh to restart the current session
-# Ctrl-C in play.sh to pause the container
+## Console Output
+
+All events printed type-tagged with timestamp and character name:
+
+```
+18:04:37 [test-pilot:assistant:text] I'll check the market prices first...
+18:04:37 test-pilot: "I'll check the market prices first..."
+18:04:38 [test-pilot:assistant:tool_use] Bash: sm market
+18:04:38   $ sm market
+18:04:39 [test-pilot:user:tool_result] Iron Ore: 5cr/unit (3 buy orders)...
+18:04:39   > Iron Ore: 5cr/unit (3 buy orders)...
+18:04:45 [test-pilot:result] ok:
+18:04:45 [test-pilot:stderr] (if any stderr output)
 ```
 
 ## Commands
 
 ```bash
-./play.sh <character>                  # Start or resume
-./play.sh <character> --interval 60    # Custom session interval (seconds)
-./play.sh <character> stop             # Pause container
-./play.sh <character> destroy          # Remove container (needs rebuild)
+./roci start <character> [character...]    # Build image, start orchestrator
+./roci start <char> --tick-interval 60     # Custom tick interval (default 30s)
+./roci stop                                # Stop the shared container
+./roci pause                               # Pause the shared container
+./roci resume                              # Resume the shared container
+./roci destroy                             # Remove the shared container
+./roci status                              # Show container status
+./roci logs <character>                    # Show recent thoughts
 ```
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `orchestrator/src/cli.ts` | CLI commands and service wiring |
+| `orchestrator/src/pipeline/orchestrator.ts` | Container lifecycle, fork character fibers |
+| `orchestrator/src/pipeline/character-loop.ts` | Per-character: login, dream, start tick loop |
+| `orchestrator/src/monitor/tick-loop.ts` | 30s tick: poll, interrupt, evaluate, plan, spawn |
+| `orchestrator/src/monitor/interrupt.ts` | Filter critical alerts from situation |
+| `orchestrator/src/monitor/plan-tracker.ts` | State-based step completion checks |
+| `orchestrator/src/ai/brain.ts` | brainPlan, brainInterrupt, brainEvaluate (Opus) |
+| `orchestrator/src/ai/subagent.ts` | Build prompt, run in container, handle exit |
+| `orchestrator/src/services/Claude.ts` | Host invoke + container exec with stream/exit |
+| `orchestrator/src/services/GameApi.ts` | REST client for game.spacemolt.com |
+| `orchestrator/src/logging/log-demux.ts` | Raw capture, parse, route to logs + console |
+| `orchestrator/src/logging/log-writer.ts` | CharacterLog service (JSONL append) |
+| `orchestrator/src/logging/console-renderer.ts` | Type-tagged + narrative console output |
+| `scripts/run-step.sh` | In-container: cd to player dir, exec claude -p |
+| `.devcontainer/Dockerfile` | Container image: node20, claude-code, firewall |
+| `.devcontainer/init-firewall.sh` | iptables whitelist for allowed domains |
