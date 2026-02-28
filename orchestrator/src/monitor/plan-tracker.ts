@@ -22,6 +22,65 @@ export function buildStateSnapshot(state: GameState): Record<string, unknown> {
   }
 }
 
+/** Richer snapshot that includes cargo item breakdown and tick, for diff tracking. */
+export function buildRichSnapshot(state: GameState): Record<string, unknown> {
+  return {
+    ...buildStateSnapshot(state),
+    cargoItems: state.ship.cargo.map(c => ({ id: c.item_id, qty: c.quantity })),
+    tick: state.tick,
+  }
+}
+
+/** Produce a human-readable diff of two rich snapshots, showing only changed fields. */
+export function buildStateDiff(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown>,
+): string {
+  if (!before) return "(no before-state captured)"
+
+  const lines: string[] = []
+
+  // Compare scalar fields
+  const scalarKeys = ["cargo", "fuel", "hull", "credits", "location", "docked", "inCombat", "traveling"] as const
+  for (const key of scalarKeys) {
+    const b = before[key]
+    const a = after[key]
+    if (JSON.stringify(b) !== JSON.stringify(a)) {
+      if (key === "credits" && typeof b === "number" && typeof a === "number") {
+        const delta = a - b
+        lines.push(`${key}: ${b} → ${a} (${delta >= 0 ? "+" : ""}${delta})`)
+      } else {
+        lines.push(`${key}: ${String(b)} → ${String(a)}`)
+      }
+    }
+  }
+
+  // Compare cargo items
+  type CargoEntry = { id: string; qty: number }
+  const beforeCargo = (before.cargoItems ?? []) as CargoEntry[]
+  const afterCargo = (after.cargoItems ?? []) as CargoEntry[]
+  const beforeMap = new Map(beforeCargo.map(c => [c.id, c.qty]))
+  const afterMap = new Map(afterCargo.map(c => [c.id, c.qty]))
+
+  const allIds = new Set([...beforeMap.keys(), ...afterMap.keys()])
+  for (const id of allIds) {
+    const bQty = beforeMap.get(id) ?? 0
+    const aQty = afterMap.get(id) ?? 0
+    if (bQty !== aQty) {
+      if (bQty === 0) {
+        lines.push(`cargo +${id}: ${aQty}`)
+      } else if (aQty === 0) {
+        lines.push(`cargo -${id}: was ${bQty}`)
+      } else {
+        const delta = aQty - bQty
+        lines.push(`cargo ${id}: ${bQty} → ${aQty} (${delta >= 0 ? "+" : ""}${delta})`)
+      }
+    }
+  }
+
+  return lines.length > 0 ? lines.join("\n") : "(no changes detected)"
+}
+
 /**
  * Check if a plan step's success condition is met by evaluating
  * simple conditions against the current game state.

@@ -39,6 +39,9 @@ export interface BrainEvaluateInput {
   step: PlanStep
   subagentReport: string
   state: GameState
+  stateBefore: Record<string, unknown> | null  // snapshot at spawn
+  stateDiff: string                             // human-readable diff
+  conditionCheck: StepCompletionResult          // deterministic check result
   ticksConsumed: number
   ticksBudgeted: number
   tickIntervalSec: number
@@ -222,6 +225,8 @@ export const brainEvaluate: AiFunction<BrainEvaluateInput, StepCompletionResult,
         ? `\nWARNING: exceeded tick budget by ${overrunDelta} ticks. Factor this into your evaluation.`
         : ""
 
+      const conditionLine = `Condition: "${input.step.successCondition}"\nResult: ${input.conditionCheck.complete ? "PASS" : "FAIL"} — ${input.conditionCheck.reason}`
+
       const output = yield* claude.invoke({
         prompt: `You assigned this task to a sub-agent:
 Goal: "${input.step.goal}"
@@ -230,15 +235,21 @@ Success condition: "${input.step.successCondition}"
 The sub-agent reported:
 ${input.subagentReport.slice(-2000)}
 
+## State Changes (before → after)
+${input.stateDiff}
+
 Current game state after the sub-agent finished:
 ${JSON.stringify(stateSnapshot)}
+
+## Deterministic Condition Check
+${conditionLine}
 
 ${timingLine}${overrunWarning}
 
 Evaluate: did the sub-agent accomplish the goal? Respond with ONLY JSON:
 {"complete": true/false, "reason": "brief explanation of what happened and why you consider this complete or not"}`,
         model: "opus",
-        systemPrompt: "You are the strategic brain evaluating whether your sub-agent accomplished the task you assigned. Be pragmatic — if reasonable progress was made toward the goal, consider it complete. Only mark incomplete if the agent clearly failed, gave up, or did something unrelated. Keep your reason under 50 words.",
+        systemPrompt: "You are the strategic brain evaluating whether your sub-agent accomplished the task you assigned. Be pragmatic — if reasonable progress was made toward the goal, consider it complete. Only mark incomplete if the agent clearly failed, gave up, or did something unrelated. The state diff and deterministic condition check give you objective evidence of what changed — use them. Keep your reason under 50 words.",
         outputFormat: "text",
         maxTurns: 1,
       })

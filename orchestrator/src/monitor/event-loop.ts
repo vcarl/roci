@@ -6,7 +6,7 @@ import { CharacterLog } from "../logging/log-writer.js"
 import { brainPlan, brainInterrupt, brainEvaluate, type StepTiming } from "../ai/brain.js"
 import { runSubagent } from "../ai/subagent.js"
 import { detectInterrupts } from "./interrupt.js"
-import { isStepComplete, buildStateSnapshot } from "./plan-tracker.js"
+import { isStepComplete, buildStateSnapshot, buildRichSnapshot, buildStateDiff } from "./plan-tracker.js"
 import type { Plan } from "../ai/types.js"
 import type { GameState, Situation, ChatMessage, Alert } from "../../../harness/src/types.js"
 import type { GameEvent, StateUpdateEvent, CombatUpdateEvent, ChatMessageEvent } from "../../../harness/src/ws-types.js"
@@ -42,6 +42,7 @@ export const eventLoop = (config: EventLoopConfig) =>
     const previousFailureRef = yield* Ref.make<string | null>(null)
     const stepTimingHistoryRef = yield* Ref.make<StepTiming[]>([])
     const lastProcessedTickRef = yield* Ref.make(0)
+    const spawnStateRef = yield* Ref.make<Record<string, unknown> | null>(null)
     const tickIntervalSec = config.tickIntervalSec
 
     // --- New refs for WS-driven state ---
@@ -156,10 +157,48 @@ export const eventLoop = (config: EventLoopConfig) =>
           // without per-character auth, so collectState() returns empty/default data.
           const report = yield* Ref.get(subagentReportRef)
 
+          // Build state diff from spawn-time snapshot
+          const stateBefore = yield* Ref.get(spawnStateRef)
+          const stateAfter = buildRichSnapshot(state)
+          const stateDiff = buildStateDiff(stateBefore, stateAfter)
+
+          // Run deterministic condition check
+          const situation = api.classify(state)
+          const conditionCheck = isStepComplete(currentStep, state, situation)
+
+          // Short-circuit: if deterministic check passes with a recognized condition, skip LLM
+          if (conditionCheck.complete && conditionCheck.matchedCondition) {
+            yield* logStepResult(config.char.name, step, conditionCheck)
+            yield* log.action(config.char, {
+              timestamp: new Date().toISOString(),
+              source: "monitor",
+              character: config.char.name,
+              type: "step_complete",
+              stepIndex: step,
+              task: currentStep.task,
+              goal: currentStep.goal,
+              successCondition: currentStep.successCondition,
+              successConditionMet: true,
+              reason: `[deterministic] ${conditionCheck.reason}`,
+              stateSnapshot: conditionCheck.relevantState,
+              stateDiff,
+              subagentReport: report.slice(-500),
+            })
+
+            yield* Ref.set(stepRef, step + 1)
+            yield* Ref.set(subagentFiberRef, null)
+            yield* Ref.set(subagentReportRef, "")
+            yield* Ref.set(spawnStateRef, null)
+            return
+          }
+
           const result = yield* brainEvaluate.execute({
             step: currentStep,
             subagentReport: report,
             state,
+            stateBefore,
+            stateDiff,
+            conditionCheck,
             ticksConsumed: timing.ticksConsumed,
             ticksBudgeted: timing.ticksBudgeted,
             tickIntervalSec,
@@ -203,6 +242,7 @@ export const eventLoop = (config: EventLoopConfig) =>
 
         yield* Ref.set(subagentFiberRef, null)
         yield* Ref.set(subagentReportRef, "")
+        yield* Ref.set(spawnStateRef, null)
       })
 
     /** Check mid-run step completion and timeouts. */
@@ -337,6 +377,7 @@ export const eventLoop = (config: EventLoopConfig) =>
           const tickCount = yield* Ref.get(tickCountRef)
           yield* Ref.set(subagentFiberRef, fiber)
           yield* Ref.set(stepStartTickRef, tickCount)
+          yield* Ref.set(spawnStateRef, buildRichSnapshot(state))
         }
       })
 
