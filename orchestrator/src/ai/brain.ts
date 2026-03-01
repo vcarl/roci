@@ -59,7 +59,7 @@ Your output must be ONLY valid JSON matching this schema:
   "reasoning": "string — your strategic thinking",
   "steps": [
     {
-      "task": "mine|travel|sell|dock|refuel|repair|chat|explore|combat|undock",
+      "task": "mine|travel|market_sell|dock|refuel|repair|chat|explore|combat|undock",
       "goal": "string — natural language goal for the agent executing this step",
       "model": "haiku|sonnet",
       "successCondition": "string — how to verify this step is done, checked against game state",
@@ -69,7 +69,7 @@ Your output must be ONLY valid JSON matching this schema:
 }
 
 Guidelines:
-- Use "haiku" for routine tasks (mining, traveling, selling, docking, refueling)
+- Use "haiku" for routine tasks (mining, traveling, market selling, docking, refueling)
 - Use "sonnet" for tasks requiring judgment (combat, social interaction, complex trading)
 - Keep plans 2-6 steps long. Don't over-plan.
 - Success conditions should be observable from game state (e.g., "cargo_used > 90% of capacity", "docked_at_base is not null", "current_system == X")

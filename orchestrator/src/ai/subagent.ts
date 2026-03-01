@@ -36,7 +36,7 @@ function buildSubagentPrompt(input: SubagentInput): string {
 
     travel: `Navigate to the destination. Use \`sm jump [system_id]\` for inter-system jumps, then \`sm travel [poi_id]\` for intra-system travel. Wait for arrival by checking \`sm status\` periodically.`,
 
-    sell: `Sell cargo at the current station. Use \`sm sell [item_id] [quantity]\` to sell items. Check market prices first with \`sm market\`. Sell strategically — prioritize items with good buy orders.`,
+    market_sell: `Sell cargo at the current station. Use \`sm market sell [item_id] [quantity] [price]\` to create sell orders. Check market prices first with \`sm market\` and \`sm listings [item_id]\` to see what players are paying. Sell strategically — price competitively against existing orders.`,
 
     dock: `Dock at the nearest station. Use \`sm dock\` if at a dockable POI. If not at a dockable POI, travel to one first.`,
 
@@ -85,7 +85,7 @@ ${values.slice(0, 500)}
 The \`sm\` CLI is already installed on your PATH — just run it directly. Do NOT try to install, build, or locate it. Run \`sm --help\` for the full list of commands. Key commands:
 - \`sm status\` — check your current state
 - \`sm mine\` — mine resources at current POI
-- \`sm sell [item_id] [qty]\` — sell cargo
+- \`sm market sell [item_id] [qty] [price]\` — create a sell order
 - \`sm buy [item_id] [qty]\` — buy items
 - \`sm jump [system_id]\` — jump to another system
 - \`sm travel [poi_id]\` — travel to a POI in current system

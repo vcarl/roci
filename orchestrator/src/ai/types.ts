@@ -4,7 +4,7 @@ export interface Plan {
 }
 
 export interface PlanStep {
-  task: string       // e.g. "mine", "travel", "sell", "dock", "refuel", "chat", "explore"
+  task: string       // e.g. "mine", "travel", "market_sell", "dock", "refuel", "chat", "explore"
   goal: string       // NL goal for the subagent
   model: "haiku" | "sonnet"
   successCondition: string  // checked against game state

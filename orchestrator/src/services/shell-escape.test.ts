@@ -111,7 +111,7 @@ describe("shellEscape", () => {
   })
 
   it("handles markdown code blocks", () => {
-    const input = "```bash\nsm mine\nsm sell $ITEM\n```"
+    const input = "```bash\nsm mine\nsm market sell $ITEM 10 5\n```"
     assert.equal(bashRoundtrip(input), input)
   })
 
@@ -143,7 +143,7 @@ sm chat private <player_id> "hey there"
   })
 
   it("survives markdown in the docker exec pattern", () => {
-    const input = "```bash\nsm mine\n```\n\nUse `sm sell $ITEM`.\nDon't forget!"
+    const input = "```bash\nsm mine\n```\n\nUse `sm market sell $ITEM 10 5`.\nDon't forget!"
     assert.equal(bashCmdRoundtrip(input), input)
   })
 })

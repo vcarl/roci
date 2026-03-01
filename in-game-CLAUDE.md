@@ -95,14 +95,14 @@ sm system          # POIs and jump connections
 sm poi             # Current location details
 sm ship            # Cargo and fitted modules
 sm mine            # Mine at current location
-sm sell-all        # Sell everything in cargo
+sm market sell <item_id> <qty> <price>  # Create a sell order on the market
 sm chat local "hello"  # Chat in local channel
 sm notifications   # Check pending events
 sm skills          # Your skill levels
 sm recipes         # Available crafting recipes
 ```
 
-**Rate limits apply** — mutation commands (mine, travel, sell, etc.) are 1 per 10s tick. Query commands (status, pois, cargo, etc.) are unlimited.
+**Rate limits apply** — mutation commands (mine, travel, market sell, etc.) are 1 per 10s tick. Query commands (status, pois, cargo, etc.) are unlimited.
 
 ---
 
@@ -317,7 +317,7 @@ Run `sm login ./me/credentials.txt` first.
 
 ### "Rate limited" error
 
-Game actions (mutations like mine, travel, attack, sell, etc.) are limited to **1 per tick (10 seconds)**. Query commands (status, system, poi, help, etc.) have no limit.
+Game actions (mutations like mine, travel, attack, market sell, etc.) are limited to **1 per tick (10 seconds)**. Query commands (status, system, poi, help, etc.) have no limit.
 
 **How to handle rate limiting:**
 2. **Use the wait time productively** - While waiting, plan your next moves, write an update, or think about what you know about the game and how you can gain advantage over non-aligned players.

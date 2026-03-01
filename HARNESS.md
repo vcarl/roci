@@ -108,7 +108,7 @@ The harness runs autonomous SpaceMolt game sessions inside a shared Docker conta
   │                     │         │ $ sm market   │                │
   │                     │         │─────────► …   │                │
   │                     │         │◄───────── …   │                │
-  │                     │         │ $ sm sell ... │                │
+  │                     │         │ $ sm market …│                │
   │                     │         │─────────► …   │                │
   │                     │         │◄───────── …   │                │
   │                     │         │               │                │

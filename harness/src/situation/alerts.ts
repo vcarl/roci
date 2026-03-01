@@ -51,7 +51,7 @@ export function detectAlerts(state: GameState, situation: Situation): Alert[] {
 		alerts.push({
 			priority: "medium",
 			message: "Cargo hold is full. Sell or deposit items before mining more.",
-			suggestedAction: type === SituationType.Docked ? "sell" : "dock",
+			suggestedAction: type === SituationType.Docked ? "market_sell" : "dock",
 		});
 	}
 
