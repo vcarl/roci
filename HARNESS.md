@@ -11,12 +11,54 @@ cli.ts
      └─ for each character: fork characterLoop()     pipeline/character-loop.ts
          ├─ gameSocket.connect(creds)                WS connection → Queue<GameEvent>
          ├─ dream() (if diary > 200 lines)           Compress diary via LLM
-         └─ eventLoop(config)                        monitor/event-loop.ts (thin wrapper)
-             ├─ new SpaceMoltAdapter()                domains/spacemolt/adapter.ts
-             ├─ new SpaceMoltEventProcessor()         domains/spacemolt/event-processor.ts
-             └─ runStateMachine(config)               core/state-machine.ts
+         └─ eventLoop(config)                        monitor/event-loop.ts
+             └─ runStateMachine(config)              core/state-machine.ts
                  ├─ initial planning + spawn
                  └─ { event loop }
+```
+
+### Domain Services
+
+The state machine is domain-agnostic. All domain knowledge is injected via 7 Effect service layers, provided in `event-loop.ts`:
+
+| Service | Tag | Role |
+|---------|-----|------|
+| **SituationClassifier** | `SituationClassifierTag` | `classify(state)` → structured situation; `briefing()` → human-readable context |
+| **InterruptRegistry** | `InterruptRegistryTag` | Declarative interrupt rules with priority, condition, message, `suppressWhenTaskIs` |
+| **SkillRegistry** | `SkillRegistryTag` | One `Skill` per task type — bundles instructions, completion logic, defaults |
+| **StateRenderer** | `StateRendererTag` | Snapshots, rich snapshots, diffs, console state bar |
+| **PromptBuilder** | `PromptBuilderTag` | Assembles all LLM prompts (plan, interrupt, evaluate, subagent) |
+| **ToolRegistry** | `ToolRegistryTag` | Declares CLI commands available to subagents, generates documentation |
+| **EventProcessor** | `EventProcessorTag` | Maps raw WS events to state updates, interrupts, ticks |
+
+The PromptBuilder layer depends on SkillRegistry + ToolRegistry at construction time (queries them for task list and command docs).
+
+### Adding a new skill
+
+Create a single file in `domains/spacemolt/skills/`:
+
+```typescript
+export const craftSkill: Skill<GameState, Situation> = {
+  name: "craft",
+  description: "Craft items using materials in cargo",
+  instructions: "Use `sm recipes` to see available recipes...",
+  checkCompletion: (step, state) => { /* deterministic check */ },
+  defaultModel: "haiku",
+  defaultTimeoutTicks: 10,
+}
+```
+
+Then add it to the skills array in `domains/spacemolt/skills/index.ts`. The planning prompt task list, subagent instructions, and step matching all derive from this single definition.
+
+### Adding an interrupt rule
+
+Add to the rules array in `domains/spacemolt/interrupts.ts`:
+
+```typescript
+{ name: "fuel_emergency", priority: "critical",
+  condition: (s, sit) => sit.flags.lowFuel && sit.type !== SituationType.Docked,
+  message: (s) => `Fuel critical (${s.ship.fuel}). Dock immediately.`,
+  suppressWhenTaskIs: "refuel" }
 ```
 
 ### { event loop }
@@ -45,7 +87,7 @@ dispatch on result flags:
 ```
 killSubagent
  └─ brainInterrupt.execute()
-     └─ adapter.interruptUserPrompt() → LLM → new Plan
+     └─ promptBuilder.interruptPrompt() → LLM → new Plan
 ```
 
 ### { handle heartbeat }
@@ -53,11 +95,11 @@ killSubagent
 Runs on both tick and state_update events.
 
 ```
-adapter.detectInterrupts()
+interrupts.criticals(state, situation, currentTask)
  ├─ if criticals → { handle interrupt }
  │
 checkMidRun()
- └─ adapter.isStepComplete() (deterministic matchers)
+ └─ skills.isStepComplete() (deterministic matchers)
      ├─ complete → kill fiber, step++
      └─ timeout exceeded → kill fiber, step++
  │
@@ -71,12 +113,12 @@ poll subagent fiber
 ### { evaluate completed subagent }
 
 ```
-Build diff: adapter.richSnapshot() before vs after
-Run adapter.isStepComplete()
+Build diff: renderer.richSnapshot() before vs after
+Run skills.isStepComplete()
  ├─ deterministic PASS → skip LLM, step++, record outcome, return
  └─ no match / FAIL →
      brainEvaluate.execute()
-      └─ adapter.evaluateUserPrompt() → LLM → {complete, reason}
+      └─ promptBuilder.evaluatePrompt() → LLM → {complete, reason}
           ├─ complete → step++
           └─ failed → clear plan, set previousFailure
 ```
@@ -88,7 +130,7 @@ Only runs if no plan and no subagent.
 ```
 Read diary, background, values
 brainPlan.execute()
- └─ adapter.planUserPrompt()
+ └─ promptBuilder.planPrompt()
      (includes stepTimingHistory with outcomes + diffs)
      → LLM → Plan{steps[]}
 ```
@@ -98,21 +140,13 @@ brainPlan.execute()
 Only runs if plan exists and no fiber running.
 
 ```
-Save spawnStateRef (rich snapshot)
+Save spawnStateRef (renderer.richSnapshot())
 runGenericSubagent()                              core/subagent.ts
- └─ adapter.subagentPrompt()
+ └─ promptBuilder.subagentPrompt()
      → claude.execInContainer()
          → Docker exec → Claude Code in shared container
      → fork as Fiber, streams output back
 ```
-
-## System Layers
-
-- **`pipeline/`** — SpaceMolt-specific wiring (Docker, WS, diary compression)
-- **`core/`** — Domain-agnostic plan/act/evaluate loop (`DomainAdapter<S,Sit>`)
-- **`domains/spacemolt/`** — SpaceMolt adapter implementation (prompts, step matchers, state rendering)
-
-Note: `core/agent-loop.ts` and `core/orchestrator.ts` exist as generic versions of `pipeline/character-loop.ts` and `pipeline/orchestrator.ts` but aren't wired in yet.
 
 ## Sequence Diagram: Subagent Execution
 
@@ -245,29 +279,51 @@ All events printed type-tagged with timestamp and character name:
 
 ## Key Files
 
+### Core (domain-agnostic)
+
 | File | Role |
 |------|------|
-| `orchestrator/src/cli.ts` | CLI commands and service wiring |
-| `orchestrator/src/pipeline/orchestrator.ts` | Container lifecycle, fork character fibers |
-| `orchestrator/src/pipeline/character-loop.ts` | Per-character: login, dream, start event loop |
-| `orchestrator/src/monitor/event-loop.ts` | Thin wrapper: constructs adapter + processor, delegates to state machine |
-| `orchestrator/src/core/state-machine.ts` | Domain-agnostic plan/act/evaluate event loop |
-| `orchestrator/src/core/brain.ts` | Generic brain functions: plan, interrupt, evaluate (Opus) |
-| `orchestrator/src/core/subagent.ts` | Build prompt, run in container, handle exit |
-| `orchestrator/src/core/domain.ts` | `DomainAdapter<S,Sit>` interface |
-| `orchestrator/src/core/types.ts` | Plan, PlanStep, StepTiming, StepCompletionResult |
-| `orchestrator/src/core/event-source.ts` | `EventProcessor<S,Evt>` interface |
-| `orchestrator/src/domains/spacemolt/adapter.ts` | SpaceMolt implementation of DomainAdapter |
-| `orchestrator/src/domains/spacemolt/prompts.ts` | All LLM prompts (plan, evaluate, interrupt, subagent) |
-| `orchestrator/src/domains/spacemolt/step-matchers.ts` | Deterministic step completion checks |
-| `orchestrator/src/domains/spacemolt/state-renderer.ts` | State snapshots, rich snapshots, diffs, console bar |
-| `orchestrator/src/domains/spacemolt/event-processor.ts` | Maps WS GameEvents to EventResults |
-| `orchestrator/src/services/Claude.ts` | Host invoke + container exec with stream/exit |
-| `orchestrator/src/services/GameApi.ts` | REST client for game.spacemolt.com |
-| `orchestrator/src/services/GameSocket.ts` | WebSocket connection + event queue |
-| `orchestrator/src/logging/log-demux.ts` | Raw capture, parse, route to logs + console |
-| `orchestrator/src/logging/log-writer.ts` | CharacterLog service (JSONL append) |
-| `orchestrator/src/logging/console-renderer.ts` | Type-tagged + narrative console output |
+| `core/state-machine.ts` | Plan/act/evaluate event loop |
+| `core/brain.ts` | Brain functions: plan, interrupt, evaluate (Opus) |
+| `core/subagent.ts` | Build prompt, run in container, handle exit |
+| `core/skill.ts` | `Skill` + `SkillRegistry` interface |
+| `core/interrupt.ts` | `InterruptRule` + `InterruptRegistry` interface |
+| `core/situation.ts` | `SituationClassifier` interface |
+| `core/state-renderer.ts` | `StateRenderer` interface |
+| `core/prompt-builder.ts` | `PromptBuilder` interface + prompt context types |
+| `core/tool.ts` | `Tool` + `ToolRegistry` interface |
+| `core/event-source.ts` | `EventProcessor` interface |
+| `core/types.ts` | Plan, PlanStep, StepTiming, StepCompletionResult, Alert |
+
+### SpaceMolt domain
+
+| File | Role |
+|------|------|
+| `domains/spacemolt/skills/` | One file per skill (mine, travel, sell, etc.) + index with registry layer |
+| `domains/spacemolt/interrupts.ts` | Declarative interrupt rules + `InterruptRegistryLive` |
+| `domains/spacemolt/situation.ts` | Classify state + generate briefings |
+| `domains/spacemolt/renderer.ts` | State snapshots, diffs, console bar |
+| `domains/spacemolt/prompt-builder.ts` | All LLM prompt assembly |
+| `domains/spacemolt/tools.ts` | `sm` CLI command declarations |
+| `domains/spacemolt/event-processor.ts` | Maps WS GameEvents to EventResults |
+| `domains/spacemolt/state-renderer.ts` | Underlying snapshot/diff functions |
+
+### Pipeline & services
+
+| File | Role |
+|------|------|
+| `cli.ts` | CLI commands and service wiring |
+| `pipeline/orchestrator.ts` | Container lifecycle, fork character fibers |
+| `pipeline/character-loop.ts` | Per-character: login, dream, start event loop |
+| `monitor/event-loop.ts` | Provides all domain service layers, delegates to state machine |
+| `services/Claude.ts` | Host invoke + container exec with stream/exit |
+| `services/GameApi.ts` | REST client for game.spacemolt.com |
+| `services/GameSocket.ts` | WebSocket connection + event queue |
+| `logging/log-demux.ts` | Raw capture, parse, route to logs + console |
+| `logging/log-writer.ts` | CharacterLog service (JSONL append) |
+| `logging/console-renderer.ts` | Type-tagged + narrative console output |
 | `scripts/run-step.sh` | In-container: cd to player dir, exec claude -p |
 | `.devcontainer/Dockerfile` | Container image: node20, claude-code, firewall |
 | `.devcontainer/init-firewall.sh` | iptables whitelist for allowed domains |
+
+Note: `core/agent-loop.ts` and `core/orchestrator.ts` exist as generic versions of `pipeline/character-loop.ts` and `pipeline/orchestrator.ts` but aren't wired in yet.
