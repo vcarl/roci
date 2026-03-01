@@ -99,6 +99,7 @@ export const ClaudeLive = Layer.effect(
               "--model", opts.model,
               "--output-format", opts.outputFormat ?? "text",
               "--dangerously-skip-permissions",
+              "--no-session-persistence",
             ]
 
             // Disable thinking for non-opus models
