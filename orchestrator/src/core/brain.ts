@@ -105,14 +105,21 @@ export const brainEvaluate: AiFunction<EvaluatePromptContext, StepCompletionResu
       if (fenceMatch) {
         json = fenceMatch[1]
       }
-      const parsed = JSON.parse(json)
-      const stateSnapshot = renderer.snapshot(input.state)
 
-      return {
-        complete: parsed.complete as boolean,
-        reason: parsed.reason as string,
-        matchedCondition: null,
-        relevantState: stateSnapshot,
-      } satisfies StepCompletionResult
+      try {
+        const parsed = JSON.parse(json)
+        const stateSnapshot = renderer.snapshot(input.state)
+
+        return {
+          complete: parsed.complete as boolean,
+          reason: parsed.reason as string,
+          matchedCondition: null,
+          relevantState: stateSnapshot,
+        } satisfies StepCompletionResult
+      } catch (e) {
+        return yield* Effect.fail(
+          new ClaudeError(`Failed to parse brain evaluate output: ${e}`, output),
+        )
+      }
     }),
 }
