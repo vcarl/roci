@@ -25,30 +25,11 @@ The state machine is domain-agnostic. All domain knowledge is injected via 7 Eff
 |---------|-----|------|
 | **SituationClassifier** | `SituationClassifierTag` | `classify(state)` → structured situation; `briefing()` → human-readable context |
 | **InterruptRegistry** | `InterruptRegistryTag` | Declarative interrupt rules with priority, condition, message, `suppressWhenTaskIs` |
-| **SkillRegistry** | `SkillRegistryTag` | One `Skill` per task type — bundles instructions, completion logic, defaults |
+| **SkillRegistry** | `SkillRegistryTag` | Step completion logic — currently a no-op stub (all completion falls through to LLM evaluator) |
 | **StateRenderer** | `StateRendererTag` | Snapshots, rich snapshots, diffs, console state bar |
 | **PromptBuilder** | `PromptBuilderTag` | Assembles all LLM prompts (plan, interrupt, evaluate, subagent) |
-| **ToolRegistry** | `ToolRegistryTag` | Declares CLI commands available to subagents, generates documentation |
 | **EventProcessor** | `EventProcessorTag` | Maps raw WS events to state updates, interrupts, ticks |
-
-The PromptBuilder layer depends on SkillRegistry + ToolRegistry at construction time (queries them for task list and command docs).
-
-### Adding a new skill
-
-Create a single file in `domains/spacemolt/skills/`:
-
-```typescript
-export const craftSkill: Skill<GameState, Situation> = {
-  name: "craft",
-  description: "Craft items using materials in cargo",
-  instructions: "Use `sm recipes` to see available recipes...",
-  checkCompletion: (step, state) => { /* deterministic check */ },
-  defaultModel: "haiku",
-  defaultTimeoutTicks: 10,
-}
-```
-
-Then add it to the skills array in `domains/spacemolt/skills/index.ts`. The planning prompt task list, subagent instructions, and step matching all derive from this single definition.
+| **ContextHandler** | `ContextHandlerTag` | Processes accumulated WS context (chat, combat, death, errors) into structured output |
 
 ### Adding an interrupt rule
 
@@ -99,8 +80,7 @@ interrupts.criticals(state, situation, currentTask)
  ├─ if criticals → { handle interrupt }
  │
 checkMidRun()
- └─ skills.isStepComplete() (deterministic matchers)
-     ├─ complete → kill fiber, step++
+ └─ skills.isStepComplete() (stub: always falls through)
      └─ timeout exceeded → kill fiber, step++
  │
 poll subagent fiber
@@ -114,13 +94,10 @@ poll subagent fiber
 
 ```
 Build diff: renderer.richSnapshot() before vs after
-Run skills.isStepComplete()
- ├─ deterministic PASS → skip LLM, step++, record outcome, return
- └─ no match / FAIL →
-     brainEvaluate.execute()
-      └─ promptBuilder.evaluatePrompt() → LLM → {complete, reason}
-          ├─ complete → step++
-          └─ failed → clear plan, set previousFailure
+brainEvaluate.execute()
+ └─ promptBuilder.evaluatePrompt() → LLM → {complete, reason}
+     ├─ complete → step++
+     └─ failed → clear plan, set previousFailure
 ```
 
 ### { maybe request plan }
@@ -286,12 +263,11 @@ All events printed type-tagged with timestamp and character name:
 | `core/state-machine.ts` | Plan/act/evaluate event loop |
 | `core/brain.ts` | Brain functions: plan, interrupt, evaluate (Opus) |
 | `core/subagent.ts` | Build prompt, run in container, handle exit |
-| `core/skill.ts` | `Skill` + `SkillRegistry` interface |
+| `core/skill.ts` | `Skill` + `SkillRegistry` interface (stub until skills redesign) |
 | `core/interrupt.ts` | `InterruptRule` + `InterruptRegistry` interface |
 | `core/situation.ts` | `SituationClassifier` interface |
 | `core/state-renderer.ts` | `StateRenderer` interface |
 | `core/prompt-builder.ts` | `PromptBuilder` interface + prompt context types |
-| `core/tool.ts` | `Tool` + `ToolRegistry` interface |
 | `core/event-source.ts` | `EventProcessor` interface |
 | `core/types.ts` | Plan, PlanStep, StepTiming, StepCompletionResult, Alert |
 
@@ -299,14 +275,14 @@ All events printed type-tagged with timestamp and character name:
 
 | File | Role |
 |------|------|
-| `domains/spacemolt/skills/` | One file per skill (mine, travel, sell, etc.) + index with registry layer |
 | `domains/spacemolt/interrupts.ts` | Declarative interrupt rules + `InterruptRegistryLive` |
-| `domains/spacemolt/situation.ts` | Classify state + generate briefings |
+| `domains/spacemolt/situation.ts` | Classify state + generate briefings (alerts delegated to InterruptRegistry) |
 | `domains/spacemolt/renderer.ts` | State snapshots, diffs, console bar |
-| `domains/spacemolt/prompt-builder.ts` | All LLM prompt assembly |
-| `domains/spacemolt/tools.ts` | `sm` CLI command declarations |
+| `domains/spacemolt/prompt-builder.ts` | All LLM prompt assembly; subagents reference `sm --help` for commands |
 | `domains/spacemolt/event-processor.ts` | Maps WS GameEvents to EventResults |
+| `domains/spacemolt/context-handler.ts` | Processes chat, combat, death, error context from WS events |
 | `domains/spacemolt/state-renderer.ts` | Underlying snapshot/diff functions |
+| `domains/spacemolt/identity.ts` | Wraps CharacterConfig into generic AgentIdentity interface |
 
 ### Pipeline & services
 

@@ -1,7 +1,7 @@
 import { Layer } from "effect"
 import type { StateRenderer } from "../../core/state-renderer.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
-import type { GameState, Situation } from "./types.js"
+import type { GameState, Situation } from "../../../../harness/src/types.js"
 import { generateBriefing } from "../../../../harness/src/context/briefing.js"
 import {
   snapshot,

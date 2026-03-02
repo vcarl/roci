@@ -2,8 +2,8 @@ import { Layer } from "effect"
 import type { InterruptRule, InterruptRegistry } from "../../core/interrupt.js"
 import { InterruptRegistryTag } from "../../core/interrupt.js"
 import type { Alert } from "../../core/types.js"
-import { SituationTypeEnum } from "./types.js"
-import type { GameState, Situation } from "./types.js"
+import { SituationType as SituationTypeEnum } from "../../../../harness/src/types.js"
+import type { GameState, Situation } from "../../../../harness/src/types.js"
 
 const priorityOrder: Record<Alert["priority"], number> = {
   critical: 0,

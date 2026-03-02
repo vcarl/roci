@@ -1,23 +1,20 @@
-import { Effect, Layer } from "effect"
+import { Layer } from "effect"
 import type {
   PromptBuilder,
   PlanPromptContext,
   InterruptPromptContext,
   EvaluatePromptContext,
-  SubagentPromptContext,
 } from "../../core/prompt-builder.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
-import type { SkillRegistry } from "../../core/skill.js"
-import { SkillRegistryTag } from "../../core/skill.js"
-import type { ToolRegistry } from "../../core/tool.js"
-import { ToolRegistryTag } from "../../core/tool.js"
 import type { PlanStep } from "../../core/types.js"
-import type { GameState, Situation } from "./types.js"
+import type { GameState, Situation } from "../../../../harness/src/types.js"
 import { snapshot } from "./state-renderer.js"
 
 // ── Planning prompts ────────────────────────────────────────
 
-function buildPlanSystemPrompt(tickIntervalSec: number, taskList: string): string {
+const TASK_LIST = "mine|travel|sell|dock|undock|refuel|repair|combat|chat|explore"
+
+function buildPlanSystemPrompt(tickIntervalSec: number): string {
   return `You are a strategic planning AI for a character in the SpaceMolt MMO.
 You analyze the current game state and produce a structured plan.
 Your output must be ONLY valid JSON matching this schema:
@@ -25,7 +22,7 @@ Your output must be ONLY valid JSON matching this schema:
   "reasoning": "string — your strategic thinking",
   "steps": [
     {
-      "task": "${taskList}",
+      "task": "${TASK_LIST}",
       "goal": "string — natural language goal for the agent executing this step",
       "model": "haiku|sonnet",
       "successCondition": "string — how to verify this step is done, checked against game state",
@@ -75,9 +72,6 @@ function buildPlanUserPrompt(ctx: PlanPromptContext<GameState, Situation>): stri
 
 ## Briefing
 ${ctx.briefing}
-
-## Alerts
-${ctx.situation.alerts.map((a: { priority: string; message: string }) => `[${a.priority}] ${a.message}`).join("\n") || "None"}
 ${failureSection}${chatSection}${timingSection}${additionalSection}
 ## Character Background
 ${ctx.background}
@@ -92,9 +86,8 @@ ${ctx.diary.slice(-2000)}
 
 Based on the current state, create a strategic plan. Consider:
 1. What situation is the character in? (${ctx.situation.type})
-2. Are there any alerts to address?
-3. What would this character prioritize?
-4. What sequence of actions makes sense?
+2. What would this character prioritize?
+3. What sequence of actions makes sense?
 
 Output ONLY the JSON plan.`
 }
@@ -194,22 +187,20 @@ function buildStateSummary(state: GameState, situation: Situation): string {
   return lines.join("\n")
 }
 
+const TOOL_DOCS = `The \`sm\` CLI is installed on your PATH. Run \`sm --help\` for all commands, or \`sm commands\` for a categorized reference.`
+
 function buildSubagentPromptText(
   step: PlanStep,
   state: GameState,
   situation: Situation,
   identity: { personality: string; values: string; tickIntervalSec: number },
-  skills: SkillRegistry,
-  toolDocs: string,
 ): string {
   const briefing = buildStateSummary(state, situation)
-  const skill = skills.getSkill(step.task)
-  const taskInstruction = skill?.instructions ?? skills.getSkill("explore")?.instructions ?? "Explore the current area."
   const budgetSeconds = Math.round(step.timeoutTicks * identity.tickIntervalSec)
 
   return `# Your Mission
 
-${taskInstruction}
+You are executing a "${step.task}" task. Use the \`sm\` CLI to interact with the game.
 
 ## Specific Goal
 ${step.goal}
@@ -232,7 +223,7 @@ ${identity.personality.slice(0, 800)}
 ${identity.values.slice(0, 500)}
 
 ## Available Commands
-${toolDocs}
+${TOOL_DOCS}
 
 Stay focused on your specific goal. When you've achieved it or cannot make further progress, stop.
 
@@ -244,65 +235,42 @@ COMPLETION REPORT as your final message summarizing:
 - Any issues or blockers encountered`
 }
 
-// ── Prompt builder factory ──────────────────────────────────
+// ── Prompt builder ──────────────────────────────────────────
 
-/**
- * Create the SpaceMolt prompt builder. Takes skills and tools as constructor
- * arguments so it can be wired via Effect layers.
- */
-function createPromptBuilder(
-  skills: SkillRegistry,
-  toolRegistry: ToolRegistry,
-): PromptBuilder<GameState, Situation> {
-  const toolDocs = toolRegistry.documentation()
+const spaceMoltPromptBuilder: PromptBuilder<GameState, Situation> = {
+  planPrompt(ctx) {
+    return {
+      system: buildPlanSystemPrompt(ctx.tickIntervalSec),
+      user: buildPlanUserPrompt(ctx),
+    }
+  },
 
-  return {
-    planPrompt(ctx) {
-      return {
-        system: buildPlanSystemPrompt(ctx.tickIntervalSec, skills.taskList()),
-        user: buildPlanUserPrompt(ctx),
-      }
-    },
+  interruptPrompt(ctx) {
+    return {
+      system: INTERRUPT_SYSTEM_PROMPT,
+      user: buildInterruptUserPrompt(ctx),
+    }
+  },
 
-    interruptPrompt(ctx) {
-      return {
-        system: INTERRUPT_SYSTEM_PROMPT,
-        user: buildInterruptUserPrompt(ctx),
-      }
-    },
+  evaluatePrompt(ctx) {
+    return {
+      system: EVALUATE_SYSTEM_PROMPT,
+      user: buildEvaluateUserPrompt(ctx),
+    }
+  },
 
-    evaluatePrompt(ctx) {
-      return {
-        system: EVALUATE_SYSTEM_PROMPT,
-        user: buildEvaluateUserPrompt(ctx),
-      }
-    },
-
-    subagentPrompt(ctx) {
-      return buildSubagentPromptText(
-        ctx.step,
-        ctx.state as GameState,
-        ctx.situation as Situation,
-        ctx.identity,
-        skills,
-        toolDocs,
-      )
-    },
-  }
+  subagentPrompt(ctx) {
+    return buildSubagentPromptText(
+      ctx.step,
+      ctx.state as GameState,
+      ctx.situation as Situation,
+      ctx.identity,
+    )
+  },
 }
 
 // ── Layer ────────────────────────────────────────────────────
 
-/**
- * Layer providing the SpaceMolt prompt builder.
- * Depends on SkillRegistry and ToolRegistry.
- */
-export const SpaceMoltPromptBuilderLive = Layer.effect(
-  PromptBuilderTag,
-  Effect.gen(function* () {
-    const skills = yield* SkillRegistryTag
-    const toolRegistry = yield* ToolRegistryTag
-    return createPromptBuilder(skills, toolRegistry)
-  }),
-)
+/** Layer providing the SpaceMolt prompt builder. */
+export const SpaceMoltPromptBuilderLive = Layer.succeed(PromptBuilderTag, spaceMoltPromptBuilder)
 

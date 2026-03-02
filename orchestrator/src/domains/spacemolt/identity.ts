@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import type { AgentIdentity } from "../../core/agent-identity.js"
 import { CharacterFs, type CharacterConfig } from "../../services/CharacterFs.js"
-import type { Credentials } from "./types.js"
+import type { Credentials } from "../../../../harness/src/types.js"
 
 /**
  * Wraps CharacterConfig + CharacterFs into the generic AgentIdentity interface.

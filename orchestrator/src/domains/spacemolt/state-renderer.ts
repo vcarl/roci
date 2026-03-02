@@ -1,5 +1,5 @@
 import { SituationType } from "../../../../harness/src/types.js"
-import type { GameState, Situation } from "./types.js"
+import type { GameState, Situation } from "../../../../harness/src/types.js"
 import { tag } from "../../logging/console-renderer.js"
 
 /** Extract a compact snapshot of key state values for logging. */

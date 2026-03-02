@@ -1,6 +1,7 @@
 import { Layer } from "effect"
 import { EventProcessorTag, type EventProcessor, type EventResult } from "../../core/event-source.js"
-import type { GameState, GameEvent, StateUpdateEvent } from "./types.js"
+import type { GameState } from "../../../../harness/src/types.js"
+import type { GameEvent, StateUpdateEvent } from "../../../../harness/src/ws-types.js"
 
 function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult<GameState> {
   return {

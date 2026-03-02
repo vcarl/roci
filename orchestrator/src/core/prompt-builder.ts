@@ -49,7 +49,7 @@ export interface SubagentPromptContext<S, Sit> {
 
 /**
  * Assembles all prompts for the brain and subagent.
- * Consumes SkillRegistry, ToolRegistry, and StateRenderer for structured data.
+ * Assembles all prompts for the brain and subagent.
  */
 export interface PromptBuilder<S = any, Sit = any> {
   planPrompt(ctx: PlanPromptContext<S, Sit>): { system: string; user: string }
