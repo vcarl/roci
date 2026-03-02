@@ -1,5 +1,5 @@
 import { Context } from "effect"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 import type { PlanStep, StepCompletionResult } from "./types.js"
 
 /**
@@ -12,7 +12,7 @@ export interface Skill {
   /** Instructions given to the subagent for this task */
   readonly instructions: string
   /** Deterministic completion check */
-  readonly checkCompletion: (step: PlanStep, state: GameState, situation: Situation) => StepCompletionResult
+  readonly checkCompletion: (step: PlanStep, state: DomainState, situation: DomainSituation) => StepCompletionResult
   /** Default model for this skill */
   readonly defaultModel: "haiku" | "sonnet"
   /** Default timeout in ticks */
@@ -30,7 +30,7 @@ export interface SkillRegistry {
   /** Formatted task list for inclusion in planning system prompt */
   taskList(): string
   /** Delegate to the matching skill's checkCompletion */
-  isStepComplete(step: PlanStep, state: GameState, situation: Situation): StepCompletionResult
+  isStepComplete(step: PlanStep, state: DomainState, situation: DomainSituation): StepCompletionResult
 }
 
 /**

@@ -1,0 +1,33 @@
+import { Layer } from "effect"
+import type { DomainBundle } from "../../core/domain-bundle.js"
+import { SkillRegistryTag } from "../../core/skill.js"
+import { SpaceMoltEventProcessorLive } from "./event-processor.js"
+import { SpaceMoltInterruptRegistryLive } from "./interrupts.js"
+import { SpaceMoltSituationClassifierLive } from "./situation.js"
+import { SpaceMoltStateRendererLive } from "./renderer.js"
+import { SpaceMoltPromptBuilderLive } from "./prompt-builder.js"
+import { SpaceMoltContextHandlerLive } from "./context-handler.js"
+
+/** No-op skill registry — all step completion falls through to the LLM evaluator. */
+const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
+  skills: [],
+  getSkill: () => undefined,
+  taskList: () => "",
+  isStepComplete: () => ({
+    complete: false,
+    reason: "No skill registry configured",
+    matchedCondition: null,
+    relevantState: {},
+  }),
+})
+
+/** All SpaceMolt domain service layers bundled for the core state machine. */
+export const spaceMoltDomainBundle: DomainBundle = Layer.mergeAll(
+  SpaceMoltPromptBuilderLive,
+  SpaceMoltEventProcessorLive,
+  StubSkillRegistryLive,
+  SpaceMoltInterruptRegistryLive,
+  SpaceMoltSituationClassifierLive,
+  SpaceMoltStateRendererLive,
+  SpaceMoltContextHandlerLive,
+)

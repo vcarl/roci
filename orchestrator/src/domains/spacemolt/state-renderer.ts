@@ -1,5 +1,5 @@
-import { SituationType } from "../../game/types.js"
-import type { GameState, Situation } from "../../game/types.js"
+import { SituationType } from "./types.js"
+import type { GameState, Situation } from "./types.js"
 import { tag } from "../../logging/console-renderer.js"
 
 /** Extract a compact snapshot of key state values for logging. */

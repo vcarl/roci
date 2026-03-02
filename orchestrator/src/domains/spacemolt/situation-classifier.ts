@@ -1,5 +1,5 @@
-import { SituationType } from "../types.js";
-import type { GameState, Situation, SituationFlags } from "../types.js";
+import { SituationType } from "./types.js";
+import type { GameState, Situation, SituationFlags } from "./types.js";
 
 const MINEABLE_POI_TYPES = new Set(["asteroid_belt", "ice_field", "gas_cloud"]);
 const LOW_FUEL_THRESHOLD = 0.25;

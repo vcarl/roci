@@ -1,10 +1,10 @@
 import { Context } from "effect"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 import type { Alert, Plan, PlanStep, StepCompletionResult, StepTiming } from "./types.js"
 
 export interface PlanPromptContext {
-  state: GameState
-  situation: Situation
+  state: DomainState
+  situation: DomainSituation
   briefing: string
   diary: string
   background: string
@@ -17,8 +17,8 @@ export interface PlanPromptContext {
 }
 
 export interface InterruptPromptContext {
-  state: GameState
-  situation: Situation
+  state: DomainState
+  situation: DomainSituation
   alerts: Alert[]
   currentPlan: Plan | null
   briefing: string
@@ -28,7 +28,7 @@ export interface InterruptPromptContext {
 export interface EvaluatePromptContext {
   step: PlanStep
   subagentReport: string
-  state: GameState
+  state: DomainState
   stateBefore: Record<string, unknown> | null
   stateDiff: string
   conditionCheck: StepCompletionResult
@@ -39,8 +39,8 @@ export interface EvaluatePromptContext {
 
 export interface SubagentPromptContext {
   step: PlanStep
-  state: GameState
-  situation: Situation
+  state: DomainState
+  situation: DomainSituation
   identity: {
     personality: string
     values: string

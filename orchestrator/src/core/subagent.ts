@@ -6,7 +6,7 @@ import { logStderr, logStreamEvent } from "../logging/console-renderer.js"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { PromptBuilderTag } from "./prompt-builder.js"
 import type { PlanStep } from "./types.js"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 
 export interface SubagentInput {
   char: CharacterConfig
@@ -15,8 +15,8 @@ export interface SubagentInput {
   systemPrompt: string
   containerEnv?: Record<string, string>
   step: PlanStep
-  state: GameState
-  situation: Situation
+  state: DomainState
+  situation: DomainSituation
   personality: string
   values: string
   tickIntervalSec: number

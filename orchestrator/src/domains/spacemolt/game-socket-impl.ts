@@ -1,13 +1,13 @@
 import { Context, Effect, Layer, Queue, Scope, Schedule, Fiber, Ref, Deferred } from "effect"
 import WebSocket from "ws"
-import type { Credentials, GameState, NearbyPlayer, PlayerState, ShipState } from "../game/types.js"
+import type { Credentials, GameState, NearbyPlayer, PlayerState, ShipState } from "./types.js"
 import type {
   GameEvent,
   LoggedInEvent,
   WelcomeEvent,
-} from "../game/ws-types.js"
-import { parseGameEvent } from "../game/ws-types.js"
-import { tag } from "../logging/console-renderer.js"
+} from "./ws-types.js"
+import { parseGameEvent } from "./ws-types.js"
+import { tag } from "../../logging/console-renderer.js"
 
 const WS_URL = "wss://game.spacemolt.com/ws"
 const HEALTH_URL = "https://game.spacemolt.com/health"

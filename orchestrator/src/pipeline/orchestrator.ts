@@ -3,9 +3,10 @@ import { Docker, DockerError } from "../services/Docker.js"
 import { characterLoop, type CharacterLoopConfig } from "./character-loop.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import { ProjectRoot } from "../services/ProjectRoot.js"
-import * as path from "node:path"
-import { execSync } from "node:child_process"
 import { readFileSync } from "node:fs"
+import { execSync } from "node:child_process"
+import * as path from "node:path"
+import type { DomainConfig } from "../core/domain-bundle.js"
 
 const SHARED_CONTAINER_NAME = "roci-crew"
 
@@ -37,10 +38,9 @@ function loadDotenv(projectRoot: string): Record<string, string> {
  * Ensure the shared `roci-crew` container exists and is running.
  * Returns the container ID.
  */
-const ensureSharedContainer = (imageName: string) =>
+const ensureSharedContainer = (domain: DomainConfig) =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    const projectRoot = yield* ProjectRoot
 
     const existing = yield* docker.status(SHARED_CONTAINER_NAME)
 
@@ -60,52 +60,15 @@ const ensureSharedContainer = (imageName: string) =>
       yield* docker.remove(SHARED_CONTAINER_NAME)
     }
 
-    // Create the shared container with all mounts
+    // Create the shared container with domain-specific mounts
     const containerId = yield* docker.create({
       name: SHARED_CONTAINER_NAME,
-      image: imageName,
-      mounts: [
-        {
-          host: path.resolve(projectRoot, "players"),
-          container: "/work/players",
-        },
-        {
-          host: path.resolve(projectRoot, "shared-resources/workspace"),
-          container: "/work/shared/workspace",
-        },
-        {
-          host: path.resolve(projectRoot, "shared-resources/spacemolt-docs"),
-          container: "/work/shared/spacemolt-docs",
-        },
-        {
-          host: path.resolve(projectRoot, "docs"),
-          container: "/work/shared/docs",
-        },
-        {
-          host: path.resolve(projectRoot, "shared-resources/sm-cli"),
-          container: "/work/sm-cli",
-        },
-        {
-          host: path.resolve(projectRoot, ".claude"),
-          container: "/work/.claude",
-          readonly: true,
-        },
-        {
-          host: path.resolve(projectRoot, ".devcontainer"),
-          container: "/opt/devcontainer",
-          readonly: true,
-        },
-        {
-          host: path.resolve(projectRoot, "harness"),
-          container: "/opt/harness",
-          readonly: true,
-        },
-        {
-          host: path.resolve(projectRoot, "scripts"),
-          container: "/opt/scripts",
-          readonly: true,
-        },
-      ],
+      image: domain.imageName,
+      mounts: domain.containerMounts.map((m) => ({
+        host: m.host,
+        container: m.container,
+        readonly: m.readonly,
+      })),
       env: {},
       cmd: ["bash", "-c", "sudo /usr/local/bin/init-firewall.sh && sleep infinity"],
       capAdd: ["NET_ADMIN", "NET_RAW"],
@@ -119,13 +82,10 @@ const ensureSharedContainer = (imageName: string) =>
       catch: (e) => new DockerError("Failed to start shared container", e),
     })
 
-    // Create sm symlink (runs as root so it can write to /usr/local/bin)
-    yield* Effect.try({
-      try: () => {
-        execSync(`docker exec -u root ${containerId} ln -sf /work/sm-cli/sm /usr/local/bin/sm`, { stdio: "pipe" })
-      },
-      catch: (e) => new DockerError("Failed to create sm symlink", e),
-    })
+    // Run domain-specific container setup
+    if (domain.containerSetup) {
+      domain.containerSetup(containerId)
+    }
 
     yield* logToConsole("orchestrator", "main", `Shared container ${SHARED_CONTAINER_NAME} created and started`)
 
@@ -136,7 +96,7 @@ const ensureSharedContainer = (imageName: string) =>
  * Multi-character orchestrator. Ensures a single shared container,
  * spawns a Fiber per character, and waits for all to complete (or be interrupted).
  */
-export const runOrchestrator = (configs: CharacterLoopConfig[]) =>
+export const runOrchestrator = (configs: CharacterLoopConfig[], domain: DomainConfig) =>
   Effect.gen(function* () {
     const projectRoot = yield* ProjectRoot
 
@@ -154,11 +114,16 @@ export const runOrchestrator = (configs: CharacterLoopConfig[]) =>
     const containerEnv = { CLAUDE_CODE_OAUTH_TOKEN: oauthToken }
 
     // Ensure the shared container is running (once for all characters)
-    const containerId = yield* ensureSharedContainer(configs[0].imageName)
+    const containerId = yield* ensureSharedContainer(domain)
 
     // Fork each character loop as a fiber, passing the shared container ID + env
     const fibers = yield* Effect.forEach(configs, (config) =>
-      characterLoop({ ...config, containerId, containerEnv }).pipe(
+      characterLoop({
+        ...config,
+        containerId,
+        containerEnv,
+        phaseRegistry: domain.phaseRegistry,
+      }).pipe(
         Effect.catchAll((e) =>
           logToConsole(config.char.name, "orchestrator", `Fatal error: ${e}`),
         ),

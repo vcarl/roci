@@ -1,18 +1,17 @@
 import { Context } from "effect"
-import type { GameState } from "../game/types.js"
-import type { GameEvent } from "../game/ws-types.js"
+import type { DomainState, DomainEvent } from "./domain-types.js"
 
 /**
  * Translates raw domain events into state machine operations.
  */
 export interface EventProcessor {
   /** Process a single event, returning how the state machine should react. */
-  processEvent(event: GameEvent, currentState: GameState): EventResult
+  processEvent(event: DomainEvent, currentState: DomainState): EventResult
 }
 
 export interface EventResult {
   /** Merge into state. If undefined, state is unchanged. */
-  stateUpdate?: (prev: GameState) => GameState
+  stateUpdate?: (prev: DomainState) => DomainState
   /** Update tick counter. If undefined, tick is unchanged. */
   tick?: number
   /** Trigger interrupt processing (check for critical alerts). */

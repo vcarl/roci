@@ -12,7 +12,7 @@ import {
 import type { SkillRegistry } from "./skill.js"
 import type { SituationClassifier } from "./situation.js"
 import type { StateRenderer } from "./state-renderer.js"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 import type { Plan, StepCompletionResult } from "./types.js"
 import type { LifecycleHooks } from "./lifecycle.js"
 import type { TimingRefs } from "./step-tracker.js"
@@ -57,7 +57,7 @@ export const evaluateCompletedSubagent = (
   planRefs: PlanRefs,
   timingRefs: TimingRefs,
   services: EvaluateServices,
-  state: GameState,
+  state: DomainState,
 ) =>
   Effect.gen(function* () {
     const log = yield* CharacterLog
@@ -120,10 +120,10 @@ export const evaluateCompletedSubagent = (
         ticksBudgeted: timing.ticksBudgeted,
         tickIntervalSec: services.tickIntervalSec,
       }).pipe(
-        Effect.catchAll((e) =>
+        Effect.catchTag("ClaudeError", (e) =>
           Effect.succeed({
             complete: true as const,
-            reason: `Brain evaluation failed (${e}), trusting subagent completion`,
+            reason: `Brain evaluation failed (${e.message}), trusting subagent completion`,
             matchedCondition: null,
             relevantState: services.renderer.snapshot(state),
           }),
@@ -177,8 +177,8 @@ export const checkMidRun = (
   planRefs: PlanRefs,
   timingRefs: TimingRefs,
   services: CheckMidRunServices,
-  state: GameState,
-  situation: Situation,
+  state: DomainState,
+  situation: DomainSituation,
 ) =>
   Effect.gen(function* () {
     const currentFiber = yield* Ref.get(subagentRefs.fiber)
@@ -227,8 +227,8 @@ export const maybeSpawnSubagent = (
   timingRefs: TimingRefs,
   smConfig: SpawnSubagentConfig,
   services: SpawnSubagentServices,
-  state: GameState,
-  situation: Situation,
+  state: DomainState,
+  situation: DomainSituation,
 ) =>
   Effect.gen(function* () {
     if ((yield* Ref.get(subagentRefs.fiber)) !== null) return

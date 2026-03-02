@@ -1,14 +1,14 @@
 import { Context } from "effect"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 
 /**
  * Derives a structured situation from raw domain state.
  */
 export interface SituationClassifier {
   /** Derive structured situation (type, flags, alerts) from raw state. */
-  classify(state: GameState): Situation
+  classify(state: DomainState): DomainSituation
   /** Human-readable briefing for the brain. */
-  briefing(state: GameState, situation: Situation): string
+  briefing(state: DomainState, situation: DomainSituation): string
 }
 
 /**

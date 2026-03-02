@@ -1,5 +1,5 @@
 import { Context } from "effect"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 import type { Alert } from "./types.js"
 
 /**
@@ -11,9 +11,9 @@ export interface InterruptRule {
   /** Only "critical" rules trigger immediate replanning */
   readonly priority: Alert["priority"]
   /** When does this rule fire? */
-  readonly condition: (state: GameState, situation: Situation) => boolean
+  readonly condition: (state: DomainState, situation: DomainSituation) => boolean
   /** Human-readable alert message */
-  readonly message: (state: GameState, situation: Situation) => string
+  readonly message: (state: DomainState, situation: DomainSituation) => string
   readonly suggestedAction?: string
   /** Prevent re-triggering if the current step's task matches this name */
   readonly suppressWhenTaskIs?: string
@@ -26,11 +26,11 @@ export interface InterruptRule {
 export interface InterruptRegistry {
   readonly rules: ReadonlyArray<InterruptRule>
   /** Evaluate all rules, return alerts sorted by priority. If currentTask is provided, suppress rules whose suppressWhenTaskIs matches. */
-  evaluate(state: GameState, situation: Situation, currentTask?: string): Alert[]
+  evaluate(state: DomainState, situation: DomainSituation, currentTask?: string): Alert[]
   /** Return only critical alerts (triggers for replanning). If currentTask is provided, suppress rules whose suppressWhenTaskIs matches. */
-  criticals(state: GameState, situation: Situation, currentTask?: string): Alert[]
+  criticals(state: DomainState, situation: DomainSituation, currentTask?: string): Alert[]
   /** Return non-critical alerts (high, medium, low). */
-  softAlerts(state: GameState, situation: Situation, currentTask?: string): Alert[]
+  softAlerts(state: DomainState, situation: DomainSituation, currentTask?: string): Alert[]
 }
 
 /**

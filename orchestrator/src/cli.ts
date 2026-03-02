@@ -7,14 +7,17 @@ import { Docker, DockerLive } from "./services/Docker.js"
 import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "./services/CharacterFs.js"
 import { PromptTemplatesLive } from "./services/PromptTemplates.js"
 import { ClaudeLive } from "./services/Claude.js"
-import { makeGameSocketLive } from "./services/GameSocket.js"
 import { CharacterLogLive } from "./logging/log-writer.js"
 import { ProjectRoot } from "./services/ProjectRoot.js"
 import { runOrchestrator } from "./pipeline/orchestrator.js"
 import { logToConsole } from "./logging/console-renderer.js"
+import { spaceMoltDomainConfig } from "./domains/spacemolt/config.js"
+import { makeGameSocketLive } from "./domains/spacemolt/game-socket.js"
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "../..")
-const IMAGE_NAME = "spacemolt-player"
+
+// Domain configuration — currently always SpaceMolt
+const domainConfig = spaceMoltDomainConfig(PROJECT_ROOT)
 
 // Shared options
 const tickInterval = Options.integer("tick-interval").pipe(
@@ -46,7 +49,7 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
       configs.push({
         char,
         tickIntervalSeconds: args.tickInterval,
-        imageName: IMAGE_NAME,
+        imageName: domainConfig.imageName,
       })
     }
 
@@ -54,13 +57,13 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
     const docker = yield* Docker
     yield* logToConsole("orchestrator", "main", "Building Docker image...")
     yield* docker.build(
-      IMAGE_NAME,
+      domainConfig.imageName,
       path.resolve(PROJECT_ROOT, ".devcontainer/Dockerfile"),
       path.resolve(PROJECT_ROOT, ".devcontainer"),
     )
 
-    // Run orchestrator
-    yield* runOrchestrator(configs)
+    // Run orchestrator with domain config
+    yield* runOrchestrator(configs, domainConfig)
   }),
 ).pipe(Command.withDescription("Start character(s) running"))
 

@@ -1,26 +1,30 @@
 import { Layer } from "effect"
 import { EventProcessorTag, type EventProcessor, type EventResult } from "../../core/event-source.js"
-import type { StateUpdateEvent } from "../../game/ws-types.js"
+import type { GameState } from "./types.js"
+import type { GameEvent, StateUpdateEvent } from "./ws-types.js"
 
 function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult {
   return {
-    stateUpdate: (prev) => ({
-      ...prev,
-      player: payload.player,
-      ship: payload.ship,
-      nearby: payload.nearby,
-      inCombat: payload.in_combat,
-      tick: payload.tick,
-      timestamp: Date.now(),
-      travelProgress: payload.travel_progress != null
-        ? {
-            travel_progress: payload.travel_progress,
-            travel_destination: payload.travel_destination ?? "",
-            travel_type: payload.travel_type ?? "travel",
-            travel_arrival_tick: payload.travel_arrival_tick ?? 0,
-          }
-        : null,
-    }),
+    stateUpdate: (prev) => {
+      const smPrev = prev as GameState
+      return {
+        ...smPrev,
+        player: payload.player,
+        ship: payload.ship,
+        nearby: payload.nearby,
+        inCombat: payload.in_combat,
+        tick: payload.tick,
+        timestamp: Date.now(),
+        travelProgress: payload.travel_progress != null
+          ? {
+              travel_progress: payload.travel_progress,
+              travel_destination: payload.travel_destination ?? "",
+              travel_type: payload.travel_type ?? "travel",
+              travel_arrival_tick: payload.travel_arrival_tick ?? 0,
+            }
+          : null,
+      }
+    },
     tick: payload.tick > 0 ? payload.tick : undefined,
     isStateUpdate: true,
   }
@@ -32,18 +36,19 @@ function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult {
  */
 const spaceMoltEventProcessor: EventProcessor = {
   processEvent(event, _currentState) {
-    switch (event.type) {
+    const smEvent = event as GameEvent
+    switch (smEvent.type) {
       case "state_update":
-        return handleStateUpdate(event.payload)
+        return handleStateUpdate(smEvent.payload)
 
       case "tick":
         return {
-          tick: event.payload.tick,
+          tick: smEvent.payload.tick,
           isTick: true,
         }
 
       case "combat_update": {
-        const { payload } = event
+        const { payload } = smEvent
         return {
           isInterrupt: true,
           accumulatedContext: {
@@ -62,12 +67,12 @@ const spaceMoltEventProcessor: EventProcessor = {
             // Logging handled by the state machine
           },
           accumulatedContext: {
-            deathEvent: event.payload,
+            deathEvent: smEvent.payload,
           },
         }
 
       case "chat_message": {
-        const { payload } = event
+        const { payload } = smEvent
         return {
           accumulatedContext: {
             chatMessage: {
@@ -88,7 +93,7 @@ const spaceMoltEventProcessor: EventProcessor = {
             // Logging handled externally
           },
           accumulatedContext: {
-            error: event.payload,
+            error: smEvent.payload,
           },
         }
 

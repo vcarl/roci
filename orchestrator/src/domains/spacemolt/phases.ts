@@ -1,14 +1,15 @@
-import { Effect, Deferred } from "effect"
-import type { GameState } from "../../game/types.js"
-import type { GameEvent } from "../../game/ws-types.js"
+import { Effect, Deferred, Queue } from "effect"
+import type { GameState } from "./types.js"
+import type { GameEvent } from "./ws-types.js"
 import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
 import type { ExitReason } from "../../core/types.js"
 import type { LifecycleHooks } from "../../core/lifecycle.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
-import { GameSocket } from "../../services/GameSocket.js"
+import { GameSocket } from "./game-socket.js"
 import { dream } from "../../ai/dream.js"
 import { dinner } from "../../ai/dinner.js"
 import { eventLoop } from "../../monitor/event-loop.js"
+import { spaceMoltDomainBundle } from "./index.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 
@@ -18,153 +19,152 @@ const ACTIVE_SESSION_TURNS = 100
 /** Diary lines above this threshold trigger dream compression. */
 const DIARY_COMPRESSION_THRESHOLD = 200
 
-type SMPhaseContext = PhaseContext<GameState, GameEvent>
-type SMPhaseResult = PhaseResult<GameState, GameEvent>
-type SMConnectionState = ConnectionState<GameState, GameEvent>
-
-/**
- * Helper to create a properly typed phase.
- */
-function definePhase<R>(
-  name: string,
-  run: (context: SMPhaseContext) => Effect.Effect<SMPhaseResult, unknown, R>,
-): Phase<GameState, GameEvent, R> {
-  return { name, run }
-}
+/** Internal connection type for SpaceMolt phases. */
+type SMConnection = ConnectionState<GameState, GameEvent>
 
 /**
  * Startup phase: connect to game, dream if diary is long.
  */
-const startupPhase = definePhase("startup", (context) =>
-  Effect.gen(function* () {
-    const charFs = yield* CharacterFs
-    const gameSocket = yield* GameSocket
+const startupPhase = {
+  name: "startup",
+  run: (context: PhaseContext) =>
+    Effect.gen(function* () {
+      const charFs = yield* CharacterFs
+      const gameSocket = yield* GameSocket
 
-    // Connect to the game
-    const creds = yield* charFs.readCredentials(context.char)
-    const { events, initialState, tickIntervalSec, initialTick } =
-      yield* gameSocket.connect(creds, context.char.name)
+      // Connect to the game
+      const creds = yield* charFs.readCredentials(context.char)
+      const { events, initialState, tickIntervalSec, initialTick } =
+        yield* gameSocket.connect(creds, context.char.name)
 
-    yield* logToConsole(
-      context.char.name,
-      "orchestrator",
-      `Connected via WebSocket as ${initialState.player.username}`,
-    )
-
-    // Dream if diary is long
-    const diary = yield* charFs.readDiary(context.char)
-    const diaryLines = diary.split("\n").length
-    if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
-      yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-      yield* dream.execute({ char: context.char }).pipe(
-        Effect.catchAll((e) =>
-          logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
-        ),
+      yield* logToConsole(
+        context.char.name,
+        "orchestrator",
+        `Connected via WebSocket as ${initialState.player.username}`,
       )
-    }
 
-    const connection: SMConnectionState = { events, initialState, tickIntervalSec, initialTick }
-    return { _tag: "Continue", next: "active", connection } as SMPhaseResult
-  }),
-)
+      // Dream if diary is long
+      const diary = yield* charFs.readDiary(context.char)
+      const diaryLines = diary.split("\n").length
+      if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
+        yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
+        yield* dream.execute({ char: context.char }).pipe(
+          Effect.catchAll((e) =>
+            logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
+          ),
+        )
+      }
+
+      const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
+      return { _tag: "Continue", next: "active", connection } as PhaseResult
+    }),
+}
 
 /**
  * Active gameplay phase: runs the event loop / state machine.
  * Exits after MIN_ACTIVE_TURNS turns (~50 minutes at 30s/tick),
  * then transitions to social phase.
  */
-const activePhase = definePhase("active", (context) =>
-  Effect.gen(function* () {
-    const log = yield* CharacterLog
+const activePhase = {
+  name: "active",
+  run: (context: PhaseContext) =>
+    Effect.gen(function* () {
+      const log = yield* CharacterLog
 
-    if (!context.connection) {
-      yield* logToConsole(context.char.name, "orchestrator", "No connection in active phase — shutting down")
-      return { _tag: "Shutdown" } as SMPhaseResult
-    }
+      if (!context.connection) {
+        yield* logToConsole(context.char.name, "orchestrator", "No connection in active phase — shutting down")
+        return { _tag: "Shutdown" } as PhaseResult
+      }
 
-    const { events, initialState, tickIntervalSec, initialTick } = context.connection
+      const conn = context.connection as SMConnection
+      const { events, initialState, tickIntervalSec, initialTick } = conn
 
-    yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
+      yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
 
-    yield* log.action(context.char, {
-      timestamp: new Date().toISOString(),
-      source: "orchestrator",
-      character: context.char.name,
-      type: "loop_start",
-      containerId: context.containerId,
-    })
+      yield* log.action(context.char, {
+        timestamp: new Date().toISOString(),
+        source: "orchestrator",
+        character: context.char.name,
+        type: "loop_start",
+        containerId: context.containerId,
+      })
 
-    const exitSignal = yield* Deferred.make<ExitReason, never>()
+      const exitSignal = yield* Deferred.make<ExitReason, never>()
 
-    const hooks: LifecycleHooks = {
-      shouldExit: (turnCount: number) => Effect.succeed(turnCount >= ACTIVE_SESSION_TURNS),
-    }
+      const hooks: LifecycleHooks = {
+        shouldExit: (turnCount: number) => Effect.succeed(turnCount >= ACTIVE_SESSION_TURNS),
+      }
 
-    yield* eventLoop({
-      char: context.char,
-      containerId: context.containerId,
-      playerName: context.char.name,
-      containerEnv: context.containerEnv,
-      events,
-      initialState,
-      tickIntervalSec,
-      initialTick,
-      exitSignal,
-      hooks,
-    })
+      yield* eventLoop({
+        char: context.char,
+        containerId: context.containerId,
+        playerName: context.char.name,
+        containerEnv: context.containerEnv,
+        events: events as Queue.Queue<unknown>,
+        initialState,
+        tickIntervalSec,
+        initialTick,
+        exitSignal,
+        hooks,
+        domainBundle: spaceMoltDomainBundle,
+      })
 
-    // When the state machine exits, transition to social phase
-    return { _tag: "Continue", next: "social", connection: context.connection } as SMPhaseResult
-  }),
-)
+      // When the state machine exits, transition to social phase
+      return { _tag: "Continue", next: "social", connection: context.connection } as PhaseResult
+    }),
+}
 
 /**
  * Social/dinner phase: reflect on the session over dinner.
  */
-const socialPhase = definePhase("social", (context) =>
-  Effect.gen(function* () {
-    yield* logToConsole(context.char.name, "orchestrator", "Dinner time — reflecting on the session...")
+const socialPhase = {
+  name: "social",
+  run: (context: PhaseContext) =>
+    Effect.gen(function* () {
+      yield* logToConsole(context.char.name, "orchestrator", "Dinner time — reflecting on the session...")
 
-    yield* dinner.execute({ char: context.char }).pipe(
-      Effect.catchAll((e) =>
-        logToConsole(context.char.name, "orchestrator", `Dinner failed: ${e}`),
-      ),
-    )
+      yield* dinner.execute({ char: context.char }).pipe(
+        Effect.catchAll((e) =>
+          logToConsole(context.char.name, "orchestrator", `Dinner failed: ${e}`),
+        ),
+      )
 
-    return { _tag: "Continue", next: "reflection", connection: context.connection } as SMPhaseResult
-  }),
-)
+      return { _tag: "Continue", next: "reflection", connection: context.connection } as PhaseResult
+    }),
+}
 
 /**
  * Reflection phase: dream to compress diary, then loop back to active.
  */
-const reflectionPhase = definePhase("reflection", (context) =>
-  Effect.gen(function* () {
-    const charFs = yield* CharacterFs
+const reflectionPhase = {
+  name: "reflection",
+  run: (context: PhaseContext) =>
+    Effect.gen(function* () {
+      const charFs = yield* CharacterFs
 
-    const diary = yield* charFs.readDiary(context.char)
-    const diaryLines = diary.split("\n").length
-    if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
-      yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-      yield* dream.execute({ char: context.char }).pipe(
-        Effect.catchAll((e) =>
-          logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
-        ),
-      )
-    }
+      const diary = yield* charFs.readDiary(context.char)
+      const diaryLines = diary.split("\n").length
+      if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
+        yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
+        yield* dream.execute({ char: context.char }).pipe(
+          Effect.catchAll((e) =>
+            logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
+          ),
+        )
+      }
 
-    return { _tag: "Continue", next: "active", connection: context.connection } as SMPhaseResult
-  }),
-)
+      return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
+    }),
+}
 
 const allPhases = [
-  startupPhase as Phase<GameState, GameEvent, never>,
-  activePhase as Phase<GameState, GameEvent, never>,
-  socialPhase as Phase<GameState, GameEvent, never>,
-  reflectionPhase as Phase<GameState, GameEvent, never>,
+  startupPhase as unknown as Phase,
+  activePhase as unknown as Phase,
+  socialPhase as unknown as Phase,
+  reflectionPhase as unknown as Phase,
 ] as const
 
-export const spaceMoltPhaseRegistry: PhaseRegistry<GameState, GameEvent, never> = {
+export const spaceMoltPhaseRegistry: PhaseRegistry = {
   phases: allPhases,
   getPhase: (name: string) => allPhases.find((p) => p.name === name),
   initialPhase: "startup",

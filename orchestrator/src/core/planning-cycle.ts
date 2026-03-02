@@ -4,7 +4,7 @@ import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterFs } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { logToConsole } from "../logging/console-renderer.js"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 import type { Plan, StepTiming, Alert } from "./types.js"
 import type { LifecycleHooks, PlanContext } from "./lifecycle.js"
 import { brainPlan } from "./brain.js"
@@ -31,8 +31,8 @@ interface PlanningServices {
 export const maybeRequestPlan = (
   refs: PlanningRefs,
   services: PlanningServices,
-  state: GameState,
-  situation: Situation,
+  state: DomainState,
+  situation: DomainSituation,
   briefing: string,
 ) =>
   Effect.gen(function* () {
@@ -75,6 +75,18 @@ export const maybeRequestPlan = (
           ? `${additionalContext}\n\n${softAlertSection}`
           : softAlertSection
       }
+
+      yield* logToConsole(
+        services.char.name,
+        "brain-input",
+        [
+          `--- Briefing ---\n${briefing}`,
+          `--- Diary (last 500 chars) ---\n${diary.slice(-500)}`,
+          previousFailure ? `--- Previous Failure ---\n${previousFailure}` : null,
+          recentChat.length > 0 ? `--- Recent Chat ---\n${recentChat.map((m) => `[${m.channel}] ${m.sender}: ${m.content}`).join("\n")}` : null,
+          additionalContext ? `--- Additional Context ---\n${additionalContext}` : null,
+        ].filter(Boolean).join("\n"),
+      )
 
       const newPlan = yield* brainPlan.execute({
         state,

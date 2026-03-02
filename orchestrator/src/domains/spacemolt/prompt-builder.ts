@@ -6,7 +6,7 @@ import type {
   PlanPromptContext,
 } from "../../core/prompt-builder.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
-import type { GameState, Situation } from "../../game/types.js"
+import type { GameState, Situation } from "./types.js"
 import { snapshot } from "./state-renderer.js"
 import { loadTemplate, renderTemplate } from "../../core/template.js"
 
@@ -88,7 +88,7 @@ const makePromptBuilder = (templates: Record<string, string>): PromptBuilder => 
       background: ctx.background,
       values: ctx.values,
       diary: ctx.diary.slice(-2000),
-      situationType: ctx.situation.type,
+      situationType: (ctx.situation as Situation).type,
     })
   },
 
@@ -106,7 +106,7 @@ const makePromptBuilder = (templates: Record<string, string>): PromptBuilder => 
   },
 
   evaluatePrompt(ctx) {
-    const stateSnapshot = snapshot(ctx.state)
+    const stateSnapshot = snapshot(ctx.state as GameState)
 
     const secondsConsumed = Math.round(ctx.ticksConsumed * ctx.tickIntervalSec)
     const secondsBudgeted = Math.round(ctx.ticksBudgeted * ctx.tickIntervalSec)
@@ -130,7 +130,7 @@ const makePromptBuilder = (templates: Record<string, string>): PromptBuilder => 
   },
 
   subagentPrompt(ctx) {
-    const briefing = buildStateSummary(ctx.state, ctx.situation)
+    const briefing = buildStateSummary(ctx.state as GameState, ctx.situation as Situation)
     const budgetSeconds = Math.round(ctx.step.timeoutTicks * ctx.identity.tickIntervalSec)
 
     return renderTemplate(templates.subagent, {

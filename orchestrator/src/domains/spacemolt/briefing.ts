@@ -1,4 +1,4 @@
-import { SituationType } from "../types.js";
+import { SituationType } from "./types.js";
 import type {
 	GameState,
 	Situation,
@@ -9,7 +9,7 @@ import type {
 	SystemState,
 	GalaxyMap,
 	SocialState,
-} from "../types.js";
+} from "./types.js";
 
 /**
  * Generates a concise natural language briefing from game state.

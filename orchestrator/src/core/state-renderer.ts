@@ -1,5 +1,5 @@
 import { Context } from "effect"
-import type { GameState, Situation } from "../game/types.js"
+import type { DomainState, DomainSituation } from "./domain-types.js"
 
 /**
  * All state-to-human-readable transformations.
@@ -8,15 +8,15 @@ import type { GameState, Situation } from "../game/types.js"
  */
 export interface StateRenderer {
   /** Compact snapshot for logging. */
-  snapshot(state: GameState): Record<string, unknown>
+  snapshot(state: DomainState): Record<string, unknown>
   /** Rich snapshot (includes breakdown data + tick) for diff tracking. */
-  richSnapshot(state: GameState): Record<string, unknown>
+  richSnapshot(state: DomainState): Record<string, unknown>
   /** Human-readable diff between two rich snapshots. */
   stateDiff(before: Record<string, unknown> | null, after: Record<string, unknown>): string
   /** Render domain state for planning context. */
-  renderForPlanning(state: GameState, situation: Situation): string
+  renderForPlanning(state: DomainState, situation: DomainSituation): string
   /** Compact console output line per tick. */
-  logStateBar(name: string, state: GameState, situation: Situation): void
+  logStateBar(name: string, state: DomainState, situation: DomainSituation): void
 }
 
 /**

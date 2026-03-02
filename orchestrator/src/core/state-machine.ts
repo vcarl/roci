@@ -13,8 +13,7 @@ import { SkillRegistryTag } from "./skill.js"
 import { InterruptRegistryTag } from "./interrupt.js"
 import { SituationClassifierTag } from "./situation.js"
 import { StateRendererTag } from "./state-renderer.js"
-import type { GameState, Situation } from "../game/types.js"
-import type { GameEvent } from "../game/ws-types.js"
+import type { DomainState, DomainSituation, DomainEvent } from "./domain-types.js"
 import type { Plan, StepTiming, Alert, ExitReason, StateMachineResult } from "./types.js"
 import type { LifecycleHooks } from "./lifecycle.js"
 import { brainInterrupt } from "./brain.js"
@@ -26,8 +25,8 @@ export interface StateMachineConfig {
   containerId: string
   playerName: string
   containerEnv?: Record<string, string>
-  events: Queue.Queue<GameEvent>
-  initialState: GameState
+  events: Queue.Queue<DomainEvent>
+  initialState: DomainState
   tickIntervalSec: number
   initialTick: number
   exitSignal?: Deferred.Deferred<ExitReason, never>
@@ -69,7 +68,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
     const softAlertAccRef = yield* Ref.make<Map<string, Alert>>(new Map())
 
     // --- Domain state ---
-    const gameStateRef = yield* Ref.make<GameState>(config.initialState)
+    const gameStateRef = yield* Ref.make<DomainState>(config.initialState)
     const chatContextRef = yield* Ref.make<Array<{ channel: string; sender: string; content: string }>>([])
 
     // --- Ref groups for extracted modules ---
@@ -108,7 +107,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
     // --- Inline helpers ---
 
     /** Handle critical interrupts: kill subagent, ask brain for new plan. */
-    const handleInterrupt = (criticals: Alert[], state: GameState, situation: Situation, briefing: string) =>
+    const handleInterrupt = (criticals: Alert[], state: DomainState, situation: DomainSituation, briefing: string) =>
       Effect.gen(function* () {
         if (hooks?.onInterrupt) {
           yield* hooks.onInterrupt(criticals)
@@ -157,7 +156,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
     // --- Main event processing ---
 
     /** Process a state update: the core decision cycle. */
-    const handleStateUpdateEvent = (state: GameState) =>
+    const handleStateUpdateEvent = (state: DomainState) =>
       Effect.gen(function* () {
         const situation = classifier.classify(state)
         const briefing = classifier.briefing(state, situation)
