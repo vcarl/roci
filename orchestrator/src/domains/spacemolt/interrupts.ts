@@ -3,7 +3,6 @@ import type { InterruptRule, InterruptRegistry } from "../../core/interrupt.js"
 import { InterruptRegistryTag } from "../../core/interrupt.js"
 import type { Alert } from "../../core/types.js"
 import { SituationType as SituationTypeEnum } from "../../game/types.js"
-import type { GameState, Situation } from "../../game/types.js"
 
 const priorityOrder: Record<Alert["priority"], number> = {
   critical: 0,
@@ -12,7 +11,7 @@ const priorityOrder: Record<Alert["priority"], number> = {
   low: 3,
 }
 
-const interruptRules: ReadonlyArray<InterruptRule<GameState, Situation>> = [
+const interruptRules: ReadonlyArray<InterruptRule> = [
   // ── Critical ───────────────────────────────────────────
   {
     name: "in_combat",
@@ -113,10 +112,10 @@ const interruptRules: ReadonlyArray<InterruptRule<GameState, Situation>> = [
   },
 ]
 
-const spaceMoltInterruptRegistry: InterruptRegistry<GameState, Situation> = {
+const spaceMoltInterruptRegistry: InterruptRegistry = {
   rules: interruptRules,
 
-  evaluate(state: GameState, situation: Situation, currentTask?: string): Alert[] {
+  evaluate(state, situation, currentTask?) {
     const alerts: Alert[] = []
     for (const rule of interruptRules) {
       if (currentTask && rule.suppressWhenTaskIs === currentTask) continue
@@ -132,11 +131,11 @@ const spaceMoltInterruptRegistry: InterruptRegistry<GameState, Situation> = {
     return alerts.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
   },
 
-  criticals(state: GameState, situation: Situation, currentTask?: string): Alert[] {
+  criticals(state, situation, currentTask?) {
     return this.evaluate(state, situation, currentTask).filter((a) => a.priority === "critical")
   },
 
-  softAlerts(state: GameState, situation: Situation, currentTask?: string): Alert[] {
+  softAlerts(state, situation, currentTask?) {
     return this.evaluate(state, situation, currentTask).filter((a) => a.priority !== "critical")
   },
 }

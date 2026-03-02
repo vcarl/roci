@@ -1,9 +1,8 @@
 import { Layer } from "effect"
 import { EventProcessorTag, type EventProcessor, type EventResult } from "../../core/event-source.js"
-import type { GameState } from "../../game/types.js"
-import type { GameEvent, StateUpdateEvent } from "../../game/ws-types.js"
+import type { StateUpdateEvent } from "../../game/ws-types.js"
 
-function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult<GameState> {
+function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult {
   return {
     stateUpdate: (prev) => ({
       ...prev,
@@ -31,8 +30,8 @@ function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult<Ga
  * SpaceMolt-specific event processor.
  * Translates raw WebSocket GameEvents into state machine operations.
  */
-const spaceMoltEventProcessor: EventProcessor<GameState, GameEvent> = {
-  processEvent(event: GameEvent, _currentState: GameState): EventResult<GameState> {
+const spaceMoltEventProcessor: EventProcessor = {
+  processEvent(event, _currentState) {
     switch (event.type) {
       case "state_update":
         return handleStateUpdate(event.payload)

@@ -1,9 +1,10 @@
 import { Context } from "effect"
+import type { GameState, Situation } from "../game/types.js"
 import type { Alert, Plan, PlanStep, StepCompletionResult, StepTiming } from "./types.js"
 
-export interface PlanPromptContext<S, Sit> {
-  state: S
-  situation: Sit
+export interface PlanPromptContext {
+  state: GameState
+  situation: Situation
   briefing: string
   diary: string
   background: string
@@ -15,19 +16,19 @@ export interface PlanPromptContext<S, Sit> {
   additionalContext?: string
 }
 
-export interface InterruptPromptContext<S, Sit> {
-  state: S
-  situation: Sit
+export interface InterruptPromptContext {
+  state: GameState
+  situation: Situation
   alerts: Alert[]
   currentPlan: Plan | null
   briefing: string
   background: string
 }
 
-export interface EvaluatePromptContext<S, _Sit> {
+export interface EvaluatePromptContext {
   step: PlanStep
   subagentReport: string
-  state: S
+  state: GameState
   stateBefore: Record<string, unknown> | null
   stateDiff: string
   conditionCheck: StepCompletionResult
@@ -36,10 +37,10 @@ export interface EvaluatePromptContext<S, _Sit> {
   tickIntervalSec: number
 }
 
-export interface SubagentPromptContext<S, Sit> {
+export interface SubagentPromptContext {
   step: PlanStep
-  state: S
-  situation: Sit
+  state: GameState
+  situation: Situation
   identity: {
     personality: string
     values: string
@@ -50,15 +51,14 @@ export interface SubagentPromptContext<S, Sit> {
 /**
  * Assembles all prompts for the brain and subagent.
  */
-export interface PromptBuilder<S = unknown, Sit = unknown> {
-  planPrompt(ctx: PlanPromptContext<S, Sit>): string
-  interruptPrompt(ctx: InterruptPromptContext<S, Sit>): string
-  evaluatePrompt(ctx: EvaluatePromptContext<S, Sit>): string
-  subagentPrompt(ctx: SubagentPromptContext<S, Sit>): string
+export interface PromptBuilder {
+  planPrompt(ctx: PlanPromptContext): string
+  interruptPrompt(ctx: InterruptPromptContext): string
+  evaluatePrompt(ctx: EvaluatePromptContext): string
+  subagentPrompt(ctx: SubagentPromptContext): string
 }
 
 /**
  * Effect service tag for the prompt builder.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- type erasure for Effect DI; recovered via cast in state-machine
-export class PromptBuilderTag extends Context.Tag("PromptBuilder")<PromptBuilderTag, PromptBuilder<any, any>>() {}
+export class PromptBuilderTag extends Context.Tag("PromptBuilder")<PromptBuilderTag, PromptBuilder>() {}

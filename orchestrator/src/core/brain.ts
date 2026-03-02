@@ -1,11 +1,10 @@
 import { Effect } from "effect"
 import { Claude, ClaudeError } from "../services/Claude.js"
 import type { AiFunction } from "./AiFunction.js"
-import type { PromptBuilder } from "./prompt-builder.js"
 import { PromptBuilderTag } from "./prompt-builder.js"
-import type { StateRenderer } from "./state-renderer.js"
+import type { PlanPromptContext, InterruptPromptContext, EvaluatePromptContext } from "./prompt-builder.js"
 import { StateRendererTag } from "./state-renderer.js"
-import type { Plan, PlanStep, StepCompletionResult, StepTiming, Alert } from "./types.js"
+import type { Plan, StepCompletionResult } from "./types.js"
 
 // ── Plan parsing ────────────────────────────────────────────
 
@@ -30,49 +29,14 @@ function parsePlan(output: string): Plan {
   }
 }
 
-// ── Generic brain functions ─────────────────────────────────
+// ── Brain functions ─────────────────────────────────────────
 
-export interface GenericBrainPlanInput<S, Sit> {
-  state: S
-  situation: Sit
-  diary: string
-  briefing: string
-  background: string
-  values: string
-  previousFailure?: string
-  recentChat?: Array<{ channel: string; sender: string; content: string }>
-  stepTimingHistory?: StepTiming[]
-  tickIntervalSec: number
-  additionalContext?: string
-}
-
-export interface GenericBrainInterruptInput<S, Sit> {
-  state: S
-  situation: Sit
-  alerts: Alert[]
-  currentPlan: Plan | null
-  briefing: string
-  background: string
-}
-
-export interface GenericBrainEvaluateInput<S, _Sit> {
-  step: PlanStep
-  subagentReport: string
-  state: S
-  stateBefore: Record<string, unknown> | null
-  stateDiff: string
-  conditionCheck: StepCompletionResult
-  ticksConsumed: number
-  ticksBudgeted: number
-  tickIntervalSec: number
-}
-
-export const genericBrainPlan = <S, Sit>(): AiFunction<GenericBrainPlanInput<S, Sit>, Plan, Claude | PromptBuilderTag, ClaudeError> => ({
+export const brainPlan: AiFunction<PlanPromptContext, Plan, Claude | PromptBuilderTag, ClaudeError> = {
   name: "brain.plan",
   execute: (input) =>
     Effect.gen(function* () {
       const claude = yield* Claude
-      const promptBuilder = (yield* PromptBuilderTag) as PromptBuilder<S, Sit>
+      const promptBuilder = yield* PromptBuilderTag
 
       const prompt = promptBuilder.planPrompt(input)
 
@@ -91,14 +55,14 @@ export const genericBrainPlan = <S, Sit>(): AiFunction<GenericBrainPlanInput<S, 
         )
       }
     }),
-})
+}
 
-export const genericBrainInterrupt = <S, Sit>(): AiFunction<GenericBrainInterruptInput<S, Sit>, Plan, Claude | PromptBuilderTag, ClaudeError> => ({
+export const brainInterrupt: AiFunction<InterruptPromptContext, Plan, Claude | PromptBuilderTag, ClaudeError> = {
   name: "brain.interrupt",
   execute: (input) =>
     Effect.gen(function* () {
       const claude = yield* Claude
-      const promptBuilder = (yield* PromptBuilderTag) as PromptBuilder<S, Sit>
+      const promptBuilder = yield* PromptBuilderTag
 
       const prompt = promptBuilder.interruptPrompt(input)
 
@@ -117,15 +81,15 @@ export const genericBrainInterrupt = <S, Sit>(): AiFunction<GenericBrainInterrup
         )
       }
     }),
-})
+}
 
-export const genericBrainEvaluate = <S, Sit>(): AiFunction<GenericBrainEvaluateInput<S, Sit>, StepCompletionResult, Claude | PromptBuilderTag | StateRendererTag, ClaudeError> => ({
+export const brainEvaluate: AiFunction<EvaluatePromptContext, StepCompletionResult, Claude | PromptBuilderTag | StateRendererTag, ClaudeError> = {
   name: "brain.evaluate",
   execute: (input) =>
     Effect.gen(function* () {
       const claude = yield* Claude
-      const promptBuilder = (yield* PromptBuilderTag) as PromptBuilder<S, Sit>
-      const renderer = (yield* StateRendererTag) as StateRenderer<S, Sit>
+      const promptBuilder = yield* PromptBuilderTag
+      const renderer = yield* StateRendererTag
 
       const prompt = promptBuilder.evaluatePrompt(input)
 
@@ -151,4 +115,4 @@ export const genericBrainEvaluate = <S, Sit>(): AiFunction<GenericBrainEvaluateI
         relevantState: stateSnapshot,
       } satisfies StepCompletionResult
     }),
-})
+}

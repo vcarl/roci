@@ -2,6 +2,7 @@ import { Effect, Fiber } from "effect"
 import { Docker, DockerError } from "../services/Docker.js"
 import { characterLoop, type CharacterLoopConfig } from "./character-loop.js"
 import { logToConsole } from "../logging/console-renderer.js"
+import { ProjectRoot } from "../services/ProjectRoot.js"
 import * as path from "node:path"
 import { execSync } from "node:child_process"
 import { readFileSync } from "node:fs"
@@ -36,9 +37,10 @@ function loadDotenv(projectRoot: string): Record<string, string> {
  * Ensure the shared `roci-crew` container exists and is running.
  * Returns the container ID.
  */
-const ensureSharedContainer = (config: { projectRoot: string; imageName: string }) =>
+const ensureSharedContainer = (imageName: string) =>
   Effect.gen(function* () {
     const docker = yield* Docker
+    const projectRoot = yield* ProjectRoot
 
     const existing = yield* docker.status(SHARED_CONTAINER_NAME)
 
@@ -61,45 +63,45 @@ const ensureSharedContainer = (config: { projectRoot: string; imageName: string 
     // Create the shared container with all mounts
     const containerId = yield* docker.create({
       name: SHARED_CONTAINER_NAME,
-      image: config.imageName,
+      image: imageName,
       mounts: [
         {
-          host: path.resolve(config.projectRoot, "players"),
+          host: path.resolve(projectRoot, "players"),
           container: "/work/players",
         },
         {
-          host: path.resolve(config.projectRoot, "shared-resources/workspace"),
+          host: path.resolve(projectRoot, "shared-resources/workspace"),
           container: "/work/shared/workspace",
         },
         {
-          host: path.resolve(config.projectRoot, "shared-resources/spacemolt-docs"),
+          host: path.resolve(projectRoot, "shared-resources/spacemolt-docs"),
           container: "/work/shared/spacemolt-docs",
         },
         {
-          host: path.resolve(config.projectRoot, "docs"),
+          host: path.resolve(projectRoot, "docs"),
           container: "/work/shared/docs",
         },
         {
-          host: path.resolve(config.projectRoot, "shared-resources/sm-cli"),
+          host: path.resolve(projectRoot, "shared-resources/sm-cli"),
           container: "/work/sm-cli",
         },
         {
-          host: path.resolve(config.projectRoot, ".claude"),
+          host: path.resolve(projectRoot, ".claude"),
           container: "/work/.claude",
           readonly: true,
         },
         {
-          host: path.resolve(config.projectRoot, ".devcontainer"),
+          host: path.resolve(projectRoot, ".devcontainer"),
           container: "/opt/devcontainer",
           readonly: true,
         },
         {
-          host: path.resolve(config.projectRoot, "harness"),
+          host: path.resolve(projectRoot, "harness"),
           container: "/opt/harness",
           readonly: true,
         },
         {
-          host: path.resolve(config.projectRoot, "scripts"),
+          host: path.resolve(projectRoot, "scripts"),
           container: "/opt/scripts",
           readonly: true,
         },
@@ -136,10 +138,12 @@ const ensureSharedContainer = (config: { projectRoot: string; imageName: string 
  */
 export const runOrchestrator = (configs: CharacterLoopConfig[]) =>
   Effect.gen(function* () {
+    const projectRoot = yield* ProjectRoot
+
     yield* logToConsole("orchestrator", "main", `Starting ${configs.length} character(s)...`)
 
     // Load CLAUDE_CODE_OAUTH_TOKEN from .env (read fresh each start, passed at exec time)
-    const dotenv = loadDotenv(configs[0].projectRoot)
+    const dotenv = loadDotenv(projectRoot)
     const oauthToken = dotenv.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.CLAUDE_CODE_OAUTH_TOKEN
     if (!oauthToken) {
       yield* logToConsole("orchestrator", "main", "ERROR: CLAUDE_CODE_OAUTH_TOKEN not found in .env or environment")
@@ -150,10 +154,7 @@ export const runOrchestrator = (configs: CharacterLoopConfig[]) =>
     const containerEnv = { CLAUDE_CODE_OAUTH_TOKEN: oauthToken }
 
     // Ensure the shared container is running (once for all characters)
-    const containerId = yield* ensureSharedContainer({
-      projectRoot: configs[0].projectRoot,
-      imageName: configs[0].imageName,
-    })
+    const containerId = yield* ensureSharedContainer(configs[0].imageName)
 
     // Fork each character loop as a fiber, passing the shared container ID + env
     const fibers = yield* Effect.forEach(configs, (config) =>

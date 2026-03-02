@@ -1,17 +1,18 @@
 import { Context } from "effect"
+import type { GameState, Situation } from "../game/types.js"
 import type { PlanStep, StepCompletionResult } from "./types.js"
 
 /**
  * A single agent capability — bundles instructions, completion logic,
  * and defaults so adding a new skill is a single-file operation.
  */
-export interface Skill<S = unknown, Sit = unknown> {
+export interface Skill {
   readonly name: string
   readonly description: string
   /** Instructions given to the subagent for this task */
   readonly instructions: string
   /** Deterministic completion check */
-  readonly checkCompletion: (step: PlanStep, state: S, situation: Sit) => StepCompletionResult
+  readonly checkCompletion: (step: PlanStep, state: GameState, situation: Situation) => StepCompletionResult
   /** Default model for this skill */
   readonly defaultModel: "haiku" | "sonnet"
   /** Default timeout in ticks */
@@ -22,18 +23,17 @@ export interface Skill<S = unknown, Sit = unknown> {
  * Registry of all skills the agent can perform.
  * Single source of truth for task types, instructions, and completion conditions.
  */
-export interface SkillRegistry<S = unknown, Sit = unknown> {
-  readonly skills: ReadonlyArray<Skill<S, Sit>>
+export interface SkillRegistry {
+  readonly skills: ReadonlyArray<Skill>
   /** Look up a skill by task name */
-  getSkill(name: string): Skill<S, Sit> | undefined
+  getSkill(name: string): Skill | undefined
   /** Formatted task list for inclusion in planning system prompt */
   taskList(): string
   /** Delegate to the matching skill's checkCompletion */
-  isStepComplete(step: PlanStep, state: S, situation: Sit): StepCompletionResult
+  isStepComplete(step: PlanStep, state: GameState, situation: Situation): StepCompletionResult
 }
 
 /**
  * Effect service tag for the skill registry.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- type erasure for Effect DI; recovered via cast in state-machine
-export class SkillRegistryTag extends Context.Tag("SkillRegistry")<SkillRegistryTag, SkillRegistry<any, any>>() {}
+export class SkillRegistryTag extends Context.Tag("SkillRegistry")<SkillRegistryTag, SkillRegistry>() {}

@@ -6,7 +6,6 @@ import { logToConsole } from "../logging/console-renderer.js"
 
 export interface CharacterLoopConfig {
   char: CharacterConfig
-  projectRoot: string
   tickIntervalSeconds: number
   imageName: string
   /** Shared container ID — set by orchestrator before forking character fibers */
@@ -29,7 +28,6 @@ export const characterLoop = (config: CharacterLoopConfig & { containerId: strin
         {
           char: config.char,
           containerId: config.containerId,
-          projectRoot: config.projectRoot,
           containerEnv: config.containerEnv,
         },
         spaceMoltPhaseRegistry,

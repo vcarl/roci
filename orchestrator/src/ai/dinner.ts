@@ -5,11 +5,11 @@ import { Claude } from "../services/Claude.js"
 import { CharacterFs, type CharacterConfig } from "../services/CharacterFs.js"
 import { PromptTemplates } from "../services/PromptTemplates.js"
 import { CharacterLog } from "../logging/log-writer.js"
+import { ProjectRoot } from "../services/ProjectRoot.js"
 import { renderTemplate } from "../core/template.js"
 
 export interface DinnerInput {
   char: CharacterConfig
-  projectRoot: string
 }
 
 export interface DinnerOutput {
@@ -25,6 +25,7 @@ export const dinner = {
       const templates = yield* PromptTemplates
       const log = yield* CharacterLog
       const fs = yield* FileSystem.FileSystem
+      const projectRoot = yield* ProjectRoot
 
       yield* log.thought(input.char, {
         timestamp: new Date().toISOString(),
@@ -35,7 +36,7 @@ export const dinner = {
 
       // Read recent thoughts log as session report
       const thoughtsPath = path.resolve(
-        input.projectRoot,
+        projectRoot,
         "players",
         input.char.name,
         "logs",

@@ -18,7 +18,6 @@ export interface ConnectionState<S = unknown, Evt = unknown> {
 export interface PhaseContext<S = unknown, Evt = unknown> {
   readonly char: CharacterConfig
   readonly containerId: string
-  readonly projectRoot: string
   readonly containerEnv?: Record<string, string>
   /** Connection state — available after the startup phase connects. */
   readonly connection?: ConnectionState<S, Evt>

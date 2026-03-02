@@ -1,28 +1,25 @@
 import { Context } from "effect"
+import type { GameState, Situation } from "../game/types.js"
 
 /**
  * All state-to-human-readable transformations.
  * Used by brain functions for prompt context and by the state machine
  * for logging/diffs.
- *
- * @typeParam S — Domain state
- * @typeParam Sit — Structured situation
  */
-export interface StateRenderer<S = unknown, Sit = unknown> {
+export interface StateRenderer {
   /** Compact snapshot for logging. */
-  snapshot(state: S): Record<string, unknown>
+  snapshot(state: GameState): Record<string, unknown>
   /** Rich snapshot (includes breakdown data + tick) for diff tracking. */
-  richSnapshot(state: S): Record<string, unknown>
+  richSnapshot(state: GameState): Record<string, unknown>
   /** Human-readable diff between two rich snapshots. */
   stateDiff(before: Record<string, unknown> | null, after: Record<string, unknown>): string
   /** Render domain state for planning context. */
-  renderForPlanning(state: S, situation: Sit): string
+  renderForPlanning(state: GameState, situation: Situation): string
   /** Compact console output line per tick. */
-  logStateBar(name: string, state: S, situation: Sit): void
+  logStateBar(name: string, state: GameState, situation: Situation): void
 }
 
 /**
  * Effect service tag for the state renderer.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- type erasure for Effect DI; recovered via cast in state-machine
-export class StateRendererTag extends Context.Tag("StateRenderer")<StateRendererTag, StateRenderer<any, any>>() {}
+export class StateRendererTag extends Context.Tag("StateRenderer")<StateRendererTag, StateRenderer>() {}

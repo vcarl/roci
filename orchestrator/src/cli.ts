@@ -9,7 +9,8 @@ import { PromptTemplatesLive } from "./services/PromptTemplates.js"
 import { makeGameApiLive } from "./services/GameApi.js"
 import { ClaudeLive } from "./services/Claude.js"
 import { makeGameSocketLive } from "./services/GameSocket.js"
-import { makeCharacterLogLive } from "./logging/log-writer.js"
+import { CharacterLogLive } from "./logging/log-writer.js"
+import { ProjectRoot } from "./services/ProjectRoot.js"
 import { runOrchestrator } from "./pipeline/orchestrator.js"
 import { logToConsole } from "./logging/console-renderer.js"
 
@@ -45,7 +46,6 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
       }
       configs.push({
         char,
-        projectRoot: PROJECT_ROOT,
         tickIntervalSeconds: args.tickInterval,
         imageName: IMAGE_NAME,
       })
@@ -253,6 +253,8 @@ const rociCommand = Command.make("roci").pipe(
 )
 
 // --- provide services ---
+const projectRootLayer = Layer.succeed(ProjectRoot, PROJECT_ROOT)
+
 const serviceLayer = Layer.mergeAll(
   DockerLive,
   ClaudeLive,
@@ -260,7 +262,8 @@ const serviceLayer = Layer.mergeAll(
   PromptTemplatesLive,
   makeGameApiLive(),
   makeGameSocketLive(),
-  makeCharacterLogLive(PROJECT_ROOT),
+  projectRootLayer,
+  CharacterLogLive.pipe(Layer.provide(projectRootLayer)),
 )
 
 export { rociCommand, serviceLayer }

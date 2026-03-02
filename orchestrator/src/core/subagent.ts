@@ -4,30 +4,30 @@ import { CharacterLog } from "../logging/log-writer.js"
 import { demuxStream } from "../logging/log-demux.js"
 import { logStderr, logStreamEvent } from "../logging/console-renderer.js"
 import type { CharacterConfig } from "../services/CharacterFs.js"
-import type { PromptBuilder } from "./prompt-builder.js"
 import { PromptBuilderTag } from "./prompt-builder.js"
 import type { PlanStep } from "./types.js"
+import type { GameState, Situation } from "../game/types.js"
 
-export interface GenericSubagentInput<S, Sit> {
+export interface SubagentInput {
   char: CharacterConfig
   containerId: string
   playerName: string
   systemPrompt: string
   containerEnv?: Record<string, string>
   step: PlanStep
-  state: S
-  situation: Sit
+  state: GameState
+  situation: Situation
   personality: string
   values: string
   tickIntervalSec: number
 }
 
 /** Spawn a subagent in a container. Returns the accumulated subagent text output. */
-export const runGenericSubagent = <S, Sit>(input: GenericSubagentInput<S, Sit>) =>
+export const runGenericSubagent = (input: SubagentInput) =>
   Effect.gen(function* () {
     const claude = yield* Claude
     const log = yield* CharacterLog
-    const promptBuilder = (yield* PromptBuilderTag) as PromptBuilder<S, Sit>
+    const promptBuilder = yield* PromptBuilderTag
 
     const prompt = promptBuilder.subagentPrompt({
       step: input.step,

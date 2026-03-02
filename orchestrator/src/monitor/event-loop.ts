@@ -30,7 +30,6 @@ export interface EventLoopConfig {
   char: CharacterConfig
   containerId: string
   playerName: string
-  projectRoot: string
   containerEnv?: Record<string, string>
   events: Queue.Queue<GameEvent>
   initialState: GameState
@@ -50,7 +49,6 @@ export const eventLoop = (config: EventLoopConfig) =>
     char: config.char,
     containerId: config.containerId,
     playerName: config.playerName,
-    projectRoot: config.projectRoot,
     containerEnv: config.containerEnv,
     events: config.events,
     initialState: config.initialState,

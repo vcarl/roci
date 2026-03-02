@@ -53,7 +53,7 @@ function buildChatSection(recentChat?: Array<{ channel: string; sender: string; 
   return `\n## Recent Chat\n${recentChat.map((m) => `[${m.channel}] ${m.sender}: ${m.content}`).join("\n")}\n\nConsider whether any of these messages warrant a response or affect your plans.\n`
 }
 
-function buildTimingSection(stepTimingHistory?: PlanPromptContext<GameState, Situation>["stepTimingHistory"]): string {
+function buildTimingSection(stepTimingHistory?: PlanPromptContext["stepTimingHistory"]): string {
   if (!stepTimingHistory || stepTimingHistory.length === 0) return ""
   return `\n## Recent Step Outcomes\n${stepTimingHistory.map((h) => {
     let line = `[${h.task}] "${h.goal}" — ${h.ticksConsumed}/${h.ticksBudgeted} ticks${h.overrun ? " OVERRUN" : ""}`
@@ -75,7 +75,7 @@ function buildAdditionalSection(additionalContext?: string): string {
 
 // ── Prompt builder ──────────────────────────────────────────
 
-const makePromptBuilder = (templates: Record<string, string>): PromptBuilder<GameState, Situation> => ({
+const makePromptBuilder = (templates: Record<string, string>): PromptBuilder => ({
   planPrompt(ctx) {
     return renderTemplate(templates.plan, {
       taskList: TASK_LIST,
@@ -106,7 +106,7 @@ const makePromptBuilder = (templates: Record<string, string>): PromptBuilder<Gam
   },
 
   evaluatePrompt(ctx) {
-    const stateSnapshot = snapshot(ctx.state as GameState)
+    const stateSnapshot = snapshot(ctx.state)
 
     const secondsConsumed = Math.round(ctx.ticksConsumed * ctx.tickIntervalSec)
     const secondsBudgeted = Math.round(ctx.ticksBudgeted * ctx.tickIntervalSec)
@@ -130,7 +130,7 @@ const makePromptBuilder = (templates: Record<string, string>): PromptBuilder<Gam
   },
 
   subagentPrompt(ctx) {
-    const briefing = buildStateSummary(ctx.state as GameState, ctx.situation as Situation)
+    const briefing = buildStateSummary(ctx.state, ctx.situation)
     const budgetSeconds = Math.round(ctx.step.timeoutTicks * ctx.identity.tickIntervalSec)
 
     return renderTemplate(templates.subagent, {

@@ -1,19 +1,18 @@
 import { Context } from "effect"
+import type { GameState } from "../game/types.js"
+import type { GameEvent } from "../game/ws-types.js"
 
 /**
  * Translates raw domain events into state machine operations.
- *
- * @typeParam S — Domain state
- * @typeParam Evt — Raw event type from the domain's event source
  */
-export interface EventProcessor<S, Evt> {
+export interface EventProcessor {
   /** Process a single event, returning how the state machine should react. */
-  processEvent(event: Evt, currentState: S): EventResult<S>
+  processEvent(event: GameEvent, currentState: GameState): EventResult
 }
 
-export interface EventResult<S> {
+export interface EventResult {
   /** Merge into state. If undefined, state is unchanged. */
-  stateUpdate?: (prev: S) => S
+  stateUpdate?: (prev: GameState) => GameState
   /** Update tick counter. If undefined, tick is unchanged. */
   tick?: number
   /** Trigger interrupt processing (check for critical alerts). */
@@ -32,14 +31,8 @@ export interface EventResult<S> {
 
 /**
  * Effect service tag for the event processor.
- *
- * Tags use `any` for type erasure — generic interfaces are invariant in their
- * type params, so concrete implementations (e.g. EventProcessor<GameState, GameEvent>)
- * can't assign to EventProcessor<unknown, unknown>. The state machine recovers
- * concrete types via explicit casts.
  */
 export class EventProcessorTag extends Context.Tag("EventProcessor")<
   EventProcessorTag,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  EventProcessor<any, any>
+  EventProcessor
 >() {}

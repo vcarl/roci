@@ -3,16 +3,17 @@ import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import { runStateMachine } from "./state-machine.js"
+import type { GameState } from "../game/types.js"
+import type { GameEvent } from "../game/ws-types.js"
 
-export interface AgentLoopConfig<S, _Sit, Evt> {
+export interface AgentLoopConfig {
   char: CharacterConfig
   containerId: string
-  projectRoot: string
   containerEnv?: Record<string, string>
   /** Domain-specific connection function that returns events + initial state. */
   connect: () => Effect.Effect<{
-    events: Queue.Queue<Evt>
-    initialState: S
+    events: Queue.Queue<GameEvent>
+    initialState: GameState
     tickIntervalSec: number
     initialTick: number
   }, unknown, never>
@@ -23,12 +24,12 @@ export interface AgentLoopConfig<S, _Sit, Evt> {
 }
 
 /**
- * Generic per-agent lifecycle:
+ * Per-agent lifecycle:
  * 1. Connect to domain via the provided connect function
  * 2. Run optional startup hook (e.g. dream)
  * 3. Run the state machine event loop
  */
-export const agentLoop = <S, Sit, Evt>(config: AgentLoopConfig<S, Sit, Evt>) =>
+export const agentLoop = (config: AgentLoopConfig) =>
   Effect.scoped(
     Effect.gen(function* () {
       const log = yield* CharacterLog
@@ -63,7 +64,6 @@ export const agentLoop = <S, Sit, Evt>(config: AgentLoopConfig<S, Sit, Evt>) =>
         char: config.char,
         containerId: config.containerId,
         playerName: config.char.name,
-        projectRoot: config.projectRoot,
         containerEnv: config.containerEnv,
         events,
         initialState,

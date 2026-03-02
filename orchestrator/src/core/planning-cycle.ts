@@ -1,0 +1,120 @@
+import { Effect, Ref } from "effect"
+import type { Fiber } from "effect"
+import type { CharacterConfig } from "../services/CharacterFs.js"
+import { CharacterFs } from "../services/CharacterFs.js"
+import { CharacterLog } from "../logging/log-writer.js"
+import { logToConsole } from "../logging/console-renderer.js"
+import type { GameState, Situation } from "../game/types.js"
+import type { Plan, StepTiming, Alert } from "./types.js"
+import type { LifecycleHooks, PlanContext } from "./lifecycle.js"
+import { brainPlan } from "./brain.js"
+
+export interface PlanningRefs {
+  readonly plan: Ref.Ref<Plan | null>
+  readonly step: Ref.Ref<number>
+  readonly subagentFiber: Ref.Ref<Fiber.RuntimeFiber<string, unknown> | null>
+  readonly previousFailure: Ref.Ref<string | null>
+  readonly chatContext: Ref.Ref<Array<{ channel: string; sender: string; content: string }>>
+  readonly stepTimingHistory: Ref.Ref<StepTiming[]>
+  readonly softAlertAcc: Ref.Ref<Map<string, Alert>>
+  readonly tickCount: Ref.Ref<number>
+  readonly stepStartTick: Ref.Ref<number>
+}
+
+interface PlanningServices {
+  readonly char: CharacterConfig
+  readonly tickIntervalSec: number
+  readonly hooks?: LifecycleHooks
+}
+
+/** Request a new plan from the brain if idle and no plan exists. */
+export const maybeRequestPlan = (
+  refs: PlanningRefs,
+  services: PlanningServices,
+  state: GameState,
+  situation: Situation,
+  briefing: string,
+) =>
+  Effect.gen(function* () {
+    const plan = yield* Ref.get(refs.plan)
+    const step = yield* Ref.get(refs.step)
+    const noFiber = (yield* Ref.get(refs.subagentFiber)) === null
+
+    if (noFiber && (!plan || step >= (plan?.steps.length ?? 0))) {
+      const charFs = yield* CharacterFs
+      const log = yield* CharacterLog
+
+      const diary = yield* charFs.readDiary(services.char)
+      const background = yield* charFs.readBackground(services.char)
+      const values = yield* charFs.readValues(services.char)
+      const previousFailure = yield* Ref.get(refs.previousFailure)
+      const recentChat = yield* Ref.get(refs.chatContext)
+      const stepTimingHistory = yield* Ref.get(refs.stepTimingHistory)
+
+      let additionalContext: string | undefined
+      if (services.hooks?.beforePlan) {
+        const planContext: PlanContext = {
+          briefing,
+          state,
+          situation,
+          diary,
+          previousFailure: previousFailure ?? undefined,
+        }
+        const enrichment = yield* services.hooks.beforePlan(planContext)
+        additionalContext = enrichment.additionalContext
+      }
+
+      // Drain accumulated soft alerts into additionalContext
+      const accAlerts = yield* Ref.getAndSet(refs.softAlertAcc, new Map())
+      if (accAlerts.size > 0) {
+        const alertLines = Array.from(accAlerts.values())
+          .map(a => `[${a.priority}] ${a.message}${a.suggestedAction ? ` (suggested: ${a.suggestedAction})` : ""}`)
+          .join("\n")
+        const softAlertSection = `Alerts observed since last plan:\n${alertLines}`
+        additionalContext = additionalContext
+          ? `${additionalContext}\n\n${softAlertSection}`
+          : softAlertSection
+      }
+
+      const newPlan = yield* brainPlan.execute({
+        state,
+        situation,
+        diary,
+        briefing,
+        background,
+        values,
+        previousFailure: previousFailure ?? undefined,
+        recentChat: recentChat.length > 0 ? recentChat : undefined,
+        stepTimingHistory: stepTimingHistory.length > 0 ? stepTimingHistory : undefined,
+        tickIntervalSec: services.tickIntervalSec,
+        additionalContext,
+      })
+
+      yield* Ref.set(refs.previousFailure, null)
+      yield* Ref.set(refs.chatContext, [])
+
+      yield* log.thought(services.char, {
+        timestamp: new Date().toISOString(),
+        source: "brain",
+        character: services.char.name,
+        type: "plan",
+        plan: newPlan,
+        reasoning: newPlan.reasoning,
+      })
+
+      yield* logToConsole(
+        services.char.name,
+        "brain",
+        `New plan (${newPlan.steps.length} steps): ${newPlan.reasoning}`,
+      )
+
+      const finalPlan = services.hooks?.afterPlan
+        ? yield* services.hooks.afterPlan(newPlan)
+        : newPlan
+
+      const tickCount = yield* Ref.get(refs.tickCount)
+      yield* Ref.set(refs.plan, finalPlan)
+      yield* Ref.set(refs.step, 0)
+      yield* Ref.set(refs.stepStartTick, tickCount)
+    }
+  })

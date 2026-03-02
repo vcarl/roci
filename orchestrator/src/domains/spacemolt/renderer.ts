@@ -1,7 +1,6 @@
 import { Layer } from "effect"
 import type { StateRenderer } from "../../core/state-renderer.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
-import type { GameState, Situation } from "../../game/types.js"
 import { generateBriefing } from "../../game/context/briefing.js"
 import {
   snapshot,
@@ -10,24 +9,24 @@ import {
   logStateBar,
 } from "./state-renderer.js"
 
-const spaceMoltStateRenderer: StateRenderer<GameState, Situation> = {
-  snapshot(state: GameState): Record<string, unknown> {
+const spaceMoltStateRenderer: StateRenderer = {
+  snapshot(state) {
     return snapshot(state)
   },
 
-  richSnapshot(state: GameState): Record<string, unknown> {
+  richSnapshot(state) {
     return richSnapshot(state)
   },
 
-  stateDiff(before: Record<string, unknown> | null, after: Record<string, unknown>): string {
+  stateDiff(before, after) {
     return stateDiff(before, after)
   },
 
-  renderForPlanning(state: GameState, situation: Situation): string {
+  renderForPlanning(state, situation) {
     return generateBriefing(state, situation)
   },
 
-  logStateBar(name: string, state: GameState, situation: Situation): void {
+  logStateBar(name, state, situation) {
     logStateBar(name, state, situation)
   },
 }

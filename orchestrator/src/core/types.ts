@@ -48,8 +48,8 @@ export type ExitReason =
   | { readonly _tag: "HookRequested"; readonly reason: string }
   | { readonly _tag: "ExternalSignal"; readonly reason: string }
 
-export interface StateMachineResult<S> {
-  readonly finalState: S
+export interface StateMachineResult {
+  readonly finalState: unknown
   readonly exitReason: ExitReason
   readonly turnCount: number
 }

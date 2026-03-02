@@ -100,7 +100,6 @@ const activePhase = definePhase("active", (context) =>
       char: context.char,
       containerId: context.containerId,
       playerName: context.char.name,
-      projectRoot: context.projectRoot,
       containerEnv: context.containerEnv,
       events,
       initialState,
@@ -122,7 +121,7 @@ const socialPhase = definePhase("social", (context) =>
   Effect.gen(function* () {
     yield* logToConsole(context.char.name, "orchestrator", "Dinner time — reflecting on the session...")
 
-    yield* dinner.execute({ char: context.char, projectRoot: context.projectRoot }).pipe(
+    yield* dinner.execute({ char: context.char }).pipe(
       Effect.catchAll((e) =>
         logToConsole(context.char.name, "orchestrator", `Dinner failed: ${e}`),
       ),
