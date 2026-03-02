@@ -4,7 +4,7 @@ import { CharacterLog } from "../logging/log-writer.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import { runStateMachine } from "./state-machine.js"
 
-export interface AgentLoopConfig<S, Sit, Evt> {
+export interface AgentLoopConfig<S, _Sit, Evt> {
   char: CharacterConfig
   containerId: string
   projectRoot: string

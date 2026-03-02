@@ -1,6 +1,5 @@
 import { Effect, Fiber } from "effect"
 import { Docker, DockerError } from "../services/Docker.js"
-import { GameSocket } from "../services/GameSocket.js"
 import { characterLoop, type CharacterLoopConfig } from "./character-loop.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import * as path from "node:path"

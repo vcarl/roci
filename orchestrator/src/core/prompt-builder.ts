@@ -24,7 +24,7 @@ export interface InterruptPromptContext<S, Sit> {
   background: string
 }
 
-export interface EvaluatePromptContext<S, Sit> {
+export interface EvaluatePromptContext<S, _Sit> {
   step: PlanStep
   subagentReport: string
   state: S

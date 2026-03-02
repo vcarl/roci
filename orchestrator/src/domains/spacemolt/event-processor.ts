@@ -32,7 +32,7 @@ function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult<Ga
  * Translates raw WebSocket GameEvents into state machine operations.
  */
 const spaceMoltEventProcessor: EventProcessor<GameState, GameEvent> = {
-  processEvent(event: GameEvent, currentState: GameState): EventResult<GameState> {
+  processEvent(event: GameEvent, _currentState: GameState): EventResult<GameState> {
     switch (event.type) {
       case "state_update":
         return handleStateUpdate(event.payload)

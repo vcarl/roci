@@ -1,6 +1,6 @@
-import { Effect, Stream, Scope } from "effect"
+import { Effect } from "effect"
 import type { ClaudeModel } from "./Claude.js"
-import { Claude, ClaudeError } from "./Claude.js"
+import { Claude } from "./Claude.js"
 import { Docker, DockerError } from "./Docker.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import { execSync } from "node:child_process"

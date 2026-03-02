@@ -11,7 +11,10 @@
     "sourceMap": true,
     "paths": {
       "@harness/*": ["../harness/src/*"]
-    }
+    },
+    "plugins": [
+      { "name": "@effect/language-service" }
+    ]
   },
   "include": ["src/**/*.ts", "../harness/src/**/*.ts"]
 }

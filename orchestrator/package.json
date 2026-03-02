@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
+    "lint": "eslint src/",
     "start": "tsx src/main.ts",
     "roci": "tsx src/main.ts"
   },
@@ -18,9 +19,13 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
+    "@effect/eslint-plugin": "^0.3.2",
+    "@effect/language-service": "^0.77.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
+    "eslint": "^10.0.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
   }
 }

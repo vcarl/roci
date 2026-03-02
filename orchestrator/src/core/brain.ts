@@ -55,7 +55,7 @@ export interface GenericBrainInterruptInput<S, Sit> {
   background: string
 }
 
-export interface GenericBrainEvaluateInput<S, Sit> {
+export interface GenericBrainEvaluateInput<S, _Sit> {
   step: PlanStep
   subagentReport: string
   state: S

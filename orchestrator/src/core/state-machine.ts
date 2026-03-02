@@ -205,7 +205,7 @@ export const runStateMachine = <S, Sit, Evt>(config: StateMachineConfig<S, Evt>)
               subagentReport: report.slice(-500),
             })
 
-            const finalConditionCheck = hooks?.afterStep
+            const _finalConditionCheck = hooks?.afterStep
               ? yield* hooks.afterStep(step, conditionCheck)
               : conditionCheck
 
