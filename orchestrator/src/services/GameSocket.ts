@@ -5,7 +5,6 @@ import type {
   GameEvent,
   LoggedInEvent,
   WelcomeEvent,
-  ClientMessage,
 } from "../../../harness/src/ws-types.js"
 import { parseGameEvent } from "../../../harness/src/ws-types.js"
 import { tag } from "../logging/console-renderer.js"
@@ -49,15 +48,13 @@ export class GameSocket extends Context.Tag("GameSocket")<
     /**
      * Open a WebSocket connection, authenticate, and start receiving events.
      * Scoped — the connection is closed when the scope finalizes.
+     * Each call creates an independent connection with its own WebSocket and event queue.
      * Returns the event queue and initial state from login.
      */
     readonly connect: (
       creds: Credentials,
       characterName: string,
     ) => Effect.Effect<GameSocketConnection, GameSocketError, Scope.Scope>
-
-    /** Send a message to the server. Must be connected. */
-    readonly send: (msg: ClientMessage) => Effect.Effect<void, GameSocketError>
   }
 >() {}
 
@@ -85,56 +82,55 @@ function buildInitialState(payload: LoggedInEvent["payload"]): GameState {
 export const makeGameSocketLive = () =>
   Layer.succeed(
     GameSocket,
-    (() => {
-      // Mutable ref to the current WebSocket — shared across connect/send
-      let ws: WebSocket | null = null
+    GameSocket.of({
+      connect: (creds, characterName) =>
+        Effect.gen(function* () {
+          const events = yield* Queue.bounded<GameEvent>(QUEUE_CAPACITY)
 
-      return GameSocket.of({
-        connect: (creds, characterName) =>
-          Effect.gen(function* () {
-            const events = yield* Queue.bounded<GameEvent>(QUEUE_CAPACITY)
+          // Per-connection WebSocket reference (not shared across connections)
+          let ws: WebSocket | null = null
 
-            // Deferred that resolves with initial state once logged_in arrives
-            const loggedInDeferred = yield* Deferred.make<GameState, GameSocketError>()
+          // Deferred that resolves with initial state once logged_in arrives
+          const loggedInDeferred = yield* Deferred.make<GameState, GameSocketError>()
 
-            // Track whether we've logged in at least once
-            const hasLoggedIn = yield* Ref.make(false)
+          // Track whether we've logged in at least once
+          const hasLoggedIn = yield* Ref.make(false)
 
-            // Tick interval from welcome event (seconds per tick)
-            const tickIntervalRef = yield* Ref.make(1) // default 1s per tick until welcome arrives
+          // Tick interval from welcome event (seconds per tick)
+          const tickIntervalRef = yield* Ref.make(1) // default 1s per tick until welcome arrives
 
-            // Flag to stop reconnect loop on finalization
-            const closed = yield* Ref.make(false)
+          // Flag to stop reconnect loop on finalization
+          const closed = yield* Ref.make(false)
 
-            // Poll state — shared between message handler and poll fiber
-            let pollPending = false
-            let serverTick = 0 // Synced from /health endpoint
+          // Poll state — shared between message handler and poll fiber
+          let pollPending = false
+          let serverTick = 0 // Synced from /health endpoint
 
-            const connectAndLogin = Effect.gen(function* () {
-              yield* Effect.sync(() =>
-                console.log(`${tag(characterName, "ws")} Connecting to ${WS_URL}...`),
-              )
+          const connectAndLogin = Effect.gen(function* () {
+            yield* Effect.sync(() =>
+              console.log(`${tag(characterName, "ws")} Connecting to ${WS_URL}...`),
+            )
 
-              const socket = yield* Effect.async<WebSocket, GameSocketError>((resume) => {
-                const sock = new WebSocket(WS_URL)
+            const socket = yield* Effect.async<WebSocket, GameSocketError>((resume) => {
+              const sock = new WebSocket(WS_URL)
 
-                sock.on("open", () => {
-                  resume(Effect.succeed(sock))
-                })
-
-                sock.on("error", (err) => {
-                  resume(Effect.fail(new GameSocketError("WebSocket connection failed", err)))
-                })
+              sock.on("open", () => {
+                resume(Effect.succeed(sock))
               })
 
-              ws = socket
+              sock.on("error", (err) => {
+                resume(Effect.fail(new GameSocketError("WebSocket connection failed", err)))
+              })
+            })
 
-              // Set up message handler
-              socket.on("message", (data) => {
-                const raw = data.toString()
-                // Server may send multiple JSON objects in one WS frame (newline-delimited)
-                const chunks = raw.split("\n").filter((s) => s.trim().length > 0)
-                for (const chunk of chunks) {
+            ws = socket
+
+            // Set up message handler
+            socket.on("message", (data) => {
+              const raw = data.toString()
+              // Server may send multiple JSON objects in one WS frame (newline-delimited)
+              const chunks = raw.split("\n").filter((s) => s.trim().length > 0)
+              for (const chunk of chunks) {
                 try {
                   const event = parseGameEvent(chunk)
 
@@ -188,163 +184,151 @@ export const makeGameSocketLive = () =>
                 } catch (err) {
                   console.error(`${tag(characterName, "ws")} Failed to parse message: ${err}`)
                 }
-                } // end for chunks
-              })
-
-              // Wait for welcome, then send login
-              yield* Effect.async<void, GameSocketError>((resume) => {
-                // Welcome should arrive quickly after connect
-                const timeout = setTimeout(() => {
-                  resume(Effect.fail(new GameSocketError("Timed out waiting for welcome")))
-                }, 10000)
-
-                const handler = (data: WebSocket.Data) => {
-                  try {
-                    const event = parseGameEvent(data.toString())
-                    if (event.type === "welcome") {
-                      clearTimeout(timeout)
-                      socket.removeListener("message", handler)
-                      const welcomePayload = (event as WelcomeEvent).payload
-                      Effect.runSync(Ref.set(tickIntervalRef, welcomePayload.tick_rate))
-                      serverTick = welcomePayload.current_tick
-                      resume(Effect.succeed(undefined))
-                    }
-                  } catch {
-                    // ignore parse errors during welcome wait
-                  }
-                }
-
-                socket.on("message", handler)
-              })
-
-              const currentTickInterval = yield* Ref.get(tickIntervalRef)
-              yield* Effect.sync(() =>
-                console.log(`${tag(characterName, "ws")} Received welcome (tick_rate=${currentTickInterval}s), sending login...`),
-              )
-
-              // Send login
-              yield* Effect.try({
-                try: () =>
-                  socket.send(
-                    JSON.stringify({
-                      type: "login",
-                      payload: { username: creds.username, password: creds.password },
-                    }),
-                  ),
-                catch: (e) => new GameSocketError("Failed to send login", e),
-              })
-
-              // Set up reconnect handler
-              socket.on("close", () => {
-                console.log(`${tag(characterName, "ws")} Connection closed`)
-                ws = null
-
-                // Reconnect if not intentionally closed
-                Effect.runFork(
-                  Effect.gen(function* () {
-                    const isClosed = yield* Ref.get(closed)
-                    if (isClosed) return
-
-                    yield* Effect.sync(() =>
-                      console.log(
-                        `${tag(characterName, "ws")} Reconnecting in ${RECONNECT_DELAY_MS}ms...`,
-                      ),
-                    )
-                    yield* Effect.sleep(RECONNECT_DELAY_MS)
-
-                    const stillClosed = yield* Ref.get(closed)
-                    if (stillClosed) return
-
-                    yield* connectAndLogin.pipe(
-                      Effect.catchAll((e) =>
-                        Effect.sync(() =>
-                          console.error(
-                            `${tag(characterName, "ws")} Reconnect failed: ${e.message}`,
-                          ),
-                        ),
-                      ),
-                    )
-                  }),
-                )
-              })
-
-              socket.on("error", (err) => {
-                console.error(`${tag(characterName, "ws")} Error: ${err.message}`)
-              })
+              } // end for chunks
             })
 
-            // Initial connection
-            yield* connectAndLogin
+            // Wait for welcome, then send login
+            yield* Effect.async<void, GameSocketError>((resume) => {
+              // Welcome should arrive quickly after connect
+              const timeout = setTimeout(() => {
+                resume(Effect.fail(new GameSocketError("Timed out waiting for welcome")))
+              }, 10000)
 
-            // Wait for login response
-            const initialState = yield* Deferred.await(loggedInDeferred).pipe(
-              Effect.timeoutFail({
-                duration: "30 seconds",
-                onTimeout: () => new GameSocketError("Timed out waiting for logged_in"),
-              }),
-            )
+              const handler = (data: WebSocket.Data) => {
+                try {
+                  const event = parseGameEvent(data.toString())
+                  if (event.type === "welcome") {
+                    clearTimeout(timeout)
+                    socket.removeListener("message", handler)
+                    const welcomePayload = (event as WelcomeEvent).payload
+                    Effect.runSync(Ref.set(tickIntervalRef, welcomePayload.tick_rate))
+                    serverTick = welcomePayload.current_tick
+                    resume(Effect.succeed(undefined))
+                  }
+                } catch {
+                  // ignore parse errors during welcome wait
+                }
+              }
 
+              socket.on("message", handler)
+            })
+
+            const currentTickInterval = yield* Ref.get(tickIntervalRef)
             yield* Effect.sync(() =>
-              console.log(
-                `${tag(characterName, "ws")} Logged in as ${initialState.player.username} in ${initialState.system?.name ?? initialState.player.current_system}`,
-              ),
+              console.log(`${tag(characterName, "ws")} Received welcome (tick_rate=${currentTickInterval}s), sending login...`),
             )
 
-            // Start polling fiber — sends get_status periodically to synthesize state_update events
-            // The server doesn't push state_update to idle players, so we poll instead.
-            // Fetches /health each cycle to sync the real game tick for synthetic events.
-            const pollFiber = yield* Effect.gen(function* () {
-              const tick = yield* Effect.tryPromise({
-                try: () => fetchHealthTick(),
-                catch: () => null,
-              })
-              if (tick != null) serverTick = tick
+            // Send login
+            yield* Effect.try({
+              try: () =>
+                socket.send(
+                  JSON.stringify({
+                    type: "login",
+                    payload: { username: creds.username, password: creds.password },
+                  }),
+                ),
+              catch: (e) => new GameSocketError("Failed to send login", e),
+            })
 
+            // Set up reconnect handler
+            socket.on("close", () => {
+              console.log(`${tag(characterName, "ws")} Connection closed`)
+              ws = null
+
+              // Reconnect if not intentionally closed
+              Effect.runFork(
+                Effect.gen(function* () {
+                  const isClosed = yield* Ref.get(closed)
+                  if (isClosed) return
+
+                  yield* Effect.sync(() =>
+                    console.log(
+                      `${tag(characterName, "ws")} Reconnecting in ${RECONNECT_DELAY_MS}ms...`,
+                    ),
+                  )
+                  yield* Effect.sleep(RECONNECT_DELAY_MS)
+
+                  const stillClosed = yield* Ref.get(closed)
+                  if (stillClosed) return
+
+                  yield* connectAndLogin.pipe(
+                    Effect.catchAll((e) =>
+                      Effect.sync(() =>
+                        console.error(
+                          `${tag(characterName, "ws")} Reconnect failed: ${e.message}`,
+                        ),
+                      ),
+                    ),
+                  )
+                }),
+              )
+            })
+
+            socket.on("error", (err) => {
+              console.error(`${tag(characterName, "ws")} Error: ${err.message}`)
+            })
+          })
+
+          // Initial connection
+          yield* connectAndLogin
+
+          // Wait for login response
+          const initialState = yield* Deferred.await(loggedInDeferred).pipe(
+            Effect.timeoutFail({
+              duration: "30 seconds",
+              onTimeout: () => new GameSocketError("Timed out waiting for logged_in"),
+            }),
+          )
+
+          yield* Effect.sync(() =>
+            console.log(
+              `${tag(characterName, "ws")} Logged in as ${initialState.player.username} in ${initialState.system?.name ?? initialState.player.current_system}`,
+            ),
+          )
+
+          // Start polling fiber — sends get_status periodically to synthesize state_update events
+          // The server doesn't push state_update to idle players, so we poll instead.
+          // Fetches /health each cycle to sync the real game tick for synthetic events.
+          const pollFiber = yield* Effect.gen(function* () {
+            const tick = yield* Effect.tryPromise({
+              try: () => fetchHealthTick(),
+              catch: () => null,
+            })
+            if (tick != null) serverTick = tick
+
+            yield* Effect.sync(() => {
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                pollPending = true
+                ws.send(JSON.stringify({ type: "get_status" }))
+              }
+            })
+          }).pipe(
+            Effect.repeat(Schedule.spaced(`${POLL_INTERVAL_MS} millis`)),
+            Effect.catchAll(() => Effect.void),
+            Effect.fork,
+          )
+
+          // Register finalizer to close the WebSocket and stop polling
+          yield* Scope.addFinalizer(
+            yield* Effect.scope,
+            Effect.gen(function* () {
+              yield* Ref.set(closed, true)
+              yield* Fiber.interrupt(pollFiber).pipe(Effect.catchAll(() => Effect.void))
               yield* Effect.sync(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                  pollPending = true
-                  ws.send(JSON.stringify({ type: "get_status" }))
+                if (ws) {
+                  ws.close()
+                  ws = null
                 }
               })
-            }).pipe(
-              Effect.repeat(Schedule.spaced(`${POLL_INTERVAL_MS} millis`)),
-              Effect.catchAll(() => Effect.void),
-              Effect.fork,
-            )
+              yield* Queue.shutdown(events)
+              yield* Effect.sync(() =>
+                console.log(`${tag(characterName, "ws")} Connection closed (finalized)`),
+              )
+            }),
+          )
 
-            // Register finalizer to close the WebSocket and stop polling
-            yield* Scope.addFinalizer(
-              yield* Effect.scope,
-              Effect.gen(function* () {
-                yield* Ref.set(closed, true)
-                yield* Fiber.interrupt(pollFiber).pipe(Effect.catchAll(() => Effect.void))
-                yield* Effect.sync(() => {
-                  if (ws) {
-                    ws.close()
-                    ws = null
-                  }
-                })
-                yield* Queue.shutdown(events)
-                yield* Effect.sync(() =>
-                  console.log(`${tag(characterName, "ws")} Connection closed (finalized)`),
-                )
-              }),
-            )
-
-            const tickIntervalSec = yield* Ref.get(tickIntervalRef)
-            return { events, initialState, tickIntervalSec, initialTick: serverTick }
-          }),
-
-        send: (msg) =>
-          Effect.try({
-            try: () => {
-              if (!ws || ws.readyState !== WebSocket.OPEN) {
-                throw new Error("WebSocket not connected")
-              }
-              ws.send(JSON.stringify(msg))
-            },
-            catch: (e) => new GameSocketError("Failed to send message", e),
-          }),
-      })
-    })(),
+          const tickIntervalSec = yield* Ref.get(tickIntervalRef)
+          return { events, initialState, tickIntervalSec, initialTick: serverTick }
+        }),
+    }),
   )
