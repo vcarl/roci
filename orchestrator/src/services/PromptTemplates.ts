@@ -15,7 +15,6 @@ export class PromptTemplates extends Context.Tag("PromptTemplates")<
     readonly getDinnerPrompt: () => Effect.Effect<string, PromptTemplateError>
     readonly getDreamDiaryPrompt: (dreamType: "normal" | "good" | "nightmare") => Effect.Effect<string, PromptTemplateError>
     readonly getDreamSecretsPrompt: (dreamType: "normal" | "good" | "nightmare") => Effect.Effect<string, PromptTemplateError>
-    readonly getInGameClaudeMd: () => Effect.Effect<string, PromptTemplateError>
   }
 >() {}
 
@@ -40,7 +39,6 @@ export const PromptTemplatesLive = Layer.effect(
     const dreamSecrets = yield* read("dream-secrets.md")
     const dreamSecretsGood = yield* read("dream-secrets-good.md")
     const dreamSecretsNightmare = yield* read("dream-secrets-nightmare.md")
-    const inGameClaude = yield* read("in-game-claude.md")
 
     const diaryByType = { normal: dreamDiary, good: dreamDiaryGood, nightmare: dreamDiaryNightmare }
     const secretsByType = { normal: dreamSecrets, good: dreamSecretsGood, nightmare: dreamSecretsNightmare }
@@ -50,7 +48,6 @@ export const PromptTemplatesLive = Layer.effect(
       getDinnerPrompt: () => Effect.succeed(dinner),
       getDreamDiaryPrompt: (dreamType) => Effect.succeed(diaryByType[dreamType]),
       getDreamSecretsPrompt: (dreamType) => Effect.succeed(secretsByType[dreamType]),
-      getInGameClaudeMd: () => Effect.succeed(inGameClaude),
     })
   }),
 )

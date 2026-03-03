@@ -75,7 +75,7 @@ function buildAdditionalSection(additionalContext?: string): string {
 
 // ── Prompt builder ──────────────────────────────────────────
 
-const makePromptBuilder = (templates: Record<string, string>): PromptBuilder => ({
+const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilder, "systemPrompt"> => ({
   planPrompt(ctx) {
     return renderTemplate(templates.plan, {
       taskList: TASK_LIST,
@@ -159,6 +159,7 @@ export const SpaceMoltPromptBuilderLive = Layer.effect(
     for (const name of TEMPLATE_NAMES) {
       templates[name] = yield* loadTemplate(path.join(PROMPTS_DIR, `${name}.md`))
     }
-    return makePromptBuilder(templates)
+    const inGameClaudeMd = yield* loadTemplate(path.join(PROMPTS_DIR, "in-game-claude.md"))
+    return { ...makePromptBuilder(templates), systemPrompt: () => inGameClaudeMd }
   }),
 )

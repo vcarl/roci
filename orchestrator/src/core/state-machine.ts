@@ -242,7 +242,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
 
     // --- Event loop ---
 
-    yield* logToConsole(config.char.name, "monitor", "Starting event loop (WebSocket-driven)...")
+    yield* logToConsole(config.char.name, "monitor", "Starting event loop...")
 
     // Initial planning on startup
     yield* Effect.gen(function* () {

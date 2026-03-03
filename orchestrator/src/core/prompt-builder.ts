@@ -56,6 +56,8 @@ export interface PromptBuilder {
   interruptPrompt(ctx: InterruptPromptContext): string
   evaluatePrompt(ctx: EvaluatePromptContext): string
   subagentPrompt(ctx: SubagentPromptContext): string
+  /** Domain-specific system prompt for the subagent container. */
+  systemPrompt(): string
 }
 
 /**

@@ -1,7 +1,6 @@
 import { Effect, Ref, Fiber } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterFs } from "../services/CharacterFs.js"
-import { PromptTemplates } from "../services/PromptTemplates.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import {
   logPlanTransition,
@@ -19,6 +18,7 @@ import type { TimingRefs } from "./step-tracker.js"
 import { recordStepTiming, recordStepOutcome } from "./step-tracker.js"
 import { brainEvaluate } from "./brain.js"
 import { runGenericSubagent } from "./subagent.js"
+import { PromptBuilderTag } from "./prompt-builder.js"
 
 export interface SubagentRefs {
   readonly fiber: Ref.Ref<Fiber.RuntimeFiber<string, unknown> | null>
@@ -248,10 +248,8 @@ export const maybeSpawnSubagent = (
       const charFs = yield* CharacterFs
       const personality = yield* charFs.readBackground(smConfig.char)
       const values = yield* charFs.readValues(smConfig.char)
-      const templates = yield* PromptTemplates
-      const systemPrompt = yield* templates.getInGameClaudeMd().pipe(
-        Effect.catchAll(() => Effect.succeed("")),
-      )
+      const promptBuilder = yield* PromptBuilderTag
+      const systemPrompt = promptBuilder.systemPrompt()
 
       const fiber = yield* runGenericSubagent({
         char: smConfig.char,
