@@ -12,7 +12,7 @@ import { ProjectRoot } from "./services/ProjectRoot.js"
 import { runOrchestrator } from "./pipeline/orchestrator.js"
 import { logToConsole } from "./logging/console-renderer.js"
 import { spaceMoltDomainConfig } from "./domains/spacemolt/config.js"
-import { makeGameSocketLive } from "./domains/spacemolt/game-socket.js"
+import { spaceMoltServiceLayer } from "./domains/spacemolt/index.js"
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "../..")
 
@@ -50,6 +50,8 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
         char,
         tickIntervalSeconds: args.tickInterval,
         imageName: domainConfig.imageName,
+        phaseRegistry: domainConfig.phaseRegistry,
+        domainBundle: domainConfig.bundle,
       })
     }
 
@@ -262,7 +264,7 @@ const serviceLayer = Layer.mergeAll(
   ClaudeLive,
   CharacterFsLive,
   PromptTemplatesLive,
-  makeGameSocketLive(),
+  spaceMoltServiceLayer,
   projectRootLayer,
   CharacterLogLive.pipe(Layer.provide(projectRootLayer)),
 )

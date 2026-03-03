@@ -1,5 +1,6 @@
 import { Context } from "effect"
 import type { DomainState, DomainEvent } from "./domain-types.js"
+import type { Alert } from "./types.js"
 
 /**
  * Translates raw domain events into state machine operations.
@@ -24,6 +25,8 @@ export interface EventResult {
   isTick?: boolean
   /** Accumulated context data (e.g. chat messages). Keyed by context type. */
   accumulatedContext?: Record<string, unknown>
+  /** Domain-constructed alerts for interrupt events. When present and isInterrupt is true, these are used instead of querying the InterruptRegistry. */
+  alerts?: Alert[]
   /** Logging side effect — called after state is updated. */
   log?: () => void
 }

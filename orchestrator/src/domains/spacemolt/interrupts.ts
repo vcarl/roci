@@ -1,16 +1,8 @@
 import { Layer } from "effect"
-import type { InterruptRule, InterruptRegistry } from "../../core/interrupt.js"
-import { InterruptRegistryTag } from "../../core/interrupt.js"
-import type { Alert } from "../../core/types.js"
+import type { InterruptRule } from "../../core/interrupt.js"
+import { InterruptRegistryTag, createInterruptRegistry } from "../../core/interrupt.js"
 import { SituationType as SituationTypeEnum } from "./types.js"
 import type { GameState, Situation } from "./types.js"
-
-const priorityOrder: Record<Alert["priority"], number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-}
 
 const interruptRules: ReadonlyArray<InterruptRule> = [
   // ── Critical ───────────────────────────────────────────
@@ -130,33 +122,7 @@ const interruptRules: ReadonlyArray<InterruptRule> = [
   },
 ]
 
-const spaceMoltInterruptRegistry: InterruptRegistry = {
-  rules: interruptRules,
-
-  evaluate(state, situation, currentTask?) {
-    const alerts: Alert[] = []
-    for (const rule of interruptRules) {
-      if (currentTask && rule.suppressWhenTaskIs === currentTask) continue
-      if (rule.condition(state, situation)) {
-        alerts.push({
-          priority: rule.priority,
-          message: rule.message(state, situation),
-          suggestedAction: rule.suggestedAction,
-          ruleName: rule.name,
-        })
-      }
-    }
-    return alerts.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
-  },
-
-  criticals(state, situation, currentTask?) {
-    return this.evaluate(state, situation, currentTask).filter((a) => a.priority === "critical")
-  },
-
-  softAlerts(state, situation, currentTask?) {
-    return this.evaluate(state, situation, currentTask).filter((a) => a.priority !== "critical")
-  },
-}
+const spaceMoltInterruptRegistry = createInterruptRegistry(interruptRules)
 
 /** Layer providing the SpaceMolt interrupt registry. */
 export const SpaceMoltInterruptRegistryLive = Layer.succeed(InterruptRegistryTag, spaceMoltInterruptRegistry)

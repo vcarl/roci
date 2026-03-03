@@ -7,6 +7,7 @@ import { SpaceMoltSituationClassifierLive } from "./situation.js"
 import { SpaceMoltStateRendererLive } from "./renderer.js"
 import { SpaceMoltPromptBuilderLive } from "./prompt-builder.js"
 import { SpaceMoltContextHandlerLive } from "./context-handler.js"
+import { makeGameSocketLive } from "./game-socket.js"
 
 /** No-op skill registry — all step completion falls through to the LLM evaluator. */
 const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
@@ -31,3 +32,6 @@ export const spaceMoltDomainBundle: DomainBundle = Layer.mergeAll(
   SpaceMoltStateRendererLive,
   SpaceMoltContextHandlerLive,
 )
+
+/** SpaceMolt-specific service layer (GameSocket) for the CLI's global service layer. */
+export const spaceMoltServiceLayer = makeGameSocketLive()

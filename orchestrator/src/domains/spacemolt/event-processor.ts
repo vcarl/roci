@@ -51,6 +51,12 @@ const spaceMoltEventProcessor: EventProcessor = {
         const { payload } = smEvent
         return {
           isInterrupt: true,
+          alerts: [{
+            priority: "critical" as const,
+            message: `Combat: ${payload.attacker} attacking ${payload.target} for ${payload.damage} damage`,
+            suggestedAction: "Assess threat and respond",
+            ruleName: "combat_update",
+          }],
           accumulatedContext: {
             combatUpdate: payload,
           },

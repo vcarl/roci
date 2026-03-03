@@ -1,8 +1,8 @@
 import { Effect } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import type { PhaseRegistry } from "../core/phase.js"
+import type { DomainBundle } from "../core/domain-bundle.js"
 import { runPhases } from "../core/phase-runner.js"
-import { spaceMoltPhaseRegistry } from "../domains/spacemolt/phases.js"
 import { logToConsole } from "../logging/console-renderer.js"
 
 export interface CharacterLoopConfig {
@@ -13,8 +13,10 @@ export interface CharacterLoopConfig {
   containerId?: string
   /** Env vars passed at docker exec time (e.g. CLAUDE_CODE_OAUTH_TOKEN) */
   containerEnv?: Record<string, string>
-  /** Override the default SpaceMolt phase registry. */
-  phaseRegistry?: PhaseRegistry
+  /** Phase registry defining the session lifecycle. */
+  phaseRegistry: PhaseRegistry
+  /** Domain service layers for the state machine. */
+  domainBundle: DomainBundle
 }
 
 /**
@@ -32,8 +34,9 @@ export const characterLoop = (config: CharacterLoopConfig & { containerId: strin
           char: config.char,
           containerId: config.containerId,
           containerEnv: config.containerEnv,
+          domainBundle: config.domainBundle,
         },
-        config.phaseRegistry ?? spaceMoltPhaseRegistry,
+        config.phaseRegistry,
       )
     }),
   )

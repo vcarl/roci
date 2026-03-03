@@ -290,7 +290,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
           const { chatMessages } = yield* contextHandler.processContext(
             result.accumulatedContext, config.char)
           yield* Ref.update(chatContextRef, (msgs) =>
-            [...msgs, ...chatMessages].slice(-20))
+            [...msgs, ...(chatMessages ?? [])].slice(-20))
         }
 
         // Handle the different event result types
@@ -308,15 +308,8 @@ export const runStateMachine = (config: StateMachineConfig) =>
             const state = yield* Ref.get(gameStateRef)
             const situation = classifier.classify(state)
 
-            // Build alerts: prefer synthetic combat update alert if available, otherwise use registry
-            const combatUpdate = result.accumulatedContext?.combatUpdate as { attacker: string; target: string; damage: number } | undefined
-            const alerts: Alert[] = combatUpdate
-              ? (currentTask === "combat" ? [] : [{
-                  priority: "critical",
-                  message: `Combat: ${combatUpdate.attacker} attacking ${combatUpdate.target} for ${combatUpdate.damage} damage`,
-                  suggestedAction: "Assess threat and respond",
-                }])
-              : interrupts.criticals(state, situation, currentTask)
+            // Use domain-provided alerts if present, otherwise fall back to the interrupt registry
+            const alerts: Alert[] = result.alerts ?? interrupts.criticals(state, situation, currentTask)
             if (alerts.length > 0) {
               const briefing = classifier.briefing(state, situation)
               yield* handleInterrupt(alerts, state, situation, briefing)

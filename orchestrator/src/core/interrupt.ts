@@ -33,6 +33,47 @@ export interface InterruptRegistry {
   softAlerts(state: DomainState, situation: DomainSituation, currentTask?: string): Alert[]
 }
 
+const priorityOrder: Record<Alert["priority"], number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+}
+
+/**
+ * Factory that builds an InterruptRegistry from a list of declarative rules.
+ * Handles rule walking, suppression, sorting, and partitioning.
+ */
+export function createInterruptRegistry(rules: ReadonlyArray<InterruptRule>): InterruptRegistry {
+  return {
+    rules,
+
+    evaluate(state, situation, currentTask?) {
+      const alerts: Alert[] = []
+      for (const rule of rules) {
+        if (currentTask && rule.suppressWhenTaskIs === currentTask) continue
+        if (rule.condition(state, situation)) {
+          alerts.push({
+            priority: rule.priority,
+            message: rule.message(state, situation),
+            suggestedAction: rule.suggestedAction,
+            ruleName: rule.name,
+          })
+        }
+      }
+      return alerts.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
+    },
+
+    criticals(state, situation, currentTask?) {
+      return this.evaluate(state, situation, currentTask).filter((a) => a.priority === "critical")
+    },
+
+    softAlerts(state, situation, currentTask?) {
+      return this.evaluate(state, situation, currentTask).filter((a) => a.priority !== "critical")
+    },
+  }
+}
+
 /**
  * Effect service tag for the interrupt registry.
  */

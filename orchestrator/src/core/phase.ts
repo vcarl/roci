@@ -1,5 +1,6 @@
 import { Context, Effect, Queue } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
+import type { DomainBundle } from "./domain-bundle.js"
 
 /**
  * Connection state threaded between phases.
@@ -23,6 +24,8 @@ export interface PhaseContext<S = unknown, Evt = unknown> {
   readonly connection?: ConnectionState<S, Evt>
   /** Arbitrary data threaded between phases. */
   readonly phaseData?: Record<string, unknown>
+  /** Domain service layers for the state machine. */
+  readonly domainBundle?: DomainBundle
 }
 
 /**

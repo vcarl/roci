@@ -123,6 +123,7 @@ export const runOrchestrator = (configs: CharacterLoopConfig[], domain: DomainCo
         containerId,
         containerEnv,
         phaseRegistry: domain.phaseRegistry,
+        domainBundle: domain.bundle,
       }).pipe(
         Effect.catchAll((e) =>
           logToConsole(config.char.name, "orchestrator", `Fatal error: ${e}`),

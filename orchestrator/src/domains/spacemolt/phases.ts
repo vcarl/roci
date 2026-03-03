@@ -9,7 +9,6 @@ import { GameSocket } from "./game-socket.js"
 import { dream } from "../../ai/dream.js"
 import { dinner } from "../../ai/dinner.js"
 import { eventLoop } from "../../monitor/event-loop.js"
-import { spaceMoltDomainBundle } from "./index.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 
@@ -95,6 +94,11 @@ const activePhase = {
         shouldExit: (turnCount: number) => Effect.succeed(turnCount >= ACTIVE_SESSION_TURNS),
       }
 
+      if (!context.domainBundle) {
+        yield* logToConsole(context.char.name, "orchestrator", "No domainBundle in active phase — shutting down")
+        return { _tag: "Shutdown" } as PhaseResult
+      }
+
       yield* eventLoop({
         char: context.char,
         containerId: context.containerId,
@@ -106,7 +110,7 @@ const activePhase = {
         initialTick,
         exitSignal,
         hooks,
-        domainBundle: spaceMoltDomainBundle,
+        domainBundle: context.domainBundle,
       })
 
       // When the state machine exits, transition to social phase
