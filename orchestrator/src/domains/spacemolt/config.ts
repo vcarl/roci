@@ -1,7 +1,7 @@
 import * as path from "node:path"
 import { execSync } from "node:child_process"
 import type { DomainConfig, ContainerMount } from "../../core/domain-bundle.js"
-import { spaceMoltDomainBundle } from "./index.js"
+import { spaceMoltDomainBundle, spaceMoltServiceLayer } from "./index.js"
 import { spaceMoltPhaseRegistry } from "./phases.js"
 
 const IMAGE_NAME = "spacemolt-player"
@@ -61,4 +61,8 @@ export const spaceMoltDomainConfig = (projectRoot: string): DomainConfig => ({
   containerMounts: containerMounts(projectRoot),
   containerSetup,
   imageName: IMAGE_NAME,
+  serviceLayer: spaceMoltServiceLayer,
+  dockerfilePath: ".devcontainer/Dockerfile",
+  dockerContext: ".devcontainer",
+  containerAddDirs: ["/work/shared", "/work/sm-cli"],
 })

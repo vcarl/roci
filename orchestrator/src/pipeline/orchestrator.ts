@@ -1,14 +1,13 @@
 import { Effect, Fiber } from "effect"
 import { Docker, DockerError } from "../services/Docker.js"
-import { characterLoop, type CharacterLoopConfig } from "./character-loop.js"
+import { characterLoop } from "./character-loop.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import { ProjectRoot } from "../services/ProjectRoot.js"
+import { makeCharacterConfig } from "../services/CharacterFs.js"
 import { readFileSync } from "node:fs"
 import { execSync } from "node:child_process"
 import * as path from "node:path"
-import type { DomainConfig } from "../core/domain-bundle.js"
-
-const SHARED_CONTAINER_NAME = "roci-crew"
+import type { ResolvedDomain } from "../domains/registry.js"
 
 /** Read a key=value .env file, returning a Record. */
 function loadDotenv(projectRoot: string): Record<string, string> {
@@ -35,41 +34,49 @@ function loadDotenv(projectRoot: string): Record<string, string> {
 }
 
 /**
- * Ensure the shared `roci-crew` container exists and is running.
+ * Ensure a domain container exists and is running.
+ * Container name: `roci-<domainName>`.
  * Returns the container ID.
  */
-const ensureSharedContainer = (domain: DomainConfig) =>
+const ensureContainer = (containerName: string, rd: ResolvedDomain) =>
   Effect.gen(function* () {
     const docker = yield* Docker
 
-    const existing = yield* docker.status(SHARED_CONTAINER_NAME)
+    const existing = yield* docker.status(containerName)
 
     if (existing && existing.status === "running") {
-      yield* logToConsole("orchestrator", "main", `Shared container ${SHARED_CONTAINER_NAME} already running`)
+      yield* logToConsole("orchestrator", "main", `Container ${containerName} already running`)
       return existing.id
     }
 
     if (existing && existing.status === "paused") {
-      yield* docker.resume(SHARED_CONTAINER_NAME)
-      yield* logToConsole("orchestrator", "main", `Shared container ${SHARED_CONTAINER_NAME} resumed`)
+      yield* docker.resume(containerName)
+      yield* logToConsole("orchestrator", "main", `Container ${containerName} resumed`)
       return existing.id
     }
 
     // Remove old container if exists (exited/created)
     if (existing) {
-      yield* docker.remove(SHARED_CONTAINER_NAME)
+      yield* docker.remove(containerName)
     }
 
-    // Create the shared container with domain-specific mounts
+    // Build env for container — include ROCI_ADD_DIRS if configured
+    const containerCreateEnv: Record<string, string> = {}
+    const addDirs = rd.config.containerAddDirs
+    if (addDirs && addDirs.length > 0) {
+      containerCreateEnv.ROCI_ADD_DIRS = addDirs.join(":")
+    }
+
+    // Create the container with domain-specific mounts
     const containerId = yield* docker.create({
-      name: SHARED_CONTAINER_NAME,
-      image: domain.imageName,
-      mounts: domain.containerMounts.map((m) => ({
+      name: containerName,
+      image: rd.config.imageName,
+      mounts: rd.config.containerMounts.map((m) => ({
         host: m.host,
         container: m.container,
         readonly: m.readonly,
       })),
-      env: {},
+      env: containerCreateEnv,
       cmd: ["bash", "-c", "sudo /usr/local/bin/init-firewall.sh && sleep infinity"],
       capAdd: ["NET_ADMIN", "NET_RAW"],
     })
@@ -79,30 +86,36 @@ const ensureSharedContainer = (domain: DomainConfig) =>
       try: () => {
         execSync(`docker start ${containerId}`, { stdio: "pipe" })
       },
-      catch: (e) => new DockerError("Failed to start shared container", e),
+      catch: (e) => new DockerError("Failed to start container", e),
     })
 
     // Run domain-specific container setup
-    if (domain.containerSetup) {
-      domain.containerSetup(containerId)
+    if (rd.config.containerSetup) {
+      rd.config.containerSetup(containerId)
     }
 
-    yield* logToConsole("orchestrator", "main", `Shared container ${SHARED_CONTAINER_NAME} created and started`)
+    yield* logToConsole("orchestrator", "main", `Container ${containerName} created and started`)
 
     return containerId
   })
 
 /**
- * Multi-character orchestrator. Ensures a single shared container,
+ * Multi-domain orchestrator. Builds images, ensures per-domain containers,
  * spawns a Fiber per character, and waits for all to complete (or be interrupted).
  */
-export const runOrchestrator = (configs: CharacterLoopConfig[], domain: DomainConfig) =>
+export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalSeconds: number) =>
   Effect.gen(function* () {
     const projectRoot = yield* ProjectRoot
+    const docker = yield* Docker
 
-    yield* logToConsole("orchestrator", "main", `Starting ${configs.length} character(s)...`)
+    const totalChars = resolvedDomains.reduce((n, rd) => n + rd.characters.length, 0)
+    yield* logToConsole(
+      "orchestrator",
+      "main",
+      `Starting ${totalChars} character(s) across ${resolvedDomains.length} domain(s)...`,
+    )
 
-    // Load CLAUDE_CODE_OAUTH_TOKEN from .env (read fresh each start, passed at exec time)
+    // Load CLAUDE_CODE_OAUTH_TOKEN from .env
     const dotenv = loadDotenv(projectRoot)
     const oauthToken = dotenv.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.CLAUDE_CODE_OAUTH_TOKEN
     if (!oauthToken) {
@@ -113,31 +126,72 @@ export const runOrchestrator = (configs: CharacterLoopConfig[], domain: DomainCo
     }
     const containerEnv = { CLAUDE_CODE_OAUTH_TOKEN: oauthToken }
 
-    // Ensure the shared container is running (once for all characters)
-    const containerId = yield* ensureSharedContainer(domain)
+    // Build images — deduplicated by imageName
+    const builtImages = new Set<string>()
+    for (const rd of resolvedDomains) {
+      if (builtImages.has(rd.config.imageName)) continue
+      builtImages.add(rd.config.imageName)
 
-    // Fork each character loop as a fiber, passing the shared container ID + env
-    const fibers = yield* Effect.forEach(configs, (config) =>
-      characterLoop({
-        ...config,
-        containerId,
-        containerEnv,
-        phaseRegistry: domain.phaseRegistry,
-        domainBundle: domain.bundle,
-      }).pipe(
-        Effect.catchAll((e) =>
-          logToConsole(config.char.name, "orchestrator", `Fatal error: ${e}`),
-        ),
-        Effect.fork,
-      ),
-    )
+      const dockerfilePath = rd.config.dockerfilePath ?? ".devcontainer/Dockerfile"
+      const dockerContext = rd.config.dockerContext ?? ".devcontainer"
+
+      yield* logToConsole("orchestrator", "main", `Building Docker image ${rd.config.imageName}...`)
+      yield* docker.build(
+        rd.config.imageName,
+        path.resolve(projectRoot, dockerfilePath),
+        path.resolve(projectRoot, dockerContext),
+      )
+    }
+
+    // Ensure per-domain containers and fork character fibers
+    const allFibers = []
+
+    for (const rd of resolvedDomains) {
+      const containerName = `roci-${rd.name}`
+      const containerId = yield* ensureContainer(containerName, rd)
+
+      // Build the per-character service layer with domain-specific services
+      const domainServiceLayer = rd.config.serviceLayer
+
+      for (const charName of rd.characters) {
+        const char = makeCharacterConfig(projectRoot, charName)
+
+        const loopConfig = {
+          char,
+          tickIntervalSeconds,
+          imageName: rd.config.imageName,
+          containerId,
+          containerEnv,
+          phaseRegistry: rd.config.phaseRegistry,
+          domainBundle: rd.config.bundle,
+        }
+
+        // Fork the character loop, providing domain-specific service layer if present.
+        // Phase types erase R to `never` via cast, so the layer is provided at runtime
+        // for service resolution; we cast it to avoid contaminating the type.
+        const loopEffect = characterLoop(loopConfig).pipe(
+          Effect.catchAll((e) =>
+            logToConsole(charName, "orchestrator", `Fatal error: ${e}`),
+          ),
+        )
+
+        // Phase types erase R to `never` via cast, so loopEffect's R is already
+        // satisfied. The layer is only needed at runtime for service resolution.
+        const runnableLoop = domainServiceLayer
+          ? (loopEffect.pipe(Effect.provide(domainServiceLayer)) as typeof loopEffect)
+          : loopEffect
+
+        const fiber = yield* Effect.fork(runnableLoop)
+        allFibers.push(fiber)
+      }
+    }
 
     yield* logToConsole(
       "orchestrator",
       "main",
-      `All ${fibers.length} character(s) running. Press Ctrl-C to stop.`,
+      `All ${allFibers.length} character(s) running. Press Ctrl-C to stop.`,
     )
 
     // Wait for all fibers (they run indefinitely until interrupted)
-    yield* Fiber.joinAll(fibers)
+    yield* Fiber.joinAll(allFibers)
   })

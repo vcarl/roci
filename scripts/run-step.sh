@@ -7,8 +7,8 @@ set -euo pipefail
 # Receives prompt on stdin.
 #
 # CWD is set to /work/players/<name> so Claude's default scope is the
-# player's own directory. --add-dir grants access to shared resources
-# and the sm CLI.
+# player's own directory. --add-dir paths are configured per-domain via
+# the ROCI_ADD_DIRS env var (colon-separated).
 
 PLAYER_NAME="${1:?Usage: run-step.sh <player-name> [claude flags...]}"
 shift
@@ -26,11 +26,17 @@ cd "$PLAYER_DIR"
 # Build claude args
 CLAUDE_ARGS=(
   -p
-  --add-dir /work/shared
-  --add-dir /work/sm-cli
   --permission-mode bypassPermissions
   --no-session-persistence
 )
+
+# Add domain-specific --add-dir paths from ROCI_ADD_DIRS env var (colon-separated)
+if [ -n "${ROCI_ADD_DIRS:-}" ]; then
+  IFS=':' read -ra ADD_DIR_PATHS <<< "$ROCI_ADD_DIRS"
+  for d in "${ADD_DIR_PATHS[@]}"; do
+    [ -d "$d" ] && CLAUDE_ARGS+=(--add-dir "$d")
+  done
+fi
 
 # If ROCI_SYSTEM_PROMPT env var is set, use it as --system-prompt
 if [ -n "${ROCI_SYSTEM_PROMPT:-}" ]; then

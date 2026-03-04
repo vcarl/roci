@@ -41,6 +41,7 @@ const startupPhase = {
         owner,
         repo,
         pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
+        token: creds.password,
       }
 
       const { events, initialState, tickIntervalSec, initialTick } =

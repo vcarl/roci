@@ -41,4 +41,15 @@ export interface DomainConfig {
   readonly containerSetup?: (containerId: string) => any
   /** Docker image name for the domain. */
   readonly imageName: string
+  /** Domain-specific Effect service layer (e.g. GameSocket for SpaceMolt, GitHubClient for GitHub). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly serviceLayer?: Layer.Layer<any, any, any>
+  /** Path to Dockerfile, relative to project root. */
+  readonly dockerfilePath?: string
+  /** Docker build context directory, relative to project root. */
+  readonly dockerContext?: string
+  /** Additional domains for firewall allowlist. */
+  readonly firewallExtraDomains?: string[]
+  /** Container --add-dir paths for claude subagent (colon-separated in ROCI_ADD_DIRS env var). */
+  readonly containerAddDirs?: string[]
 }

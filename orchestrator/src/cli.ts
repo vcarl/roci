@@ -11,13 +11,9 @@ import { CharacterLogLive } from "./logging/log-writer.js"
 import { ProjectRoot } from "./services/ProjectRoot.js"
 import { runOrchestrator } from "./pipeline/orchestrator.js"
 import { logToConsole } from "./logging/console-renderer.js"
-import { spaceMoltDomainConfig } from "./domains/spacemolt/config.js"
-import { spaceMoltServiceLayer } from "./domains/spacemolt/index.js"
+import { resolveConfigs } from "./domains/registry.js"
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "../..")
-
-// Domain configuration — currently always SpaceMolt
-const domainConfig = spaceMoltDomainConfig(PROJECT_ROOT)
 
 // Shared options
 const tickInterval = Options.integer("tick-interval").pipe(
@@ -25,110 +21,175 @@ const tickInterval = Options.integer("tick-interval").pipe(
   Options.withDescription("Seconds between monitor ticks"),
 )
 
+const domainOption = Options.text("domain").pipe(
+  Options.repeated,
+  Options.withDescription("Domain(s) to run (e.g. spacemolt, github). If omitted, runs all from config.json."),
+)
+
 // --- start command ---
 const startCharacters = Args.text({ name: "characters" }).pipe(Args.repeated)
 
-const startCommand = Command.make("start", { characters: startCharacters, tickInterval }, (args) =>
+const startCommand = Command.make("start", { characters: startCharacters, tickInterval, domain: domainOption }, (args) =>
   Effect.gen(function* () {
-    const characters = args.characters
-    if (characters.length === 0) {
-      yield* Effect.logError("No characters specified. Usage: roci start <character> [character...]")
+    const domains = [...args.domain]
+    const characters = [...args.characters]
+
+    const resolved = resolveConfigs(PROJECT_ROOT, domains, characters)
+
+    if (resolved.length === 0) {
+      yield* Effect.logError("No domains/characters matched. Check config.json and --domain / character args.")
       return
     }
 
     // Validate all characters exist
     const charFs = yield* CharacterFs
-    const configs = []
-    for (const name of characters) {
-      const char = makeCharacterConfig(PROJECT_ROOT, name)
-      const exists = yield* charFs.characterExists(char)
-      if (!exists) {
-        yield* Effect.logError(`Character directory not found: ${char.dir}`)
-        return
+    for (const rd of resolved) {
+      for (const name of rd.characters) {
+        const char = makeCharacterConfig(PROJECT_ROOT, name)
+        const exists = yield* charFs.characterExists(char)
+        if (!exists) {
+          yield* Effect.logError(`Character directory not found: ${char.dir}`)
+          return
+        }
       }
-      configs.push({
-        char,
-        tickIntervalSeconds: args.tickInterval,
-        imageName: domainConfig.imageName,
-        phaseRegistry: domainConfig.phaseRegistry,
-        domainBundle: domainConfig.bundle,
-      })
     }
 
-    // Build docker image
-    const docker = yield* Docker
-    yield* logToConsole("orchestrator", "main", "Building Docker image...")
-    yield* docker.build(
-      domainConfig.imageName,
-      path.resolve(PROJECT_ROOT, ".devcontainer/Dockerfile"),
-      path.resolve(PROJECT_ROOT, ".devcontainer"),
-    )
-
-    // Run orchestrator with domain config
-    yield* runOrchestrator(configs, domainConfig)
+    yield* runOrchestrator(resolved, args.tickInterval)
   }),
 ).pipe(Command.withDescription("Start character(s) running"))
 
-const SHARED_CONTAINER = "roci-crew"
-
 // --- stop command ---
-const stopCommand = Command.make("stop", {}, () =>
+const stopDomain = Options.text("domain").pipe(
+  Options.optional,
+  Options.withDescription("Stop only this domain's container"),
+)
+
+const stopCommand = Command.make("stop", { domain: stopDomain }, (args) =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    yield* docker.stop(SHARED_CONTAINER)
-    yield* logToConsole("orchestrator", "cli", "Shared container stopped")
+    if (args.domain._tag === "Some") {
+      yield* docker.stop(`roci-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} stopped`)
+    } else {
+      const containers = yield* docker.listByLabel("roci-crew")
+      if (containers.length === 0) {
+        yield* logToConsole("orchestrator", "cli", "No roci containers found")
+        return
+      }
+      for (const c of containers) {
+        yield* docker.stop(c.name || c.id)
+        yield* logToConsole("orchestrator", "cli", `Container ${c.name} stopped`)
+      }
+    }
   }),
-).pipe(Command.withDescription("Stop the shared roci-crew container"))
+).pipe(Command.withDescription("Stop roci container(s)"))
 
 // --- pause command ---
-const pauseCommand = Command.make("pause", {}, () =>
+const pauseDomain = Options.text("domain").pipe(
+  Options.optional,
+  Options.withDescription("Pause only this domain's container"),
+)
+
+const pauseCommand = Command.make("pause", { domain: pauseDomain }, (args) =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    yield* docker.pause(SHARED_CONTAINER)
-    yield* logToConsole("orchestrator", "cli", "Shared container paused")
+    if (args.domain._tag === "Some") {
+      yield* docker.pause(`roci-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} paused`)
+    } else {
+      const containers = yield* docker.listByLabel("roci-crew")
+      for (const c of containers) {
+        if (c.status === "running") {
+          yield* docker.pause(c.name || c.id)
+          yield* logToConsole("orchestrator", "cli", `Container ${c.name} paused`)
+        }
+      }
+    }
   }),
-).pipe(Command.withDescription("Pause the shared roci-crew container"))
+).pipe(Command.withDescription("Pause roci container(s)"))
 
 // --- resume command ---
-const resumeCommand = Command.make("resume", {}, () =>
+const resumeDomain = Options.text("domain").pipe(
+  Options.optional,
+  Options.withDescription("Resume only this domain's container"),
+)
+
+const resumeCommand = Command.make("resume", { domain: resumeDomain }, (args) =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    yield* docker.resume(SHARED_CONTAINER)
-    yield* logToConsole("orchestrator", "cli", "Shared container resumed")
+    if (args.domain._tag === "Some") {
+      yield* docker.resume(`roci-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} resumed`)
+    } else {
+      const containers = yield* docker.listByLabel("roci-crew")
+      for (const c of containers) {
+        if (c.status === "paused") {
+          yield* docker.resume(c.name || c.id)
+          yield* logToConsole("orchestrator", "cli", `Container ${c.name} resumed`)
+        }
+      }
+    }
   }),
-).pipe(Command.withDescription("Resume the shared roci-crew container"))
+).pipe(Command.withDescription("Resume roci container(s)"))
 
 // --- status command ---
 const statusCommand = Command.make("status", {}, () =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    const info = yield* docker.status(SHARED_CONTAINER)
+    const containers = yield* docker.listByLabel("roci-crew")
 
-    if (!info) {
-      yield* Effect.log("No roci-crew container found.")
+    if (containers.length === 0) {
+      yield* Effect.log("No roci containers found.")
       return
     }
 
-    yield* Effect.log(`roci-crew: ${info.status} (${info.id.slice(0, 12)})`)
+    for (const c of containers) {
+      yield* Effect.log(`${c.name}: ${c.status} (${c.id.slice(0, 12)})`)
+    }
   }),
-).pipe(Command.withDescription("Show status of the shared roci-crew container"))
+).pipe(Command.withDescription("Show status of roci container(s)"))
 
 // --- auth command ---
 const authCommand = Command.make("auth", {}, () =>
   Effect.gen(function* () {
     yield* logToConsole("orchestrator", "cli", "Starting interactive auth...")
-    yield* Effect.log(`Run: docker exec -it ${SHARED_CONTAINER} sh -c 'claude && touch /tmp/auth-ready'`)
+    const docker = yield* Docker
+    const containers = yield* docker.listByLabel("roci-crew")
+    if (containers.length === 0) {
+      yield* Effect.log("No roci containers found. Start a domain first.")
+      return
+    }
+    for (const c of containers) {
+      yield* Effect.log(`Run: docker exec -it ${c.name} sh -c 'claude && touch /tmp/auth-ready'`)
+    }
   }),
-).pipe(Command.withDescription("Authenticate Claude in the shared container"))
+).pipe(Command.withDescription("Authenticate Claude in roci containers"))
 
 // --- destroy command ---
-const destroyCommand = Command.make("destroy", {}, () =>
+const destroyDomain = Options.text("domain").pipe(
+  Options.optional,
+  Options.withDescription("Destroy only this domain's container"),
+)
+
+const destroyCommand = Command.make("destroy", { domain: destroyDomain }, (args) =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    yield* docker.remove(SHARED_CONTAINER)
-    yield* logToConsole("orchestrator", "cli", "Shared container destroyed")
+    if (args.domain._tag === "Some") {
+      yield* docker.remove(`roci-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} destroyed`)
+    } else {
+      const containers = yield* docker.listByLabel("roci-crew")
+      if (containers.length === 0) {
+        yield* logToConsole("orchestrator", "cli", "No roci containers found")
+        return
+      }
+      for (const c of containers) {
+        yield* docker.remove(c.name || c.id)
+        yield* logToConsole("orchestrator", "cli", `Container ${c.name} destroyed`)
+      }
+    }
   }),
-).pipe(Command.withDescription("Remove the shared roci-crew container"))
+).pipe(Command.withDescription("Remove roci container(s)"))
 
 // --- logs command ---
 const logsCharacter = Args.text({ name: "character" })
@@ -264,7 +325,6 @@ const serviceLayer = Layer.mergeAll(
   ClaudeLive,
   CharacterFsLive,
   PromptTemplatesLive,
-  spaceMoltServiceLayer,
   projectRootLayer,
   CharacterLogLive.pipe(Layer.provide(projectRootLayer)),
 )

@@ -567,6 +567,39 @@ const activePhase = {
 
 Note: SpaceMolt has a wrapper pattern where `situation.ts` wraps `situation-classifier.ts` and `renderer.ts` wraps `state-renderer.ts`. This is a SpaceMolt organizational choice, not a requirement.
 
+## Container Architecture
+
+Each domain runs in its own Docker container named `roci-<domain>` (e.g. `roci-spacemolt`, `roci-github`). Characters within a domain share a container.
+
+### Canonical Mount Paths
+
+| Container Path | Purpose | Required? |
+|---|---|---|
+| `/work/players` | Character directories | Yes |
+| `/work/.claude` | Claude config | Yes (readonly) |
+| `/opt/scripts` | Orchestrator scripts incl. `run-step.sh` | Yes (readonly) |
+| Domain-specific | Up to each domain's `containerMounts` | No |
+
+SpaceMolt additionally mounts `/work/shared/*` and `/work/sm-cli`. GitHub currently has no extra mounts.
+
+### `DomainConfig` Fields for Docker
+
+| Field | Default | Purpose |
+|---|---|---|
+| `imageName` | — | Docker image tag |
+| `dockerfilePath` | `.devcontainer/Dockerfile` | Path to Dockerfile (relative to project root) |
+| `dockerContext` | `.devcontainer` | Docker build context (relative to project root) |
+| `containerMounts` | — | Volume mounts for `docker create` |
+| `containerSetup` | — | Post-start hook (e.g. creating symlinks) |
+| `containerAddDirs` | `[]` | Paths passed as `ROCI_ADD_DIRS` env var, read by `run-step.sh` for `--add-dir` flags |
+| `serviceLayer` | — | Domain-specific Effect service layer (e.g. GameSocket, GitHubClient) |
+
+### Adding a New Domain's Docker Image
+
+1. Create `orchestrator/src/domains/<name>/docker/Dockerfile` and `init-firewall.sh`
+2. Set `dockerfilePath` and `dockerContext` in your `DomainConfig`
+3. The orchestrator builds images automatically, deduplicated by `imageName`
+
 ## Checklist
 
 New domain author checklist:
@@ -580,9 +613,10 @@ New domain author checklist:
 - [ ] `PromptBuilder` — 4 prompts (`planPrompt`, `interruptPrompt`, `evaluatePrompt`, `subagentPrompt`)
 - [ ] `SkillRegistry` — stub or real implementation
 - [ ] `PhaseRegistry` — at least startup + active phases; active phase passes `context.domainBundle` to `eventLoop()`
-- [ ] `DomainConfig` — bundle, phaseRegistry, containerMounts, imageName
+- [ ] `DomainConfig` — bundle, phaseRegistry, containerMounts, imageName, serviceLayer, dockerfilePath, dockerContext, containerAddDirs
 - [ ] Domain bundle — `Layer.mergeAll(...)` of all 7 service layers
-- [ ] `cli.ts` updated to import your domain config (or `--domain` flag added)
+- [ ] Domain registered in `orchestrator/src/domains/registry.ts`
+- [ ] Domain entry added to `config.json` at project root
 - [ ] `planPrompt` instructs LLM to return `{ reasoning, steps: [{ task, goal, model, successCondition, timeoutTicks }] }`
 - [ ] `evaluatePrompt` instructs LLM to return `{ complete: boolean, reason: string }`
 - [ ] `accumulatedContext` keys match between `EventProcessor` and `ContextHandler`
