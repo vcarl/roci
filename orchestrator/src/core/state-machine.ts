@@ -14,11 +14,13 @@ import { InterruptRegistryTag } from "./interrupt.js"
 import { SituationClassifierTag } from "./situation.js"
 import { StateRendererTag } from "./state-renderer.js"
 import type { DomainState, DomainSituation, DomainEvent } from "./domain-types.js"
-import type { Plan, StepTiming, Alert, ExitReason, StateMachineResult } from "./types.js"
+import type { BrainMode, Plan, StepTiming, Alert, ExitReason, StateMachineResult } from "./types.js"
 import type { LifecycleHooks } from "./lifecycle.js"
 import { brainInterrupt } from "./brain.js"
 import { killSubagent, evaluateCompletedSubagent, checkMidRun, maybeSpawnSubagent } from "./subagent-manager.js"
 import { maybeRequestPlan } from "./planning-cycle.js"
+import { runGenericSubagent } from "./subagent.js"
+import { PromptBuilderTag } from "./prompt-builder.js"
 
 export interface StateMachineConfig {
   char: CharacterConfig
@@ -66,6 +68,8 @@ export const runStateMachine = (config: StateMachineConfig) =>
     const spawnStateRef = yield* Ref.make<Record<string, unknown> | null>(null)
     const turnCountRef = yield* Ref.make(0)
     const softAlertAccRef = yield* Ref.make<Map<string, Alert>>(new Map())
+    const modeRef = yield* Ref.make<BrainMode>("select")
+    const investigationReportRef = yield* Ref.make<string | null>(null)
 
     // --- Domain state ---
     const gameStateRef = yield* Ref.make<DomainState>(config.initialState)
@@ -85,6 +89,8 @@ export const runStateMachine = (config: StateMachineConfig) =>
       softAlertAcc: softAlertAccRef,
       tickCount: tickCountRef,
       stepStartTick: stepStartTickRef,
+      mode: modeRef,
+      investigationReport: investigationReportRef,
     }
     const planningServices = { char: config.char, tickIntervalSec: config.tickIntervalSec, hooks }
     const evalServices = {
@@ -94,6 +100,8 @@ export const runStateMachine = (config: StateMachineConfig) =>
       hooks,
       tickIntervalSec: config.tickIntervalSec,
       char: config.char,
+      modeRef,
+      investigationReportRef,
     }
     const spawnConfig = {
       char: config.char,
@@ -101,10 +109,66 @@ export const runStateMachine = (config: StateMachineConfig) =>
       playerName: config.playerName,
       containerEnv: config.containerEnv,
       tickIntervalSec: config.tickIntervalSec,
+      modeRef,
     }
     const spawnServices = { renderer, hooks }
 
     // --- Inline helpers ---
+
+    /** Check if a procedure plan just completed; if so, spawn diary and reset mode to 'select'. */
+    const maybeCompleteProcedure = () =>
+      Effect.gen(function* () {
+        const mode = yield* Ref.get(modeRef)
+        if (mode === "select") return
+
+        const plan = yield* Ref.get(planRef)
+        const step = yield* Ref.get(stepRef)
+        if (!plan || step < plan.steps.length) return
+
+        // Plan completed in a procedure mode — spawn diary subagent
+        yield* logToConsole(config.char.name, "monitor", `Procedure '${mode}' complete, writing diary...`)
+
+        const diaryPrompt = `Update ./me/DIARY.md reflecting on what you accomplished, what you learned, and what to focus on next.
+
+## Completed Procedure: ${mode}
+${plan.reasoning}
+
+## Steps Completed
+${plan.steps.map((s, i) => `${i + 1}. [${s.task}] ${s.goal}`).join("\n")}
+
+Write a brief diary entry summarizing outcomes and lessons learned. Append to the existing diary, don't replace it.`
+
+        const charFsLocal = yield* CharacterFs
+        const personality = yield* charFsLocal.readBackground(config.char)
+        const values = yield* charFsLocal.readValues(config.char)
+        const promptBuilder = yield* PromptBuilderTag
+        const systemPromptText = promptBuilder.systemPrompt()
+        const state = yield* Ref.get(gameStateRef)
+        const situation = classifier.classify(state)
+
+        yield* runGenericSubagent({
+          char: config.char,
+          containerId: config.containerId,
+          playerName: config.playerName,
+          systemPrompt: systemPromptText,
+          containerEnv: config.containerEnv,
+          step: { task: "diary", goal: "Update diary", model: "haiku", successCondition: "diary updated", timeoutTicks: 3 },
+          state,
+          situation,
+          personality,
+          values,
+          tickIntervalSec: config.tickIntervalSec,
+        }).pipe(
+          Effect.timeout("60 seconds"),
+          Effect.catchAll((e) =>
+            logToConsole(config.char.name, "error", `Diary subagent failed: ${e}`).pipe(Effect.as("")),
+          ),
+        )
+
+        yield* logToConsole(config.char.name, "monitor", `Diary updated. Returning to 'select' mode.`)
+        yield* Ref.set(modeRef, "select")
+        yield* Ref.set(investigationReportRef, null)
+      })
 
     /** Handle critical interrupts: kill subagent, ask brain for new plan. */
     const handleInterrupt = (criticals: Alert[], state: DomainState, situation: DomainSituation, briefing: string) =>
@@ -195,6 +259,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
           const poll = yield* Fiber.poll(currentFiber)
           if (poll._tag === "Some") {
             yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, state)
+            yield* maybeCompleteProcedure()
           }
         }
 
@@ -221,6 +286,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
           const poll = yield* Fiber.poll(currentFiber)
           if (poll._tag === "Some") {
             yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, state)
+            yield* maybeCompleteProcedure()
           }
         }
 
@@ -238,6 +304,8 @@ export const runStateMachine = (config: StateMachineConfig) =>
         yield* Ref.set(planRef, null)
         yield* Ref.set(stepRef, 0)
         yield* Ref.set(softAlertAccRef, new Map())
+        yield* Ref.set(modeRef, "select")
+        yield* Ref.set(investigationReportRef, null)
       })
 
     // --- Event loop ---
