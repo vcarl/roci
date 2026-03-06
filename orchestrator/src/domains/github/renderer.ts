@@ -44,14 +44,22 @@ function richSnapshot(state: GitHubState): Record<string, unknown> {
   }
 }
 
+interface RichRepoSnapshot {
+  repo: string
+  openIssues: number
+  openPRs: number
+  ciStatus: string
+  issues?: Array<{ number: number; title: string; labels: string[] }>
+  prs?: Array<{ number: number; title: string; checks: string; reviewStatus: string }>
+}
+
 function stateDiff(
   before: Record<string, unknown> | null,
   after: Record<string, unknown>,
 ): string {
   if (!before) return "(no before-state captured)"
-  // Compare repo-level counts
-  const beforeRepos = (before.repos ?? []) as Array<Record<string, unknown>>
-  const afterRepos = (after.repos ?? []) as Array<Record<string, unknown>>
+  const beforeRepos = (before.repos ?? []) as RichRepoSnapshot[]
+  const afterRepos = (after.repos ?? []) as RichRepoSnapshot[]
   const changes: string[] = []
   for (let i = 0; i < afterRepos.length; i++) {
     const b = beforeRepos[i]
@@ -64,6 +72,44 @@ function stateDiff(
       changes.push(`${repo} PRs: ${b.openPRs} -> ${a.openPRs}`)
     if (b.ciStatus !== a.ciStatus)
       changes.push(`${repo} CI: ${b.ciStatus} -> ${a.ciStatus}`)
+
+    // Track label changes on issues
+    if (b.issues && a.issues) {
+      const beforeIssueMap = new Map(b.issues.map((i) => [i.number, i]))
+      for (const afterIssue of a.issues) {
+        const beforeIssue = beforeIssueMap.get(afterIssue.number)
+        if (!beforeIssue) {
+          changes.push(`${repo} #${afterIssue.number}: new issue "${afterIssue.title}"`)
+          continue
+        }
+        const addedLabels = afterIssue.labels.filter((l) => !beforeIssue.labels.includes(l))
+        const removedLabels = beforeIssue.labels.filter((l) => !afterIssue.labels.includes(l))
+        if (addedLabels.length > 0) {
+          changes.push(`${repo} #${afterIssue.number}: +labels [${addedLabels.join(", ")}]`)
+        }
+        if (removedLabels.length > 0) {
+          changes.push(`${repo} #${afterIssue.number}: -labels [${removedLabels.join(", ")}]`)
+        }
+      }
+    }
+
+    // Track new PRs and review status changes
+    if (b.prs && a.prs) {
+      const beforePrMap = new Map(b.prs.map((p) => [p.number, p]))
+      for (const afterPr of a.prs) {
+        const beforePr = beforePrMap.get(afterPr.number)
+        if (!beforePr) {
+          changes.push(`${repo} #${afterPr.number}: new PR "${afterPr.title}"`)
+          continue
+        }
+        if (beforePr.reviewStatus !== afterPr.reviewStatus) {
+          changes.push(`${repo} PR #${afterPr.number} review: ${beforePr.reviewStatus} -> ${afterPr.reviewStatus}`)
+        }
+        if (beforePr.checks !== afterPr.checks) {
+          changes.push(`${repo} PR #${afterPr.number} checks: ${beforePr.checks} -> ${afterPr.checks}`)
+        }
+      }
+    }
   }
   return changes.length > 0 ? changes.join("; ") : "(no changes detected)"
 }
