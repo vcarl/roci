@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { DomainState, DomainSituation } from "./domain-types.js"
-import type { Alert, Plan, PlanStep, StepCompletionResult, StepTiming } from "./types.js"
+import type { Alert, BrainMode, Plan, PlanStep, StepCompletionResult, StepTiming } from "./types.js"
 
 export interface PlanPromptContext {
   state: DomainState
@@ -14,6 +14,8 @@ export interface PlanPromptContext {
   stepTimingHistory?: StepTiming[]
   tickIntervalSec: number
   additionalContext?: string
+  mode: BrainMode
+  investigationReport?: string
 }
 
 export interface InterruptPromptContext {
@@ -35,6 +37,7 @@ export interface EvaluatePromptContext {
   ticksConsumed: number
   ticksBudgeted: number
   tickIntervalSec: number
+  mode: BrainMode
 }
 
 export interface SubagentPromptContext {
@@ -46,6 +49,7 @@ export interface SubagentPromptContext {
     values: string
     tickIntervalSec: number
   }
+  mode: BrainMode
 }
 
 /**
