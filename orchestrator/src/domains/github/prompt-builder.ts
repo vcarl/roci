@@ -8,6 +8,9 @@ import type {
 } from "../../core/prompt-builder.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
 import type { GitHubState, GitHubSituation } from "./types.js"
+import type { BrainMode } from "../../core/types.js"
+
+// ── Shared helpers ──────────────────────────────────────────
 
 function renderReposSummary(state: GitHubState, situation: GitHubSituation): string {
   return state.repos.map((repo, i) => {
@@ -35,56 +38,450 @@ function renderReposSummary(state: GitHubState, situation: GitHubSituation): str
   }).join("\n\n")
 }
 
-const gitHubPromptBuilder: PromptBuilder = {
-  planPrompt(ctx: PlanPromptContext): string {
-    const state = ctx.state as GitHubState
-    const situation = ctx.situation as GitHubSituation
-    const reposSummary = renderReposSummary(state, situation)
+function renderStateSummary(state: GitHubState, situation: GitHubSituation): string {
+  return state.repos.map((repo, i) => {
+    const sit = situation.repos[i]
+    const lines = [
+      `## ${repo.owner}/${repo.repo} — ${sit?.type ?? "unknown"}`,
+      `CI: ${repo.ciStatus} | Issues: ${repo.openIssues.length} | PRs: ${repo.openPRs.length}`,
+    ]
 
-    const failureSection = ctx.previousFailure
-      ? `\n## Previous Plan Failed\n${ctx.previousFailure}\n`
-      : ""
+    if (repo.openIssues.length > 0) {
+      lines.push("Issues:")
+      for (const issue of repo.openIssues) {
+        const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : ""
+        lines.push(`  #${issue.number}: ${issue.title}${labels}`)
+      }
+    }
 
-    return `You are a software engineer maintaining ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
+    if (repo.openPRs.length > 0) {
+      lines.push("PRs:")
+      for (const pr of repo.openPRs) {
+        const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
+        lines.push(`  #${pr.number}: ${pr.title} (${status})`)
+      }
+    }
 
-## Repositories
-${reposSummary}
+    return lines.join("\n")
+  }).join("\n\n")
+}
 
-${ctx.briefing}
+function buildTimingSection(ctx: PlanPromptContext): string {
+  if (!ctx.stepTimingHistory || ctx.stepTimingHistory.length === 0) return ""
+  return `\n## Recent Step Outcomes\n${ctx.stepTimingHistory.map((h) => {
+    let line = `[${h.task}] "${h.goal}" — ${h.ticksConsumed}/${h.ticksBudgeted} ticks${h.overrun ? " OVERRUN" : ""}`
+    if (h.succeeded !== undefined) {
+      line += ` -> ${h.succeeded ? "SUCCESS" : "FAILED"}`
+      if (h.reason) line += `: ${h.reason}`
+    }
+    return line
+  }).join("\n")}\n\nUse this data to set realistic timeoutTicks.\n`
+}
 
-## Your Identity
+function renderIdentitySection(ctx: { background: string; values: string }): string {
+  return `## Your Identity
 ${ctx.background}
 
 ## Your Values
-${ctx.values}
+${ctx.values}`
+}
+
+// ── Plan prompts by mode ────────────────────────────────────
+
+function planPromptSelect(ctx: PlanPromptContext): string {
+  const state = ctx.state as GitHubState
+  const situation = ctx.situation as GitHubSituation
+  const stateSummary = renderStateSummary(state, situation)
+  const failureSection = ctx.previousFailure
+    ? `\n## Previous Plan Failed\n${ctx.previousFailure}\n`
+    : ""
+
+  if (!ctx.investigationReport) {
+    // No investigation yet — produce a 1-step investigation plan
+    return `You are a software engineer maintaining ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
+
+## Current State
+${stateSummary}
+
+${ctx.briefing}
+
+${renderIdentitySection(ctx)}
 
 ## Your Diary
 ${ctx.diary.slice(-2000)}
 ${failureSection}
-## Task Types
-Available task types: triage | code | review | investigate_ci
-
 ## Instructions
-Review all repositories and create a plan addressing the most pressing needs across them. Prioritize: CI failures > untriaged issues > pending reviews > new work.
 
-When creating steps, specify which repository the work targets in the goal (e.g. "Fix CI in owner/repo"). The subagent will be given the clone path for that repo.
+You need to investigate before committing to a plan. Produce a 1-step plan with task "investigate" that gathers the context you need to decide what to do next.
 
-Each tick is ${ctx.tickIntervalSec} seconds. Set realistic timeoutTicks for each step.
+The investigation goal should describe what to look into — e.g. "Read bodies of issues #12, #15, #18 and check CI status for repo X". Be specific about what information you need.
 
-Respond with a JSON object:
+Each tick is ${ctx.tickIntervalSec} seconds.
+${buildTimingSection(ctx)}
+Respond with JSON:
 \`\`\`json
 {
-  "reasoning": "Why this plan makes sense",
+  "reasoning": "What you need to investigate and why",
+  "steps": [
+    {
+      "task": "investigate",
+      "goal": "Specific things to read/check",
+      "successCondition": "Investigation findings reported",
+      "timeoutTicks": 5
+    }
+  ]
+}
+\`\`\``
+  }
+
+  // Have investigation report — pick a procedure
+  return `You are a software engineer maintaining ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
+
+## Current State
+${stateSummary}
+
+${ctx.briefing}
+
+## Investigation Report
+${ctx.investigationReport.slice(-3000)}
+
+${renderIdentitySection(ctx)}
+
+## Your Diary
+${ctx.diary.slice(-2000)}
+${failureSection}
+## Available Procedures
+
+- **triage**: Label and comment on issues. Steps should target specific issue numbers.
+- **feature**: Pick an issue, create branch, implement, test, PR. One issue per cycle.
+- **review**: Review a specific PR. Read diff, check correctness, submit feedback.
+
+## Instructions
+
+Based on your investigation, pick ONE procedure. Scope to specific items. Prefer focused over broad.
+
+Prioritize: CI failures > untriaged issues > pending reviews > new work.
+
+Each tick is ${ctx.tickIntervalSec} seconds.
+${buildTimingSection(ctx)}
+Respond with JSON:
+\`\`\`json
+{
+  "procedure": "triage|feature|review",
+  "targets": ["#12", "#15"],
+  "reasoning": "Why this procedure and these targets",
   "steps": [
     {
       "task": "triage|code|review|investigate_ci",
-      "goal": "What to accomplish — specify which repo",
+      "goal": "Specific action on specific item — e.g. 'Label and comment on #12'",
       "successCondition": "How to verify completion",
       "timeoutTicks": 5
     }
   ]
 }
 \`\`\``
+}
+
+function planPromptTriage(ctx: PlanPromptContext): string {
+  const state = ctx.state as GitHubState
+  const situation = ctx.situation as GitHubSituation
+
+  return `You are triaging issues across ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
+
+## Current State
+${renderStateSummary(state, situation)}
+
+${ctx.briefing}
+
+${renderIdentitySection(ctx)}
+${buildTimingSection(ctx)}
+## Instructions
+
+Create steps to triage specific issues. Each step should target ONE issue: "Label and comment on #N in owner/repo".
+
+Do NOT create a step like "triage all issues" — be specific. Each tick is ${ctx.tickIntervalSec} seconds.
+
+Respond with JSON:
+\`\`\`json
+{
+  "reasoning": "Why these issues need triage",
+  "steps": [
+    {
+      "task": "triage",
+      "goal": "Label and comment on #N in owner/repo",
+      "successCondition": "Issue #N has labels and a triage comment",
+      "timeoutTicks": 3
+    }
+  ]
+}
+\`\`\``
+}
+
+function planPromptFeature(ctx: PlanPromptContext): string {
+  const state = ctx.state as GitHubState
+  const situation = ctx.situation as GitHubSituation
+
+  return `You are implementing a feature across ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
+
+## Current State
+${renderStateSummary(state, situation)}
+
+${ctx.briefing}
+
+${renderIdentitySection(ctx)}
+${buildTimingSection(ctx)}
+## Worktree Workflow
+1. Create a branch and worktree from the shared clone
+2. Implement changes in the worktree
+3. Run tests
+4. Commit with sign-off and push
+5. Create PR with clear description
+
+## Instructions
+
+Plan steps for ONE issue. Keep changes small and reviewable. Run tests before creating a PR. Write good commit messages and PR descriptions.
+
+Each tick is ${ctx.tickIntervalSec} seconds.
+
+Respond with JSON:
+\`\`\`json
+{
+  "reasoning": "What feature/fix and why",
+  "steps": [
+    {
+      "task": "code",
+      "goal": "Create branch, implement fix for #N in owner/repo",
+      "successCondition": "PR created for #N",
+      "model": "sonnet",
+      "timeoutTicks": 10
+    }
+  ]
+}
+\`\`\``
+}
+
+function planPromptReview(ctx: PlanPromptContext): string {
+  const state = ctx.state as GitHubState
+  const situation = ctx.situation as GitHubSituation
+
+  return `You are reviewing pull requests across ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
+
+## Current State
+${renderStateSummary(state, situation)}
+
+${ctx.briefing}
+
+${renderIdentitySection(ctx)}
+${buildTimingSection(ctx)}
+## Review Workflow
+1. Read the PR description and diff carefully
+2. Check for correctness, style, and edge cases
+3. Submit review with constructive, specific feedback
+
+## Instructions
+
+Plan steps to review specific PRs. Each step should target ONE PR.
+
+Each tick is ${ctx.tickIntervalSec} seconds.
+
+Respond with JSON:
+\`\`\`json
+{
+  "reasoning": "Which PRs to review and why",
+  "steps": [
+    {
+      "task": "review",
+      "goal": "Review PR #N in owner/repo",
+      "successCondition": "Review submitted for PR #N",
+      "timeoutTicks": 5
+    }
+  ]
+}
+\`\`\``
+}
+
+const PLAN_PROMPT_BY_MODE: Record<BrainMode, (ctx: PlanPromptContext) => string> = {
+  select: planPromptSelect,
+  triage: planPromptTriage,
+  feature: planPromptFeature,
+  review: planPromptReview,
+}
+
+// ── Subagent prompts by task type ───────────────────────────
+
+function subagentCommon(ctx: SubagentPromptContext): string {
+  const state = ctx.state as GitHubState
+  const situation = ctx.situation as GitHubSituation
+  const budgetSeconds = Math.round(ctx.step.timeoutTicks * ctx.identity.tickIntervalSec)
+
+  return `## Your Task
+Type: ${ctx.step.task}
+Goal: ${ctx.step.goal}
+Success condition: ${ctx.step.successCondition}
+Time budget: ${ctx.step.timeoutTicks} ticks (~${budgetSeconds}s)
+
+## Repository Overview
+${renderReposSummary(state, situation)}
+
+## Your Identity
+${ctx.identity.personality.slice(0, 800)}
+
+## Your Values
+${ctx.identity.values.slice(0, 500)}`
+}
+
+function subagentInvestigate(ctx: SubagentPromptContext): string {
+  return `You are investigating repository state. This is a READ-ONLY task.
+
+${subagentCommon(ctx)}
+
+## Instructions
+
+Use \`gh issue view\`, \`gh pr view\`, \`gh pr diff\`, \`gh run view\`, and file reads to gather information. Do NOT modify anything — no labels, no comments, no code changes.
+
+Report your findings in a structured format:
+- For each issue: number, title, key details from the body, suggested priority/labels
+- For each PR: number, title, diff summary, test status, review readiness
+- For CI: failure details, root cause if identifiable
+
+Be thorough but focused on what was requested in the goal.`
+}
+
+function subagentTriage(ctx: SubagentPromptContext): string {
+  return `You are triaging GitHub issues.
+
+${subagentCommon(ctx)}
+
+## Instructions
+
+For each issue in your goal:
+1. Read the issue body carefully with \`gh issue view <number>\`
+2. Add appropriate labels with \`gh issue edit <number> --add-label <label>\`
+3. Leave a comment explaining your triage decision with \`gh issue comment <number> --body "..."\`
+
+Be specific about why each label was chosen. Consider priority, type (bug/feature/docs), and area.
+
+Report what labels you added and why for each issue.`
+}
+
+function subagentCode(ctx: SubagentPromptContext): string {
+  const state = ctx.state as GitHubState
+
+  return `You are implementing code changes.
+
+${subagentCommon(ctx)}
+
+## Git Worktree Workflow
+
+Each repo has a **shared clone** (on main) and your **worktree directory** for feature branches.
+
+**To start coding on a repo** (e.g. \`/work/repos/owner--repo\`):
+\`\`\`bash
+cd /work/repos/owner--repo
+git fetch origin
+git worktree add /work/players/YOUR_NAME/worktrees/owner--repo/my-feature -b my-feature origin/main
+cd /work/players/YOUR_NAME/worktrees/owner--repo/my-feature
+# ... make changes, commit ...
+git push -u origin my-feature
+gh pr create --title "..." --body "..."
+\`\`\`
+
+**Do NOT modify the shared clone directly** — always use a worktree for changes.
+
+## Instructions
+
+1. Create a feature branch and worktree
+2. Make focused, small changes
+3. Run tests if available
+4. Commit with clear messages and your sign-off
+5. Push and create a PR with a good description
+
+Report what you changed, test results, and the PR URL.`
+}
+
+function subagentReview(ctx: SubagentPromptContext): string {
+  return `You are reviewing a pull request.
+
+${subagentCommon(ctx)}
+
+## Instructions
+
+1. Read the PR description: \`gh pr view <number>\`
+2. Read the diff carefully: \`gh pr diff <number>\`
+3. Check for:
+   - Correctness: Does the code do what it claims?
+   - Edge cases: Are boundary conditions handled?
+   - Style: Is the code clean and consistent?
+   - Tests: Are changes tested?
+4. Submit your review: \`gh pr review <number> --approve\` or \`--request-changes --body "..."\`
+
+Be constructive and specific. Point to exact lines when noting issues.
+
+Report your review decision and key findings.`
+}
+
+function subagentInvestigateCi(ctx: SubagentPromptContext): string {
+  return `You are investigating CI failures.
+
+${subagentCommon(ctx)}
+
+## Instructions
+
+1. List recent CI runs: \`gh run list\`
+2. View failed run details: \`gh run view <id> --log-failed\`
+3. Identify the root cause of the failure
+4. Check if it's a flaky test, a real bug, or a configuration issue
+
+Report:
+- Which run failed and on which branch
+- The specific error/failure
+- Root cause analysis
+- Suggested fix`
+}
+
+function subagentDiary(ctx: SubagentPromptContext): string {
+  return `You are updating your diary.
+
+${subagentCommon(ctx)}
+
+## Instructions
+
+Update ./me/DIARY.md with a brief entry about what you accomplished, what you learned, and what to focus on next. Append to the existing content, don't replace it.`
+}
+
+function subagentDefault(ctx: SubagentPromptContext): string {
+  const state = ctx.state as GitHubState
+  const situation = ctx.situation as GitHubSituation
+
+  return `You are working across ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
+
+${subagentCommon(ctx)}
+
+## Tools
+Use the \`gh\` CLI for GitHub operations and \`git\` for repository operations.
+
+## Git Worktree Workflow
+Each repo has a **shared clone** (on main) and your **worktree directory** for feature branches.
+For read-only tasks (triage, review), you can \`cd\` to the shared clone or use \`gh\`.
+
+Complete your task and report what you did.`
+}
+
+const SUBAGENT_PROMPT_BY_TASK: Record<string, (ctx: SubagentPromptContext) => string> = {
+  investigate: subagentInvestigate,
+  triage: subagentTriage,
+  code: subagentCode,
+  review: subagentReview,
+  investigate_ci: subagentInvestigateCi,
+  diary: subagentDiary,
+}
+
+// ── Prompt builder implementation ───────────────────────────
+
+const gitHubPromptBuilder: PromptBuilder = {
+  planPrompt(ctx: PlanPromptContext): string {
+    const promptFn = PLAN_PROMPT_BY_MODE[ctx.mode] ?? planPromptSelect
+    return promptFn(ctx)
   },
 
   interruptPrompt(ctx: InterruptPromptContext): string {
@@ -105,9 +502,12 @@ ${ctx.briefing}
 ## Identity
 ${ctx.background.slice(0, 1000)}
 
-Respond with a new plan as JSON to address the alerts:
+Respond with a new plan as JSON. Pick a procedure for the response if appropriate.
+
 \`\`\`json
 {
+  "procedure": "triage|feature|review",
+  "targets": ["#N"],
   "reasoning": "Why this plan addresses the alerts",
   "steps": [
     {
@@ -129,6 +529,10 @@ Respond with a new plan as JSON to address the alerts:
       ? `\nWARNING: exceeded tick budget by ${overrunDelta} ticks.`
       : ""
 
+    const modeHint = ctx.mode === "select"
+      ? "\nThis was an investigation step. If findings are sufficient, mark complete so the brain can pick a procedure next."
+      : ""
+
     return `Evaluate whether this step was completed successfully.
 
 ## Step
@@ -141,16 +545,15 @@ ${ctx.subagentReport.slice(-2000)}
 ## State Changes
 ${ctx.stateDiff}
 
-## Current State
-${JSON.stringify(ctx.state)}
-
 ## Condition Check
 Condition: "${ctx.step.successCondition}"
 Result: ${ctx.conditionCheck.complete ? "PASS" : "FAIL"} - ${ctx.conditionCheck.reason}
 
+The deterministic check is advisory. Use the subagent report and state changes to judge completion.
+
 ## Timing
 Consumed ${ctx.ticksConsumed} of ${ctx.ticksBudgeted} ticks (~${secondsConsumed}s of ~${secondsBudgeted}s).${overrunWarning}
-
+${modeHint}
 Respond with JSON:
 \`\`\`json
 {
@@ -161,51 +564,8 @@ Respond with JSON:
   },
 
   subagentPrompt(ctx: SubagentPromptContext): string {
-    const state = ctx.state as GitHubState
-    const situation = ctx.situation as GitHubSituation
-    const budgetSeconds = Math.round(ctx.step.timeoutTicks * ctx.identity.tickIntervalSec)
-
-    return `You are working across ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
-
-## Your Task
-Type: ${ctx.step.task}
-Goal: ${ctx.step.goal}
-Success condition: ${ctx.step.successCondition}
-Time budget: ${ctx.step.timeoutTicks} ticks (~${budgetSeconds}s)
-
-## Repository Overview
-${renderReposSummary(state, situation)}
-
-## Your Identity
-${ctx.identity.personality.slice(0, 800)}
-
-## Your Values
-${ctx.identity.values.slice(0, 500)}
-
-## Tools
-Use the \`gh\` CLI for GitHub operations and \`git\` for repository operations.
-
-## Git Worktree Workflow
-Each repo has a **shared clone** (on main) and your **worktree directory** for feature branches.
-
-**To start coding on a repo** (e.g. \`/work/repos/owner--repo\`):
-\`\`\`bash
-# Create a worktree for your feature branch
-cd /work/repos/owner--repo
-git fetch origin
-git worktree add /work/players/YOUR_NAME/worktrees/owner--repo/my-feature -b my-feature origin/main
-
-# Work in your worktree
-cd /work/players/YOUR_NAME/worktrees/owner--repo/my-feature
-# ... make changes, commit ...
-git push -u origin my-feature
-gh pr create --title "..." --body "..."
-\`\`\`
-
-**Do NOT modify the shared clone directly** — always use a worktree for changes.
-For read-only tasks (triage, review), you can \`cd\` to the shared clone or use \`gh\`.
-
-Complete your task and report what you did.`
+    const promptFn = SUBAGENT_PROMPT_BY_TASK[ctx.step.task] ?? subagentDefault
+    return promptFn(ctx)
   },
 
   systemPrompt(): string {
@@ -213,14 +573,24 @@ Complete your task and report what you did.`
 
 You are a software engineer working across one or more GitHub repositories. You have access to the \`gh\` CLI and \`git\` for all operations.
 
+## Approach
+
+You follow an investigation-first approach:
+1. First gather context — read issues, PRs, diffs, CI logs
+2. Then act on specific items with focused changes
+3. Report findings at the end of every task
+
 ## Available Tools
 
 - \`gh issue list\` / \`gh issue view <number>\` — browse issues
 - \`gh issue edit <number> --add-label <label>\` — triage issues
+- \`gh issue comment <number> --body "..."\` — comment on issues
 - \`gh pr list\` / \`gh pr view <number>\` — browse PRs
+- \`gh pr diff <number>\` — read PR diffs
 - \`gh pr review <number> --approve\` / \`--request-changes\` — review PRs
 - \`gh pr checkout <number>\` — check out a PR locally
 - \`gh run list\` / \`gh run view <id>\` — inspect CI runs
+- \`gh run view <id> --log-failed\` — read CI failure logs
 - \`git\` — standard git operations for code changes
 - \`git worktree add/list/remove\` — manage feature branch worktrees
 
@@ -264,6 +634,7 @@ Signed-off-by: <your name>
 - Run tests before submitting changes
 - Be thorough in code reviews — check for correctness, style, and edge cases
 - When triaging, add appropriate labels and leave a comment explaining priority
+- Report your findings at the end of every task
 
 ## Diary
 
