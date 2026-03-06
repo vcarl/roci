@@ -4,9 +4,11 @@ import type { AiFunction } from "./AiFunction.js"
 import { PromptBuilderTag } from "./prompt-builder.js"
 import type { PlanPromptContext, InterruptPromptContext, EvaluatePromptContext } from "./prompt-builder.js"
 import { StateRendererTag } from "./state-renderer.js"
-import type { Plan, StepCompletionResult } from "./types.js"
+import type { BrainMode, Plan, StepCompletionResult } from "./types.js"
 
 // ── Plan parsing ────────────────────────────────────────────
+
+const VALID_PROCEDURES: BrainMode[] = ["triage", "feature", "review"]
 
 function parsePlan(output: string): Plan {
   let json = output.trim()
@@ -15,7 +17,7 @@ function parsePlan(output: string): Plan {
     json = fenceMatch[1]
   }
   const parsed = JSON.parse(json)
-  return {
+  const plan: Plan = {
     reasoning: parsed.reasoning ?? "",
     steps: Array.isArray(parsed.steps)
       ? parsed.steps.map((s: Record<string, unknown>) => ({
@@ -27,6 +29,14 @@ function parsePlan(output: string): Plan {
         }))
       : [],
   }
+
+  // Extract procedure selection if present
+  if (parsed.procedure && VALID_PROCEDURES.includes(parsed.procedure)) {
+    plan.procedure = parsed.procedure as BrainMode
+    plan.targets = Array.isArray(parsed.targets) ? parsed.targets : []
+  }
+
+  return plan
 }
 
 // ── Brain functions ─────────────────────────────────────────

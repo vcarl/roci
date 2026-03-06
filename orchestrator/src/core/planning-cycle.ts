@@ -5,7 +5,7 @@ import { CharacterFs } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import type { DomainState, DomainSituation } from "./domain-types.js"
-import type { Plan, StepTiming, Alert } from "./types.js"
+import type { BrainMode, Plan, StepTiming, Alert } from "./types.js"
 import type { LifecycleHooks, PlanContext } from "./lifecycle.js"
 import { brainPlan } from "./brain.js"
 
@@ -19,6 +19,8 @@ export interface PlanningRefs {
   readonly softAlertAcc: Ref.Ref<Map<string, Alert>>
   readonly tickCount: Ref.Ref<number>
   readonly stepStartTick: Ref.Ref<number>
+  readonly mode: Ref.Ref<BrainMode>
+  readonly investigationReport: Ref.Ref<string | null>
 }
 
 interface PlanningServices {
@@ -50,6 +52,9 @@ export const maybeRequestPlan = (
       const previousFailure = yield* Ref.get(refs.previousFailure)
       const recentChat = yield* Ref.get(refs.chatContext)
       const stepTimingHistory = yield* Ref.get(refs.stepTimingHistory)
+
+      const mode = yield* Ref.get(refs.mode)
+      const investigationReport = yield* Ref.get(refs.investigationReport)
 
       let additionalContext: string | undefined
       if (services.hooks?.beforePlan) {
@@ -100,6 +105,8 @@ export const maybeRequestPlan = (
         stepTimingHistory: stepTimingHistory.length > 0 ? stepTimingHistory : undefined,
         tickIntervalSec: services.tickIntervalSec,
         additionalContext,
+        mode,
+        investigationReport: investigationReport ?? undefined,
       })
 
       yield* Ref.set(refs.previousFailure, null)
@@ -128,5 +135,15 @@ export const maybeRequestPlan = (
       yield* Ref.set(refs.plan, finalPlan)
       yield* Ref.set(refs.step, 0)
       yield* Ref.set(refs.stepStartTick, tickCount)
+
+      // Mode transition: if brain selected a procedure, switch mode
+      if (finalPlan.procedure && finalPlan.procedure !== "select") {
+        yield* logToConsole(
+          services.char.name,
+          "brain",
+          `Mode transition: select → ${finalPlan.procedure} (targets: ${finalPlan.targets?.join(", ") ?? "none"})`,
+        )
+        yield* Ref.set(refs.mode, finalPlan.procedure)
+      }
     }
   })
