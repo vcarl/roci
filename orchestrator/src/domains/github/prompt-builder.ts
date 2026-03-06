@@ -245,6 +245,18 @@ You are a software engineer working across one or more GitHub repositories. You 
 
 **Do NOT** checkout branches or make changes in the shared clone — it stays on main so all team members share it.
 
+## Commit Style
+
+All commits are authored by "Claude <noreply@anthropic.com>". You MUST sign off with your name in every commit message:
+
+\`\`\`
+<summary>
+
+<description of what changed and why>
+
+Signed-off-by: <your name>
+\`\`\`
+
 ## Working Style
 
 - Read issues and PRs carefully before acting

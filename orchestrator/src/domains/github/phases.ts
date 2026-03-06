@@ -101,15 +101,14 @@ const ensureWorktreeDir = (
 
     yield* docker.exec(containerId, ["mkdir", "-p", wtBase])
 
-    // Configure git identity in the shared clone for this character's commits.
-    // (Each worktree inherits from the parent clone's config, but the agent
-    // can override per-worktree if needed.)
+    // Git identity on the shared clone: all commits are authored by Claude.
+    // Characters sign off in the commit message body instead.
     const cloneDir = sharedClonePath(owner, repo)
     yield* docker.exec(containerId, [
-      "git", "-C", cloneDir, "config", "user.name", characterName,
+      "git", "-C", cloneDir, "config", "user.name", "Claude",
     ]).pipe(Effect.catchAll(() => Effect.void))
     yield* docker.exec(containerId, [
-      "git", "-C", cloneDir, "config", "user.email", `${characterName}@roci-crew.local`,
+      "git", "-C", cloneDir, "config", "user.email", "noreply@anthropic.com",
     ]).pipe(Effect.catchAll(() => Effect.void))
 
     return wtBase
