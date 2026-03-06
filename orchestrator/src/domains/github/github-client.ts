@@ -111,7 +111,8 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
       openPRs,
       ciStatus,
       recentActivity: [],
-      clonePath: null,
+      clonePath: "",
+      worktreePath: null,
       currentBranch: null,
     }
 
@@ -143,7 +144,8 @@ export const GitHubClientLive = Layer.succeed(GitHubClientTag, {
                   openIssues: [], openPRs: [],
                   ciStatus: "unknown" as const,
                   recentActivity: [],
-                  clonePath: null,
+                  clonePath: "",
+                  worktreePath: null,
                   currentBranch: null,
                 })),
               )

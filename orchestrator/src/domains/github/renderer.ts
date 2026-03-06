@@ -24,6 +24,7 @@ function richSnapshot(state: GitHubState): Record<string, unknown> {
       openPRs: r.openPRs.length,
       ciStatus: r.ciStatus,
       clonePath: r.clonePath,
+      worktreePath: r.worktreePath,
       currentBranch: r.currentBranch,
       issues: r.openIssues.map((i) => ({
         number: i.number,
@@ -78,8 +79,9 @@ function renderForPlanning(state: GitHubState, situation: GitHubSituation): stri
       `CI: ${repo.ciStatus} | Situation: ${sit?.type ?? "unknown"}`,
     ]
 
-    if (repo.clonePath) {
-      lines.push(`Local clone: \`${repo.clonePath}\` (branch: ${repo.currentBranch ?? "unknown"})`)
+    lines.push(`Shared clone: \`${repo.clonePath}\``)
+    if (repo.worktreePath) {
+      lines.push(`Worktree: \`${repo.worktreePath}\` (branch: ${repo.currentBranch ?? "unknown"})`)
     }
     lines.push("")
 

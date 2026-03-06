@@ -18,9 +18,14 @@ const DEFAULT_POLL_INTERVAL_MS = 30_000
 
 type GHConnection = ConnectionState<GitHubState, GitHubEvent>
 
-/** Clone path inside the container for a specific repo. */
-function repoClonePath(characterName: string, owner: string, repo: string): string {
-  return `/work/players/${characterName}/repos/${owner}--${repo}`
+/** Shared clone path inside the container. All characters share this. */
+function sharedClonePath(owner: string, repo: string): string {
+  return `/work/repos/${owner}--${repo}`
+}
+
+/** Per-character worktree base path for a specific repo. */
+function worktreeBasePath(characterName: string, owner: string, repo: string): string {
+  return `/work/players/${characterName}/worktrees/${owner}--${repo}`
 }
 
 /** Read github.json from the character's me/ directory. */
@@ -42,66 +47,76 @@ const readGitHubConfig = (charDir: string) =>
   })
 
 /**
- * Clone a repo into the character's directory (idempotent).
- * If already cloned, fetches latest from origin instead.
+ * Ensure the shared clone exists (idempotent).
+ * If already cloned, fetches latest. Shared across all characters in the container.
  */
-const ensureClone = (
+const ensureSharedClone = (
   containerId: string,
-  characterName: string,
   owner: string,
   repo: string,
   token: string,
 ) =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    const repoDir = repoClonePath(characterName, owner, repo)
+    const cloneDir = sharedClonePath(owner, repo)
 
     // Check if already cloned
     const exists = yield* docker.exec(containerId, [
-      "sh", "-c", `test -d "${repoDir}/.git" && echo "yes" || echo "no"`,
+      "sh", "-c", `test -d "${cloneDir}/.git" && echo "yes" || echo "no"`,
     ])
 
     if (exists.trim() === "yes") {
       yield* docker.exec(containerId, [
-        "git", "-C", repoDir, "fetch", "--all",
+        "git", "-C", cloneDir, "fetch", "--all",
       ]).pipe(Effect.catchAll((e) => Effect.logWarning(`git fetch failed for ${owner}/${repo}: ${e}`)))
-      yield* Effect.logInfo(`Repo already cloned at ${repoDir}, fetched latest`)
-      return repoDir
+      yield* Effect.logInfo(`Shared clone exists at ${cloneDir}, fetched latest`)
+      return cloneDir
     }
 
-    // Ensure parent directory exists
-    yield* docker.exec(containerId, ["mkdir", "-p", `/work/players/${characterName}/repos`])
+    // Create /work/repos if needed
+    yield* docker.exec(containerId, ["mkdir", "-p", "/work/repos"])
 
     // Clone
     const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`
-    yield* docker.exec(containerId, ["git", "clone", cloneUrl, repoDir])
+    yield* docker.exec(containerId, ["git", "clone", cloneUrl, cloneDir])
 
-    // Configure git identity
-    yield* docker.exec(containerId, [
-      "git", "-C", repoDir, "config", "user.name", characterName,
-    ])
-    yield* docker.exec(containerId, [
-      "git", "-C", repoDir, "config", "user.email", `${characterName}@roci-crew.local`,
-    ])
-
-    yield* Effect.logInfo(`Cloned ${owner}/${repo} to ${repoDir}`)
-    return repoDir
-  })
-
-/** Get the current branch name in a clone. */
-const getCurrentBranch = (containerId: string, repoDir: string) =>
-  Effect.gen(function* () {
-    const docker = yield* Docker
-    return yield* docker.exec(containerId, [
-      "git", "-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD",
-    ]).pipe(
-      Effect.map((s) => s.trim()),
-      Effect.catchAll(() => Effect.succeed("unknown")),
-    )
+    yield* Effect.logInfo(`Cloned ${owner}/${repo} to ${cloneDir}`)
+    return cloneDir
   })
 
 /**
- * Startup phase: read github.json, connect to GitHub, clone all repos.
+ * Ensure the character's worktree directory exists for a repo.
+ * Does NOT create a worktree — the agent does that when starting a task.
+ * Just sets up the directory and git identity config.
+ */
+const ensureWorktreeDir = (
+  containerId: string,
+  characterName: string,
+  owner: string,
+  repo: string,
+) =>
+  Effect.gen(function* () {
+    const docker = yield* Docker
+    const wtBase = worktreeBasePath(characterName, owner, repo)
+
+    yield* docker.exec(containerId, ["mkdir", "-p", wtBase])
+
+    // Configure git identity in the shared clone for this character's commits.
+    // (Each worktree inherits from the parent clone's config, but the agent
+    // can override per-worktree if needed.)
+    const cloneDir = sharedClonePath(owner, repo)
+    yield* docker.exec(containerId, [
+      "git", "-C", cloneDir, "config", "user.name", characterName,
+    ]).pipe(Effect.catchAll(() => Effect.void))
+    yield* docker.exec(containerId, [
+      "git", "-C", cloneDir, "config", "user.email", `${characterName}@roci-crew.local`,
+    ]).pipe(Effect.catchAll(() => Effect.void))
+
+    return wtBase
+  })
+
+/**
+ * Startup phase: read github.json, connect to GitHub, clone repos, set up worktree dirs.
  */
 const startupPhase = {
   name: "startup",
@@ -133,31 +148,30 @@ const startupPhase = {
 
       yield* logToConsole(context.char.name, "orchestrator", `Connected to GitHub API`)
 
-      // Clone all repos into the character's directory
+      // Clone all repos (shared) and set up worktree directories (per-character)
       for (let i = 0; i < parsedRepos.length; i++) {
         const { owner, repo } = parsedRepos[i]
-        yield* logToConsole(context.char.name, "orchestrator", `Cloning ${owner}/${repo}...`)
+        yield* logToConsole(context.char.name, "orchestrator", `Setting up ${owner}/${repo}...`)
 
-        const repoDir = yield* ensureClone(
-          context.containerId, context.char.name, owner, repo, ghConfig.token,
+        const cloneDir = yield* ensureSharedClone(
+          context.containerId, owner, repo, ghConfig.token,
         ).pipe(
           Effect.catchAll((e) => {
             return Effect.logWarning(`Failed to clone ${owner}/${repo}: ${e}`).pipe(
-              Effect.map(() => repoClonePath(context.char.name, owner, repo)),
+              Effect.map(() => sharedClonePath(owner, repo)),
             )
           }),
         )
 
-        const branch = yield* getCurrentBranch(context.containerId, repoDir)
-        initialState.repos[i].clonePath = repoDir
-        initialState.repos[i].currentBranch = branch
+        const wtBase = yield* ensureWorktreeDir(
+          context.containerId, context.char.name, owner, repo,
+        ).pipe(Effect.catchAll(() => Effect.succeed(worktreeBasePath(context.char.name, owner, repo))))
+
+        initialState.repos[i].clonePath = cloneDir
+        // worktreePath stays null until the agent creates one
       }
 
-      yield* logToConsole(
-        context.char.name,
-        "orchestrator",
-        `All repos ready`,
-      )
+      yield* logToConsole(context.char.name, "orchestrator", `All repos ready`)
 
       const connection: GHConnection = { events, initialState, tickIntervalSec, initialTick }
       return { _tag: "Continue", next: "active", connection } as PhaseResult

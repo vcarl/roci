@@ -22,7 +22,7 @@ export interface PullRequest {
 }
 
 // =====================================================
-// Per-Repo State (from GitHub API)
+// Per-Repo State (from GitHub API + local)
 // =====================================================
 
 export interface RepoState {
@@ -32,9 +32,11 @@ export interface RepoState {
   openPRs: PullRequest[]
   ciStatus: "passing" | "failing" | "unknown"
   recentActivity: string[]
-  /** Path to the local clone inside the container, or null if not yet cloned. */
-  clonePath: string | null
-  /** Current branch in the local clone. */
+  /** Path to the shared clone inside the container. */
+  clonePath: string
+  /** Character's worktree path for this repo (if created). */
+  worktreePath: string | null
+  /** Current branch in the character's worktree (or main in the shared clone). */
   currentBranch: string | null
 }
 
@@ -49,7 +51,7 @@ export interface GitHubState {
 }
 
 // =====================================================
-// Character Config
+// Character Config (github.json)
 // =====================================================
 
 export interface GitHubCharacterConfig {

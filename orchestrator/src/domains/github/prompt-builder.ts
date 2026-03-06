@@ -16,8 +16,11 @@ function renderReposSummary(state: GitHubState, situation: GitHubSituation): str
       `### ${repo.owner}/${repo.repo} — ${sit?.type ?? "unknown"}`,
       `CI: ${repo.ciStatus} | Issues: ${repo.openIssues.length} | PRs: ${repo.openPRs.length}`,
     ]
-    if (repo.clonePath) {
-      lines.push(`Clone: \`${repo.clonePath}\` (branch: ${repo.currentBranch ?? "unknown"})`)
+    lines.push(`Shared clone: \`${repo.clonePath}\``)
+    if (repo.worktreePath) {
+      lines.push(`Your worktree: \`${repo.worktreePath}\` (branch: ${repo.currentBranch ?? "unknown"})`)
+    } else {
+      lines.push(`No active worktree — create one to start coding`)
     }
 
     const untriaged = repo.openIssues.filter((i) => !i.labels.includes("triaged"))
@@ -30,14 +33,6 @@ function renderReposSummary(state: GitHubState, situation: GitHubSituation): str
 
     return lines.join("\n")
   }).join("\n\n")
-}
-
-/** List all clone paths for the subagent to know about. */
-function renderClonePaths(state: GitHubState): string {
-  const clones = state.repos
-    .filter((r) => r.clonePath)
-    .map((r) => `- \`${r.clonePath}\` — ${r.owner}/${r.repo}`)
-  return clones.length > 0 ? clones.join("\n") : "(no clones available)"
 }
 
 const gitHubPromptBuilder: PromptBuilder = {
@@ -181,9 +176,6 @@ Time budget: ${ctx.step.timeoutTicks} ticks (~${budgetSeconds}s)
 ## Repository Overview
 ${renderReposSummary(state, situation)}
 
-## Clone Paths
-${renderClonePaths(state)}
-
 ## Your Identity
 ${ctx.identity.personality.slice(0, 800)}
 
@@ -193,12 +185,25 @@ ${ctx.identity.values.slice(0, 500)}
 ## Tools
 Use the \`gh\` CLI for GitHub operations and \`git\` for repository operations.
 
-## Workflow
-- \`cd <clone-path>\` before any git operations on a repo
-- Create a feature branch: \`git checkout -b <branch-name>\`
-- Make changes, commit, push: \`git push -u origin <branch-name>\`
-- Open a PR: \`gh pr create --title "..." --body "..."\`
-- Review a PR: \`gh pr review <number> --approve\` or \`--request-changes -b "feedback"\`
+## Git Worktree Workflow
+Each repo has a **shared clone** (on main) and your **worktree directory** for feature branches.
+
+**To start coding on a repo** (e.g. \`/work/repos/owner--repo\`):
+\`\`\`bash
+# Create a worktree for your feature branch
+cd /work/repos/owner--repo
+git fetch origin
+git worktree add /work/players/YOUR_NAME/worktrees/owner--repo/my-feature -b my-feature origin/main
+
+# Work in your worktree
+cd /work/players/YOUR_NAME/worktrees/owner--repo/my-feature
+# ... make changes, commit ...
+git push -u origin my-feature
+gh pr create --title "..." --body "..."
+\`\`\`
+
+**Do NOT modify the shared clone directly** — always use a worktree for changes.
+For read-only tasks (triage, review), you can \`cd\` to the shared clone or use \`gh\`.
 
 Complete your task and report what you did.`
   },
@@ -217,17 +222,28 @@ You are a software engineer working across one or more GitHub repositories. You 
 - \`gh pr checkout <number>\` — check out a PR locally
 - \`gh run list\` / \`gh run view <id>\` — inspect CI runs
 - \`git\` — standard git operations for code changes
+- \`git worktree add/list/remove\` — manage feature branch worktrees
+
+## Repository Layout
+
+\`\`\`
+/work/repos/<owner>--<repo>/                    # shared clone (on main, read-only for you)
+/work/players/<you>/worktrees/<owner>--<repo>/   # your worktrees per feature branch
+\`\`\`
 
 ## Workflow
 
-You have local clones of your repositories. For coding tasks:
-1. \`cd\` to the appropriate clone directory
-2. Fetch latest: \`git fetch origin && git checkout main && git pull\`
-3. Create a feature branch: \`git checkout -b feature/description\`
-4. Make changes, commit with clear messages
-5. Push and open a PR: \`git push -u origin HEAD && gh pr create\`
+**For coding tasks:**
+1. \`cd /work/repos/<owner>--<repo>\`
+2. \`git fetch origin\`
+3. \`git worktree add /work/players/<you>/worktrees/<owner>--<repo>/<branch> -b <branch> origin/main\`
+4. \`cd\` to the new worktree directory
+5. Make changes, commit with clear messages
+6. \`git push -u origin <branch> && gh pr create\`
 
-For reviews, use \`gh pr checkout\` to inspect changes locally.
+**For triage/review** (read-only): use \`gh\` directly, or \`cd\` to the shared clone.
+
+**Do NOT** checkout branches or make changes in the shared clone — it stays on main so all team members share it.
 
 ## Working Style
 

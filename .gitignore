@@ -7,3 +7,4 @@ players/*/logs
 players/*/sm
 .claude-credentials.json
 .env
+repos/

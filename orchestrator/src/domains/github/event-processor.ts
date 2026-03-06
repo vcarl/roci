@@ -10,10 +10,11 @@ const gitHubEventProcessor: EventProcessor = {
         const prev = currentState as GitHubState
         const { repoIndex, repoState } = ghEvent.payload
         const repos = [...prev.repos]
-        // Preserve local clone info across poll updates (API doesn't know about it)
+        // Preserve local state across poll updates (API doesn't know about clones/worktrees)
         repos[repoIndex] = {
           ...repoState,
-          clonePath: repos[repoIndex]?.clonePath ?? null,
+          clonePath: repos[repoIndex]?.clonePath ?? repoState.clonePath,
+          worktreePath: repos[repoIndex]?.worktreePath ?? null,
           currentBranch: repos[repoIndex]?.currentBranch ?? null,
         }
         return {

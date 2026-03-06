@@ -12,6 +12,11 @@ const containerMounts = (projectRoot: string): ContainerMount[] => [
     container: "/work/players",
   },
   {
+    // Shared repo clones — persisted across container restarts
+    host: path.resolve(projectRoot, "repos"),
+    container: "/work/repos",
+  },
+  {
     host: path.resolve(projectRoot, ".claude"),
     container: "/work/.claude",
     readonly: true,
@@ -32,5 +37,5 @@ export const gitHubDomainConfig = (projectRoot: string): DomainConfig => ({
   serviceLayer: GitHubClientLive,
   dockerfilePath: "orchestrator/src/domains/github/docker/Dockerfile",
   dockerContext: "orchestrator/src/domains/github/docker",
-  containerAddDirs: [],
+  containerAddDirs: ["/work/repos"],
 })
