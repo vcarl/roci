@@ -15,8 +15,8 @@ export interface CharacterLoopConfig {
   containerEnv?: Record<string, string>
   /** Phase registry defining the session lifecycle. */
   phaseRegistry: PhaseRegistry
-  /** Domain service layers for the state machine. */
-  domainBundle: DomainBundle
+  /** Domain service layers for the state machine. Optional for hypervisor-based domains. */
+  domainBundle?: DomainBundle
   /** Pause for manual approval before plan/subagent steps. */
   manualApproval?: boolean
 }

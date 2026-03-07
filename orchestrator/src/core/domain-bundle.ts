@@ -55,8 +55,8 @@ export interface ContainerMount {
  * the orchestrator against a specific game/environment.
  */
 export interface DomainConfig {
-  /** Domain service layers for the state machine. */
-  readonly bundle: DomainBundle
+  /** Domain service layers for the state machine. Optional — hypervisor-based domains don't need this. */
+  readonly bundle?: DomainBundle
   /** Phase registry defining the session lifecycle. */
   readonly phaseRegistry: PhaseRegistry
   /** Container volume mounts for the domain. */

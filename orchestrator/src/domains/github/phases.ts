@@ -1,29 +1,34 @@
-import { Effect, Deferred, Queue } from "effect"
+import { Effect } from "effect"
 import { FileSystem } from "@effect/platform"
-import type { GitHubState, GitHubEvent, GitHubCharacterConfig } from "./types.js"
-import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
-import type { ExitReason } from "../../core/types.js"
-import type { LifecycleHooks } from "../../core/lifecycle.js"
+import type { GitHubCharacterConfig } from "./types.js"
+import type { Phase, PhaseContext, PhaseResult, PhaseRegistry } from "../../core/phase.js"
 import { Docker } from "../../services/Docker.js"
-import { GitHubClientTag, type GitHubClientConfig } from "./github-client.js"
-import { eventLoop } from "../../monitor/event-loop.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import { CharacterLog } from "../../logging/log-writer.js"
+import { runCycle } from "../../hypervisor/scheduler.js"
+import { pollAndWriteState } from "./state-poller.js"
+import { renderTemplate } from "../../core/template.js"
+import { readFileSync } from "node:fs"
+import * as path from "node:path"
 
-/** Ticks in the active loop before exiting. At 30s/tick, 100 ticks ~ 50 min. */
-const ACTIVE_SESSION_TURNS = 100
+/** Number of brain/body cycles before exiting. */
+const MAX_CYCLES = 20
 
-/** Default poll interval for GitHub API (30 seconds). */
-const DEFAULT_POLL_INTERVAL_MS = 30_000
+/** Brain timeout: 2 minutes. */
+const BRAIN_TIMEOUT_MS = 2 * 60 * 1000
 
-type GHConnection = ConnectionState<GitHubState, GitHubEvent>
+/** Body timeout: 8 minutes. */
+const BODY_TIMEOUT_MS = 8 * 60 * 1000
 
-/** Shared clone path inside the container. All characters share this. */
+/** Poll interval between cycles: 30 seconds. */
+const POLL_INTERVAL_MS = 30_000
+
+/** Shared clone path inside the container. */
 function sharedClonePath(owner: string, repo: string): string {
   return `/work/repos/${owner}--${repo}`
 }
 
-/** Per-character worktree base path for a specific repo. */
+/** Per-character worktree base path. */
 function worktreeBasePath(characterName: string, owner: string, repo: string): string {
   return `/work/players/${characterName}/worktrees/${owner}--${repo}`
 }
@@ -46,10 +51,21 @@ const readGitHubConfig = (charDir: string) =>
     return parsed
   })
 
-/**
- * Ensure the shared clone exists (idempotent).
- * If already cloned, fetches latest. Shared across all characters in the container.
- */
+/** Validate a GitHub token by calling /user. Returns the username. */
+const validateToken = (token: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const r = await fetch("https://api.github.com/user", {
+        headers: { Authorization: `token ${token}` },
+      })
+      if (!r.ok) throw new Error(`GitHub API returned ${r.status}`)
+      const user = (await r.json()) as { login: string }
+      return user.login
+    },
+    catch: (e) => new Error(`Token validation failed: ${e}`),
+  })
+
+/** Ensure the shared clone exists (idempotent). */
 const ensureSharedClone = (
   containerId: string,
   owner: string,
@@ -60,7 +76,6 @@ const ensureSharedClone = (
     const docker = yield* Docker
     const cloneDir = sharedClonePath(owner, repo)
 
-    // Check if already cloned
     const exists = yield* docker.exec(containerId, [
       "sh", "-c", `test -d "${cloneDir}/.git" && echo "yes" || echo "no"`,
     ])
@@ -73,22 +88,14 @@ const ensureSharedClone = (
       return cloneDir
     }
 
-    // Create /work/repos if needed
     yield* docker.exec(containerId, ["mkdir", "-p", "/work/repos"])
-
-    // Clone
     const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`
     yield* docker.exec(containerId, ["git", "clone", cloneUrl, cloneDir])
-
     yield* Effect.logInfo(`Cloned ${owner}/${repo} to ${cloneDir}`)
     return cloneDir
   })
 
-/**
- * Ensure the character's worktree directory exists for a repo.
- * Does NOT create a worktree — the agent does that when starting a task.
- * Just sets up the directory and git identity config.
- */
+/** Ensure the character's worktree directory exists. */
 const ensureWorktreeDir = (
   containerId: string,
   characterName: string,
@@ -98,11 +105,8 @@ const ensureWorktreeDir = (
   Effect.gen(function* () {
     const docker = yield* Docker
     const wtBase = worktreeBasePath(characterName, owner, repo)
-
     yield* docker.exec(containerId, ["mkdir", "-p", wtBase])
 
-    // Git identity on the shared clone: all commits are authored by Claude.
-    // Characters sign off in the commit message body instead.
     const cloneDir = sharedClonePath(owner, repo)
     yield* docker.exec(containerId, [
       "git", "-C", cloneDir, "config", "user.name", "Claude",
@@ -114,16 +118,20 @@ const ensureWorktreeDir = (
     return wtBase
   })
 
+/** Load a system prompt template from disk and render variables. */
+function loadSystemPrompt(filename: string, vars: Record<string, string>): string {
+  const filePath = path.resolve(import.meta.dirname, filename)
+  const raw = readFileSync(filePath, "utf-8")
+  return renderTemplate(raw, vars)
+}
+
 /**
- * Startup phase: read github.json, connect to GitHub, clone repos, set up worktree dirs.
+ * Startup phase: read github.json, validate token, clone repos, set up worktree dirs.
  */
 const startupPhase = {
   name: "startup",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      const ghClient = yield* GitHubClientTag
-
-      // Read github.json
       const ghConfig = yield* readGitHubConfig(context.char.dir)
       const parsedRepos = ghConfig.repos.map((r) => {
         const [owner, repo] = r.split("/")
@@ -136,29 +144,28 @@ const startupPhase = {
         `GitHub config: ${parsedRepos.length} repo(s) — ${ghConfig.repos.join(", ")}`,
       )
 
-      const clientConfig: GitHubClientConfig = {
-        repos: parsedRepos,
-        pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
-        token: ghConfig.token,
-      }
-
-      const { events, initialState, tickIntervalSec, initialTick, authenticatedUser } =
-        yield* ghClient.connect(clientConfig)
+      // Validate token
+      const authenticatedUser = yield* validateToken(ghConfig.token).pipe(
+        Effect.catchAll((e) => {
+          return Effect.logWarning(`Token validation failed: ${e.message}`).pipe(
+            Effect.map(() => ""),
+          )
+        }),
+      )
 
       yield* logToConsole(
         context.char.name,
         "orchestrator",
         authenticatedUser
-          ? `Authenticated as ${authenticatedUser} for ${context.char.name}`
+          ? `Authenticated as ${authenticatedUser}`
           : `Connected to GitHub API (could not determine username)`,
       )
 
-      // Clone all repos (shared) and set up worktree directories (per-character)
-      for (let i = 0; i < parsedRepos.length; i++) {
-        const { owner, repo } = parsedRepos[i]
+      // Clone all repos and set up worktree directories
+      for (const { owner, repo } of parsedRepos) {
         yield* logToConsole(context.char.name, "orchestrator", `Setting up ${owner}/${repo}...`)
 
-        const cloneDir = yield* ensureSharedClone(
+        yield* ensureSharedClone(
           context.containerId, owner, repo, ghConfig.token,
         ).pipe(
           Effect.catchAll((e) => {
@@ -168,28 +175,27 @@ const startupPhase = {
           }),
         )
 
-        const wtBase = yield* ensureWorktreeDir(
+        yield* ensureWorktreeDir(
           context.containerId, context.char.name, owner, repo,
         ).pipe(Effect.catchAll(() => Effect.succeed(worktreeBasePath(context.char.name, owner, repo))))
-
-        initialState.repos[i].clonePath = cloneDir
-        // worktreePath stays null until the agent creates one
       }
 
       yield* logToConsole(context.char.name, "orchestrator", `All repos ready`)
 
-      const connection: GHConnection = { events, initialState, tickIntervalSec, initialTick }
       return {
         _tag: "Continue",
         next: "active",
-        connection,
-        data: { ghToken: ghConfig.token, ghUsername: authenticatedUser },
+        data: {
+          ghToken: ghConfig.token,
+          ghUsername: authenticatedUser,
+          ghConfig,
+        },
       } as PhaseResult
     }),
 }
 
 /**
- * Active phase: run the event loop with the domain bundle.
+ * Active phase: run brain/body cycles using the hypervisor scheduler.
  */
 const activePhase = {
   name: "active",
@@ -197,59 +203,123 @@ const activePhase = {
     Effect.gen(function* () {
       const log = yield* CharacterLog
 
-      if (!context.connection) {
-        yield* logToConsole(context.char.name, "orchestrator", "No connection in active phase — shutting down")
+      const ghToken = context.phaseData?.ghToken as string | undefined
+      const ghUsername = context.phaseData?.ghUsername as string ?? ""
+      const ghConfig = context.phaseData?.ghConfig as GitHubCharacterConfig | undefined
+
+      if (!ghConfig || !ghToken) {
+        yield* logToConsole(context.char.name, "orchestrator", "No GitHub config in active phase — shutting down")
         return { _tag: "Shutdown" } as PhaseResult
       }
 
-      const conn = context.connection as GHConnection
-      const { events, initialState, tickIntervalSec, initialTick } = conn
-
-      // Merge GH_TOKEN into container env so gh CLI and git push work in subagents
-      const ghToken = context.phaseData?.ghToken as string | undefined
       const containerEnv = {
         ...context.containerEnv,
-        ...(ghToken ? { GH_TOKEN: ghToken } : {}),
+        GH_TOKEN: ghToken,
       }
 
-      yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
+      // Load system prompt templates
+      const templateVars = {
+        characterName: context.char.name,
+        playerName: context.char.name,
+      }
+      const brainSystemPrompt = loadSystemPrompt("brain-system-prompt.md", templateVars)
+      const bodySystemPrompt = loadSystemPrompt("body-system-prompt.md", templateVars)
+
+      yield* logToConsole(context.char.name, "hypervisor", "Starting brain/body cycles...")
 
       yield* log.action(context.char, {
         timestamp: new Date().toISOString(),
         source: "orchestrator",
         character: context.char.name,
-        type: "loop_start",
+        type: "hypervisor_start",
         containerId: context.containerId,
       })
 
-      const exitSignal = yield* Deferred.make<ExitReason, never>()
+      // Create reports directory in container
+      const docker = yield* Docker
+      yield* docker.exec(context.containerId, [
+        "mkdir", "-p", `/work/players/${context.char.name}/reports`,
+      ]).pipe(Effect.catchAll(() => Effect.void))
 
-      const hooks: LifecycleHooks = {
-        shouldExit: (turnCount: number) => Effect.succeed(turnCount >= ACTIVE_SESSION_TURNS),
+      let cycleCount = 0
+
+      while (cycleCount < MAX_CYCLES) {
+        cycleCount++
+        yield* logToConsole(context.char.name, "hypervisor", `--- Cycle ${cycleCount}/${MAX_CYCLES} ---`)
+
+        // 1. Poll GitHub state and write to container
+        yield* logToConsole(context.char.name, "hypervisor", "Polling GitHub state...")
+        const stateMarkdown = yield* pollAndWriteState(
+          context.containerId,
+          context.char.name,
+          ghConfig,
+          ghUsername,
+        ).pipe(
+          Effect.catchAll((e) => {
+            return logToConsole(context.char.name, "hypervisor", `Poll failed: ${e}`).pipe(
+              Effect.map(() => "# State unavailable — poll failed\n"),
+            )
+          }),
+        )
+
+        // 2. Run brain/body cycle
+        const cycleResult = yield* runCycle({
+          containerId: context.containerId,
+          playerName: context.char.name,
+          brainSystemPrompt,
+          bodySystemPrompt,
+          brainModel: "opus",
+          bodyModel: "sonnet",
+          brainTimeoutMs: BRAIN_TIMEOUT_MS,
+          bodyTimeoutMs: BODY_TIMEOUT_MS,
+          env: containerEnv,
+          buildBrainPrompt: () => [
+            "Read your state file, diary, and recent reports, then prepare a briefing for the body.",
+            "",
+            "Current state summary (also available at /work/players/" + context.char.name + "/state.md):",
+            "",
+            stateMarkdown,
+          ].join("\n"),
+        }).pipe(
+          Effect.catchAll((e) => {
+            return logToConsole(context.char.name, "hypervisor", `Cycle failed: ${e}`).pipe(
+              Effect.map(() => null),
+            )
+          }),
+        )
+
+        if (cycleResult) {
+          // 3. Store body report for next brain cycle
+          const report = cycleResult.bodySummary ?? cycleResult.bodyResult.output
+          const reportTimestamp = new Date().toISOString().replace(/[:.]/g, "-")
+          const b64Report = Buffer.from(report).toString("base64")
+          yield* docker.exec(context.containerId, [
+            "bash", "-c",
+            `echo '${b64Report}' | base64 -d > /work/players/${context.char.name}/reports/${reportTimestamp}.md`,
+          ]).pipe(Effect.catchAll(() => Effect.void))
+
+          // Log cycle results
+          yield* log.action(context.char, {
+            timestamp: new Date().toISOString(),
+            source: "orchestrator",
+            character: context.char.name,
+            type: "cycle_complete",
+            cycle: cycleCount,
+            brainDurationMs: cycleResult.brainResult.durationMs,
+            bodyDurationMs: cycleResult.bodyResult.durationMs,
+            brainTimedOut: cycleResult.brainResult.timedOut,
+            bodyTimedOut: cycleResult.bodyResult.timedOut,
+          })
+        }
+
+        // Brief pause between cycles
+        if (cycleCount < MAX_CYCLES) {
+          yield* logToConsole(context.char.name, "hypervisor", `Waiting ${POLL_INTERVAL_MS / 1000}s before next cycle...`)
+          yield* Effect.sleep(POLL_INTERVAL_MS)
+        }
       }
 
-      if (!context.domainBundle) {
-        yield* logToConsole(context.char.name, "orchestrator", "No domainBundle in active phase — shutting down")
-        return { _tag: "Shutdown" } as PhaseResult
-      }
-
-      const manualApproval = context.phaseData?.manualApproval as boolean | undefined
-
-      yield* eventLoop({
-        char: context.char,
-        containerId: context.containerId,
-        playerName: context.char.name,
-        containerEnv,
-        events: events as Queue.Queue<unknown>,
-        initialState,
-        tickIntervalSec,
-        initialTick,
-        exitSignal,
-        hooks,
-        domainBundle: context.domainBundle,
-        manualApproval,
-      })
-
+      yield* logToConsole(context.char.name, "hypervisor", `Completed ${cycleCount} cycles — shutting down`)
       return { _tag: "Shutdown" } as PhaseResult
     }),
 }

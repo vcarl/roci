@@ -1,7 +1,6 @@
 import * as path from "node:path"
 import { Effect } from "effect"
 import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "../../core/domain-bundle.js"
-import { gitHubDomainBundle, GitHubClientLive } from "./index.js"
 import { gitHubPhaseRegistry } from "./phases.js"
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { execSync } from "node:child_process"
@@ -23,6 +22,12 @@ const containerMounts = (projectRoot: string): ContainerMount[] => [
   {
     host: path.resolve(projectRoot, ".claude"),
     container: "/work/.claude",
+    readonly: true,
+  },
+  {
+    // Skill files auto-discovered by subagent Claude Code instances
+    host: path.resolve(projectRoot, "orchestrator/src/domains/github/.claude"),
+    container: "/work/repos/.claude",
     readonly: true,
   },
   {
@@ -180,11 +185,9 @@ const gitHubCharacterSetupGuide = [
 
 /** Build the GitHub domain config for a given project root. */
 export const gitHubDomainConfig = (projectRoot: string): DomainConfig => ({
-  bundle: gitHubDomainBundle,
   phaseRegistry: gitHubPhaseRegistry,
   containerMounts: containerMounts(projectRoot),
   imageName: IMAGE_NAME,
-  serviceLayer: GitHubClientLive,
   dockerfilePath: "orchestrator/src/domains/github/docker/Dockerfile",
   dockerContext: "orchestrator/src/domains/github/docker",
   containerAddDirs: ["/work/repos"],
