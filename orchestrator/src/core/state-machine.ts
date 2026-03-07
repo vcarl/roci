@@ -73,6 +73,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
     const softAlertAccRef = yield* Ref.make<Map<string, Alert>>(new Map())
     const modeRef = yield* Ref.make<BrainMode>("select")
     const investigationReportRef = yield* Ref.make<string | null>(null)
+    const procedureTargetsRef = yield* Ref.make<string[]>([])
 
     // --- Domain state ---
     const gameStateRef = yield* Ref.make<DomainState>(config.initialState)
@@ -94,6 +95,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       stepStartTick: stepStartTickRef,
       mode: modeRef,
       investigationReport: investigationReportRef,
+      procedureTargets: procedureTargetsRef,
     }
     const planningServices = { char: config.char, tickIntervalSec: config.tickIntervalSec, hooks }
     const evalServices = {
@@ -216,6 +218,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         yield* logToConsole(config.char.name, "monitor", `Diary updated. Returning to 'select' mode.`)
         yield* Ref.set(modeRef, "select")
         yield* Ref.set(investigationReportRef, null)
+        yield* Ref.set(procedureTargetsRef, [])
       })
 
     /** Handle critical interrupts: kill subagent, ask brain for new plan. */
@@ -352,6 +355,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         yield* Ref.set(softAlertAccRef, new Map())
         yield* Ref.set(modeRef, "select")
         yield* Ref.set(investigationReportRef, null)
+        yield* Ref.set(procedureTargetsRef, [])
       })
 
     // --- Event loop ---

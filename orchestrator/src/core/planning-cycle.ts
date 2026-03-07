@@ -21,6 +21,7 @@ export interface PlanningRefs {
   readonly stepStartTick: Ref.Ref<number>
   readonly mode: Ref.Ref<BrainMode>
   readonly investigationReport: Ref.Ref<string | null>
+  readonly procedureTargets: Ref.Ref<string[]>
 }
 
 interface PlanningServices {
@@ -55,6 +56,7 @@ export const maybeRequestPlan = (
 
       const mode = yield* Ref.get(refs.mode)
       const investigationReport = yield* Ref.get(refs.investigationReport)
+      const procedureTargets = yield* Ref.get(refs.procedureTargets)
 
       let additionalContext: string | undefined
       if (services.hooks?.beforePlan) {
@@ -107,6 +109,7 @@ export const maybeRequestPlan = (
         additionalContext,
         mode,
         investigationReport: investigationReport ?? undefined,
+        procedureTargets: procedureTargets.length > 0 ? procedureTargets : undefined,
       })
 
       yield* Ref.set(refs.previousFailure, null)
@@ -136,7 +139,7 @@ export const maybeRequestPlan = (
       yield* Ref.set(refs.step, 0)
       yield* Ref.set(refs.stepStartTick, tickCount)
 
-      // Mode transition: if brain selected a procedure, switch mode
+      // Mode transition: if brain selected a procedure, switch mode and persist targets
       if (finalPlan.procedure && finalPlan.procedure !== "select") {
         yield* logToConsole(
           services.char.name,
@@ -144,6 +147,7 @@ export const maybeRequestPlan = (
           `Mode transition: select → ${finalPlan.procedure} (targets: ${finalPlan.targets?.join(", ") ?? "none"})`,
         )
         yield* Ref.set(refs.mode, finalPlan.procedure)
+        yield* Ref.set(refs.procedureTargets, finalPlan.targets ?? [])
       }
     }
   })

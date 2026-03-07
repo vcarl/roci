@@ -86,6 +86,17 @@ ${ctx.background}
 ${ctx.values}`
 }
 
+function renderProcedureContext(ctx: PlanPromptContext): string {
+  const sections: string[] = []
+  if (ctx.procedureTargets && ctx.procedureTargets.length > 0) {
+    sections.push(`## Procedure Targets\nYou are focused on: ${ctx.procedureTargets.join(", ")}`)
+  }
+  if (ctx.investigationReport) {
+    sections.push(`## Investigation Findings\n${ctx.investigationReport.slice(-2000)}`)
+  }
+  return sections.join("\n\n")
+}
+
 // ── Plan prompts by mode ────────────────────────────────────
 
 function planPromptSelect(ctx: PlanPromptContext): string {
@@ -134,7 +145,7 @@ Respond with JSON:
 \`\`\``
   }
 
-  // Have investigation report — pick a procedure
+  // Have investigation report — MUST pick a procedure
   return `You are a software engineer maintaining ${state.repos.length} repositor${state.repos.length === 1 ? "y" : "ies"}.
 
 ## Current State
@@ -158,13 +169,15 @@ ${failureSection}
 
 ## Instructions
 
+You MUST pick a procedure now. Do NOT produce another "investigate" step — investigation is complete. The "procedure" field is REQUIRED.
+
 Based on your investigation, pick ONE procedure. Scope to specific items. Prefer focused over broad.
 
 Prioritize: CI failures > untriaged issues > pending reviews > new work.
 
 Each tick is ${ctx.tickIntervalSec} seconds.
 ${buildTimingSection(ctx)}
-Respond with JSON:
+Respond with JSON (the "procedure" field is REQUIRED):
 \`\`\`json
 {
   "procedure": "triage|feature|review",
@@ -193,11 +206,13 @@ ${renderStateSummary(state, situation)}
 
 ${ctx.briefing}
 
+${renderProcedureContext(ctx)}
+
 ${renderIdentitySection(ctx)}
 ${buildTimingSection(ctx)}
 ## Instructions
 
-Create steps to triage specific issues. Each step should target ONE issue: "Label and comment on #N in owner/repo".
+Create steps to triage specific issues. Each step should target ONE issue: "Label and comment on #N in owner/repo". Focus on the targets listed above.
 
 Do NOT create a step like "triage all issues" — be specific. Each tick is ${ctx.tickIntervalSec} seconds.
 
@@ -228,6 +243,8 @@ ${renderStateSummary(state, situation)}
 
 ${ctx.briefing}
 
+${renderProcedureContext(ctx)}
+
 ${renderIdentitySection(ctx)}
 ${buildTimingSection(ctx)}
 ## Worktree Workflow
@@ -239,7 +256,7 @@ ${buildTimingSection(ctx)}
 
 ## Instructions
 
-Plan steps for ONE issue. Keep changes small and reviewable. Run tests before creating a PR. Write good commit messages and PR descriptions.
+Plan steps for ONE issue — specifically the target listed above. Keep changes small and reviewable. Run tests before creating a PR. Write good commit messages and PR descriptions. Do NOT pick a different issue than the one selected during investigation.
 
 Each tick is ${ctx.tickIntervalSec} seconds.
 
@@ -270,6 +287,8 @@ function planPromptReview(ctx: PlanPromptContext): string {
 ${renderStateSummary(state, situation)}
 
 ${ctx.briefing}
+
+${renderProcedureContext(ctx)}
 
 ${renderIdentitySection(ctx)}
 ${buildTimingSection(ctx)}
@@ -331,13 +350,34 @@ ${ctx.identity.values.slice(0, 500)}`
 }
 
 function subagentInvestigate(ctx: SubagentPromptContext): string {
-  return `You are investigating repository state. This is a READ-ONLY task.
+  return `You are investigating repository state. This is a **READ-ONLY** task.
 
 ${subagentCommon(ctx)}
 
+## CRITICAL CONSTRAINTS
+
+You are ONLY allowed to READ. You must NOT:
+- Run \`gh issue edit\`, \`gh issue comment\`, \`gh issue close\`, or any issue-modifying command
+- Run \`gh pr review\`, \`gh pr comment\`, \`gh pr merge\`, \`gh pr close\`, or any PR-modifying command
+- Run \`git commit\`, \`git push\`, or any write operation
+- Create, modify, or delete any files
+- Spawn subagents that perform write operations
+
+If you use a prohibited command, the task is a FAILURE.
+
+## Allowed Commands
+
+- \`gh issue view <number>\` — read issue details
+- \`gh issue list\` — list issues
+- \`gh pr view <number>\` — read PR details
+- \`gh pr diff <number>\` — read PR diffs
+- \`gh pr list\` — list PRs
+- \`gh run list\` / \`gh run view <id>\` / \`gh run view <id> --log-failed\` — read CI status
+- \`cat\`, \`ls\`, \`find\`, \`grep\` — read files in the repo
+
 ## Instructions
 
-Use \`gh issue view\`, \`gh pr view\`, \`gh pr diff\`, \`gh run view\`, and file reads to gather information. Do NOT modify anything — no labels, no comments, no code changes.
+Gather information and report back. Your report will be used by the planning brain to decide what to do next. Do NOT take action — just report what you find.
 
 Report your findings in a structured format:
 - For each issue: number, title, key details from the body, suggested priority/labels

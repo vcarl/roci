@@ -16,6 +16,7 @@ export interface PlanPromptContext {
   additionalContext?: string
   mode: BrainMode
   investigationReport?: string
+  procedureTargets?: string[]
 }
 
 export interface InterruptPromptContext {
