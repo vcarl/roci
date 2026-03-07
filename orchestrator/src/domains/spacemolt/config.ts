@@ -1,8 +1,10 @@
 import * as path from "node:path"
 import { execSync } from "node:child_process"
-import type { DomainConfig, ContainerMount } from "../../core/domain-bundle.js"
+import { Effect } from "effect"
+import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "../../core/domain-bundle.js"
 import { spaceMoltDomainBundle, spaceMoltServiceLayer } from "./index.js"
 import { spaceMoltPhaseRegistry } from "./phases.js"
+import { readFileSync, existsSync } from "node:fs"
 
 const IMAGE_NAME = "spacemolt-player"
 
@@ -54,6 +56,43 @@ const containerSetup = (containerId: string) => {
   }
 }
 
+/** Per-character init procedure for SpaceMolt. */
+const spaceMoltInitProcedure: DomainProcedure<InitContext> = {
+  name: "spacemolt-init",
+  run: (ctx) =>
+    Effect.sync(() => {
+      const messages: ProcedureMessage[] = []
+      const credsPath = path.resolve(ctx.characterDir, "credentials.txt")
+
+      if (!existsSync(credsPath)) {
+        messages.push({ level: "error", text: `${ctx.characterName} — missing credentials.txt` })
+        return messages
+      }
+
+      const content = readFileSync(credsPath, "utf-8")
+      const hasUsername = /^Username:\s*.+/m.test(content)
+      const hasPassword = /^Password:\s*.+/m.test(content)
+
+      if (!hasUsername || !hasPassword) {
+        messages.push({ level: "error", text: `${ctx.characterName} — credentials.txt missing Username or Password line` })
+      } else {
+        messages.push({ level: "ok", text: `${ctx.characterName} — credentials.txt valid` })
+      }
+
+      return messages
+    }),
+}
+
+/** Instructions shown when no SpaceMolt characters are configured. */
+const spaceMoltCharacterSetupGuide = [
+  `Each character needs:`,
+  `  players/<name>/me/credentials.txt — Username: <user>\\nPassword: <pass>`,
+  `  players/<name>/me/background.md   — personality and identity`,
+  `  players/<name>/me/VALUES.md       — working values`,
+  `  players/<name>/me/DIARY.md        — empty diary template`,
+  `  players/<name>/me/SECRETS.md      — empty`,
+]
+
 /** Build the SpaceMolt domain config for a given project root. */
 export const spaceMoltDomainConfig = (projectRoot: string): DomainConfig => ({
   bundle: spaceMoltDomainBundle,
@@ -65,4 +104,6 @@ export const spaceMoltDomainConfig = (projectRoot: string): DomainConfig => ({
   dockerfilePath: ".devcontainer/Dockerfile",
   dockerContext: ".devcontainer",
   containerAddDirs: ["/work/shared", "/work/sm-cli"],
+  initProcedure: spaceMoltInitProcedure,
+  characterSetupGuide: spaceMoltCharacterSetupGuide,
 })

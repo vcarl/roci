@@ -16,7 +16,7 @@ const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
   taskList: () => "",
   isStepComplete: () => ({
     complete: false,
-    reason: "No skill registry configured",
+    reason: "No deterministic check — use your judgment based on state changes",
     matchedCondition: null,
     relevantState: {},
   }),
