@@ -18,7 +18,12 @@ const gitHubEventProcessor: EventProcessor = {
           currentBranch: repos[repoIndex]?.currentBranch ?? null,
         }
         return {
-          stateUpdate: () => ({ ...prev, repos, timestamp: Date.now() }) as unknown,
+          stateUpdate: () => ({
+            ...prev,
+            repos,
+            timestamp: Date.now(),
+            authenticatedUser: prev.authenticatedUser,
+          }) as unknown,
           isStateUpdate: true,
         } satisfies EventResult
       }

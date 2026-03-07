@@ -1,5 +1,5 @@
 import { Context, Effect, Queue, Schedule, Layer, Scope } from "effect"
-import type { GitHubState, GitHubEvent, RepoState, Issue, IssueComment, PullRequest, RepoCommit } from "./types.js"
+import type { GitHubState, GitHubEvent, RepoState, Issue, IssueComment, PullRequest, PullRequestReview, RepoCommit } from "./types.js"
 
 export interface GitHubClientConfig {
   readonly repos: Array<{ owner: string; repo: string }>
@@ -14,6 +14,7 @@ export interface GitHubClient {
     initialState: GitHubState
     tickIntervalSec: number
     initialTick: number
+    authenticatedUser: string
   }, never, Scope.Scope>
 }
 
@@ -41,6 +42,46 @@ const fetchJson = (url: string, headers: Record<string, string>) =>
     },
     catch: (e) => new Error(`GitHub API failed: ${e}`),
   })
+
+/** Derive review status from a list of reviews. */
+function deriveReviewStatus(reviews: PullRequestReview[]): PullRequest["reviewStatus"] {
+  if (reviews.length === 0) return "review_required"
+
+  // Get latest non-COMMENTED, non-DISMISSED review per reviewer
+  const latestByReviewer = new Map<string, PullRequestReview>()
+  for (const r of reviews) {
+    if (r.state === "COMMENTED" || r.state === "DISMISSED") continue
+    const existing = latestByReviewer.get(r.reviewer)
+    if (!existing || new Date(r.submittedAt) > new Date(existing.submittedAt)) {
+      latestByReviewer.set(r.reviewer, r)
+    }
+  }
+
+  if (latestByReviewer.size === 0) return "review_required"
+
+  const states = [...latestByReviewer.values()].map((r) => r.state)
+  if (states.includes("CHANGES_REQUESTED")) return "changes_requested"
+  if (states.includes("APPROVED")) return "approved"
+  return "review_required"
+}
+
+/** Derive check status from check runs API response. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function deriveCheckStatus(checkRuns: any[]): PullRequest["checks"] {
+  if (checkRuns.length === 0) return "pending"
+  const allSuccess = checkRuns.every(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (cr: any) => cr.status === "completed" && cr.conclusion === "success",
+  )
+  if (allSuccess) return "passing"
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const anyFailure = checkRuns.some(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (cr: any) => cr.status === "completed" && cr.conclusion === "failure",
+  )
+  if (anyFailure) return "failing"
+  return "pending"
+}
 
 /** Validate that a token looks plausible before making API calls. */
 function validateToken(token: string): Effect.Effect<void, Error> {
@@ -106,17 +147,70 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
       }
     })
 
-    // Map PRs
+    // Map PRs (initial pass — reviews/checks enriched below)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const openPRs: PullRequest[] = (rawPRs as any[]).map((pr: any) => ({
+    const basePRs: PullRequest[] = (rawPRs as any[]).map((pr: any) => ({
       number: pr.number,
       title: pr.title,
       author: pr.user?.login ?? "unknown",
       draft: pr.draft ?? false,
+      headSha: pr.head?.sha ?? "",
       checks: "pending" as const,
-      reviewStatus: "none" as const,
+      reviewStatus: "review_required" as const,
+      reviews: [] as PullRequestReview[],
       createdAt: pr.created_at,
     }))
+
+    // Enrich each PR with real reviews and check status (concurrency 5)
+    const openPRs: PullRequest[] = yield* Effect.all(
+      basePRs.map((pr) =>
+        Effect.gen(function* () {
+          const [rawReviews, rawCheckRuns] = yield* Effect.all([
+            fetchJson(`${base}/pulls/${pr.number}/reviews`, headers),
+            fetchJson(`${base}/commits/${pr.headSha}/check-runs`, headers),
+          ], { concurrency: 2 })
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const reviews: PullRequestReview[] = (rawReviews as any[]).map((r: any) => ({
+            reviewer: r.user?.login ?? "unknown",
+            state: r.state as PullRequestReview["state"],
+            submittedAt: r.submitted_at ?? "",
+          }))
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let checkRuns = ((rawCheckRuns as any).check_runs ?? []) as any[]
+
+          // Fall back to legacy status API if no check runs
+          if (checkRuns.length === 0 && pr.headSha) {
+            const rawStatus = yield* fetchJson(
+              `${base}/commits/${pr.headSha}/status`, headers,
+            ).pipe(Effect.catchAll(() => Effect.succeed({ state: "pending" })))
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const statusState = (rawStatus as any).state as string
+            const legacyChecks: PullRequest["checks"] =
+              statusState === "success" ? "passing"
+              : statusState === "failure" ? "failing"
+              : "pending"
+            return {
+              ...pr,
+              reviews,
+              reviewStatus: deriveReviewStatus(reviews),
+              checks: legacyChecks,
+            }
+          }
+
+          return {
+            ...pr,
+            reviews,
+            reviewStatus: deriveReviewStatus(reviews),
+            checks: deriveCheckStatus(checkRuns),
+          }
+        }).pipe(
+          Effect.catchAll(() => Effect.succeed(pr)),
+        ),
+      ),
+      { concurrency: 5 },
+    )
 
     // Map recent commits
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -167,13 +261,20 @@ export const GitHubClientLive = Layer.succeed(GitHubClientTag, {
         Effect.catchAll((e) => Effect.logWarning(`Token validation: ${e.message}`)),
       )
 
+      // Fetch authenticated username
+      const authenticatedUser = yield* fetchJson("https://api.github.com/user", apiHeaders(token)).pipe(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        Effect.map((u: any) => (u as { login: string }).login),
+        Effect.catchAll(() => Effect.succeed("")),
+      )
+
       // Initial fetch for all repos
       const initialRepos = yield* Effect.all(
         repos.map(({ owner, repo }) =>
           fetchRepoState(owner, repo, token).pipe(
             Effect.catchAll((e) => {
               return Effect.logWarning(`Initial fetch failed for ${owner}/${repo}: ${e.message}`).pipe(
-                Effect.map(() => ({
+                Effect.map((): RepoState => ({
                   owner, repo,
                   openIssues: [], openPRs: [],
                   ciStatus: "unknown" as const,
@@ -194,6 +295,7 @@ export const GitHubClientLive = Layer.succeed(GitHubClientTag, {
         repos: initialRepos,
         tick: 0,
         timestamp: Date.now(),
+        authenticatedUser,
       }
 
       // Background polling fiber — polls all repos each cycle
@@ -224,6 +326,7 @@ export const GitHubClientLive = Layer.succeed(GitHubClientTag, {
         initialState,
         tickIntervalSec: Math.round(config.pollIntervalMs / 1000),
         initialTick: 0,
+        authenticatedUser,
       }
     }),
 })

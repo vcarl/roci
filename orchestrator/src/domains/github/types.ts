@@ -20,13 +20,21 @@ export interface Issue {
   recentComments: IssueComment[]
 }
 
+export interface PullRequestReview {
+  reviewer: string
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED"
+  submittedAt: string
+}
+
 export interface PullRequest {
   number: number
   title: string
   author: string
   draft: boolean
+  headSha: string
   checks: "pending" | "passing" | "failing"
   reviewStatus: "none" | "approved" | "changes_requested" | "review_required"
+  reviews: PullRequestReview[]
   createdAt: string
 }
 
@@ -65,6 +73,7 @@ export interface GitHubState {
   repos: RepoState[]
   tick: number
   timestamp: number
+  authenticatedUser: string
 }
 
 // =====================================================
