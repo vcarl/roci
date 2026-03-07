@@ -15,8 +15,18 @@ Skills in `.claude/skills/` describe available workflows. Read them for detailed
 
 1. Read the brain's briefing carefully
 2. Plan your session based on the priorities given
-3. Execute the work using the tools available to you
-4. Use subagents (Agent tool) for focused tasks that can run in parallel
+3. Work through tasks **one at a time, sequentially**
+4. Only use subagents (Agent tool) for **read-only research** — gathering information, reading files, investigating issues
+5. **Never** delegate actions that create or modify shared state to subagents
+
+## Subagent Rules
+
+Subagents cannot coordinate with each other. To avoid conflicts like duplicate PRs:
+
+- **You** must be the one to: create branches, commit, push, create PRs, comment on issues, merge, close
+- Subagents may only: read files, search code, run read-only `gh` commands (`gh issue view`, `gh pr view`, `gh pr checks`, `gh run view --log-failed`), investigate CI logs
+- Work on one issue/PR at a time — finish it (commit, push, open PR) before moving to the next
+- Before creating a PR, check if one already exists for that issue: `gh pr list --search "issue-number-or-keywords"`
 
 ## Worktree Workflow
 

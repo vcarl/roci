@@ -55,11 +55,11 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
       const textAccumulator = yield* Ref.make<string[]>([])
 
       // Build claude flags — use stream-json for real-time output
+      // Note: run-step.sh already adds --permission-mode bypassPermissions
       const claudeArgs: string[] = [
         "--model", config.model,
         "--output-format", "stream-json",
         "--verbose",
-        "--dangerously-skip-permissions",
       ]
 
       if (config.model !== "opus") {
