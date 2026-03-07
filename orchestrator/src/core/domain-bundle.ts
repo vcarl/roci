@@ -1,4 +1,4 @@
-import type { Layer } from "effect"
+import type { Effect, Layer } from "effect"
 import type { EventProcessorTag } from "./event-source.js"
 import type { SituationClassifierTag } from "./situation.js"
 import type { StateRendererTag } from "./state-renderer.js"
@@ -7,6 +7,31 @@ import type { ContextHandlerTag } from "./context-handler.js"
 import type { PromptBuilderTag } from "./prompt-builder.js"
 import type { SkillRegistryTag } from "./skill.js"
 import type { PhaseRegistry } from "./phase.js"
+
+/** Result message from a domain procedure. */
+export interface ProcedureMessage {
+  readonly level: "ok" | "warning" | "error"
+  readonly text: string
+}
+
+/**
+ * A domain procedure — a named unit of work the orchestrator can invoke.
+ *
+ * Init is the first instance of this pattern. The steady-state event loop
+ * is conceptually the second. Future procedures (triage, documentation,
+ * feature development) will use the same shape with richer context.
+ */
+export interface DomainProcedure<Ctx, Result = ProcedureMessage[], R = never> {
+  readonly name: string
+  readonly run: (ctx: Ctx) => Effect.Effect<Result, unknown, R>
+}
+
+/** Context for init procedures. */
+export interface InitContext {
+  readonly projectRoot: string
+  readonly characterName: string
+  readonly characterDir: string
+}
 
 /** Complete set of domain service layers for the core state machine. */
 export type DomainBundle = Layer.Layer<
@@ -52,4 +77,10 @@ export interface DomainConfig {
   readonly firewallExtraDomains?: string[]
   /** Container --add-dir paths for claude subagent (colon-separated in ROCI_ADD_DIRS env var). */
   readonly containerAddDirs?: string[]
+  /** Per-character init procedure — validates domain-specific setup. */
+  readonly initProcedure?: DomainProcedure<InitContext>
+  /** Project-level init (create directories, etc). Runs once before per-character checks. */
+  readonly initProject?: (projectRoot: string) => Effect.Effect<ProcedureMessage[]>
+  /** Instructions shown when no characters are configured yet. */
+  readonly characterSetupGuide?: string[]
 }
