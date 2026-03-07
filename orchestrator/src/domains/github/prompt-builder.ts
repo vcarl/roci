@@ -13,6 +13,7 @@ import type { BrainMode } from "../../core/types.js"
 // ── Shared helpers ──────────────────────────────────────────
 
 function renderReposSummary(state: GitHubState, situation: GitHubSituation): string {
+  const authUser = state.authenticatedUser
   return state.repos.map((repo, i) => {
     const sit = situation.repos[i]
     const lines = [
@@ -30,7 +31,8 @@ function renderReposSummary(state: GitHubState, situation: GitHubSituation): str
     if (untriaged.length > 0) lines.push(`Untriaged: ${untriaged.length}`)
 
     const reviewable = repo.openPRs.filter(
-      (pr) => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required",
+      (pr) => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required"
+        && pr.author !== authUser,
     )
     if (reviewable.length > 0) lines.push(`PRs ready for review: ${reviewable.length}`)
 
@@ -39,6 +41,7 @@ function renderReposSummary(state: GitHubState, situation: GitHubSituation): str
 }
 
 function renderStateSummary(state: GitHubState, situation: GitHubSituation): string {
+  const authUser = state.authenticatedUser
   return state.repos.map((repo, i) => {
     const sit = situation.repos[i]
     const lines = [
@@ -58,7 +61,8 @@ function renderStateSummary(state: GitHubState, situation: GitHubSituation): str
       lines.push("PRs:")
       for (const pr of repo.openPRs) {
         const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
-        lines.push(`  #${pr.number}: ${pr.title} (${status})`)
+        const yours = authUser && pr.author === authUser ? " (yours)" : ""
+        lines.push(`  #${pr.number}: ${pr.title} (${status})${yours}`)
       }
     }
 
@@ -165,7 +169,7 @@ ${failureSection}
 
 - **triage**: Label and comment on issues. Steps should target specific issue numbers.
 - **feature**: Pick an issue, create branch, implement, test, PR. One issue per cycle.
-- **review**: Review a specific PR. Read diff, check correctness, submit feedback.
+- **review**: Review a specific PR (not authored by you). Read diff, check correctness, submit feedback.
 
 ## Instructions
 

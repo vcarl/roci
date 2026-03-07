@@ -10,11 +10,12 @@ const SITUATION_PRIORITY: GitHubSituationType[] = [
   "ci_failing", "triage_needed", "review_needed", "work_available", "idle",
 ]
 
-function classifyRepo(state: RepoState): RepoSituation {
+function classifyRepo(state: RepoState, authenticatedUser?: string): RepoSituation {
   const ciFailing = state.ciStatus === "failing"
   const untriagedIssues = state.openIssues.some((i) => !i.labels.includes("triaged"))
   const reviewablePRs = state.openPRs.some(
-    (pr) => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required",
+    (pr) => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required"
+      && pr.author !== authenticatedUser,
   )
   const cutoff = Date.now() - STALE_PR_DAYS * 24 * 60 * 60 * 1000
   const stalePRs = state.openPRs.some((pr) => new Date(pr.createdAt).getTime() < cutoff)
@@ -31,7 +32,7 @@ function classifyRepo(state: RepoState): RepoSituation {
 }
 
 function classify(state: GitHubState): GitHubSituation {
-  const repos = state.repos.map(classifyRepo)
+  const repos = state.repos.map((r) => classifyRepo(r, state.authenticatedUser))
 
   // Overall situation = worst across all repos
   const worstType = repos.reduce<GitHubSituationType>((worst, r) => {
@@ -78,8 +79,10 @@ function briefing(state: GitHubState, situation: GitHubSituation): string {
 
     // PRs breakdown
     if (repo.openPRs.length > 0) {
+      const authUser = state.authenticatedUser
       const reviewable = repo.openPRs.filter(
-        pr => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required",
+        pr => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required"
+          && pr.author !== authUser,
       )
       const failing = repo.openPRs.filter(pr => pr.checks === "failing")
       const drafts = repo.openPRs.filter(pr => pr.draft)
@@ -90,7 +93,8 @@ function briefing(state: GitHubState, situation: GitHubSituation): string {
       lines.push(`PRs: ${summaryParts.join(", ")}`)
       for (const pr of repo.openPRs) {
         const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
-        lines.push(`  #${pr.number}: ${pr.title} (${status})`)
+        const yours = authUser && pr.author === authUser ? " (yours)" : ""
+        lines.push(`  #${pr.number}: ${pr.title} (${status})${yours}`)
       }
     } else {
       lines.push("PRs: none")

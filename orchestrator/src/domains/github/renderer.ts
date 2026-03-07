@@ -39,6 +39,7 @@ function richSnapshot(state: GitHubState): Record<string, unknown> {
         draft: pr.draft,
         checks: pr.checks,
         reviewStatus: pr.reviewStatus,
+        reviewers: pr.reviews.map((rv) => `${rv.reviewer}:${rv.state}`),
       })),
     })),
   }

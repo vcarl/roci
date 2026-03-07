@@ -142,10 +142,16 @@ const startupPhase = {
         token: ghConfig.token,
       }
 
-      const { events, initialState, tickIntervalSec, initialTick } =
+      const { events, initialState, tickIntervalSec, initialTick, authenticatedUser } =
         yield* ghClient.connect(clientConfig)
 
-      yield* logToConsole(context.char.name, "orchestrator", `Connected to GitHub API`)
+      yield* logToConsole(
+        context.char.name,
+        "orchestrator",
+        authenticatedUser
+          ? `Authenticated as ${authenticatedUser} for ${context.char.name}`
+          : `Connected to GitHub API (could not determine username)`,
+      )
 
       // Clone all repos (shared) and set up worktree directories (per-character)
       for (let i = 0; i < parsedRepos.length; i++) {
@@ -177,7 +183,7 @@ const startupPhase = {
         _tag: "Continue",
         next: "active",
         connection,
-        data: { ghToken: ghConfig.token },
+        data: { ghToken: ghConfig.token, ghUsername: authenticatedUser },
       } as PhaseResult
     }),
 }
