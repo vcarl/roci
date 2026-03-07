@@ -266,6 +266,7 @@ const activePhase = {
         const cycleResult = yield* runCycle({
           containerId: context.containerId,
           playerName: context.char.name,
+          char: context.char,
           brainSystemPrompt,
           bodySystemPrompt,
           brainModel: "opus",

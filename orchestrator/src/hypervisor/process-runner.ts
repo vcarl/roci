@@ -1,7 +1,10 @@
-import { Effect, Stream, Chunk, Fiber } from "effect"
+import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../services/Claude.js"
+import { CharacterLog } from "../logging/log-writer.js"
+import { demuxEvent } from "../logging/log-demux.js"
+import { logToConsole } from "../logging/console-renderer.js"
 
 /**
  * Shell-safe literal using $'...' ANSI-C quoting.
@@ -22,19 +25,40 @@ function shellEscape(s: string): string {
 }
 
 /**
- * Run `claude -p` inside a container with a timeout.
- * Collects full stdout as text. On timeout, interrupts and returns partial output.
+ * Parse a stream-json line, returning the parsed object or null.
  */
-export const runTurn = (config: TurnConfig): Effect.Effect<TurnResult, ClaudeError, CommandExecutor.CommandExecutor> =>
+function parseStreamJson(line: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(line) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Run `claude -p` inside a container with a timeout.
+ * Streams output through the log demux for real-time console visibility.
+ * Collects text blocks as the final output string.
+ * On timeout, interrupts and returns whatever text was accumulated.
+ */
+export const runTurn = (config: TurnConfig): Effect.Effect<
+  TurnResult,
+  ClaudeError,
+  CommandExecutor.CommandExecutor | CharacterLog
+> =>
   Effect.scoped(
     Effect.gen(function* () {
       const executor = yield* CommandExecutor.CommandExecutor
       const start = Date.now()
 
-      // Build claude flags
+      // Accumulate text output from assistant messages
+      const textAccumulator = yield* Ref.make<string[]>([])
+
+      // Build claude flags — use stream-json for real-time output
       const claudeArgs: string[] = [
         "--model", config.model,
-        "--output-format", "text",
+        "--output-format", "stream-json",
+        "--verbose",
         "--dangerously-skip-permissions",
       ]
 
@@ -42,7 +66,6 @@ export const runTurn = (config: TurnConfig): Effect.Effect<TurnResult, ClaudeErr
         claudeArgs.push("--effort", "low")
       }
 
-      // System prompt via flag
       if (config.systemPrompt) {
         claudeArgs.push("--system-prompt", shellEscape(config.systemPrompt))
       }
@@ -65,13 +88,6 @@ export const runTurn = (config: TurnConfig): Effect.Effect<TurnResult, ClaudeErr
 
       const process = yield* executor.start(cmd)
 
-      // Fork stdout collection
-      const stdoutFiber = yield* process.stdout.pipe(
-        Stream.decodeText(),
-        Stream.runCollect,
-        Effect.map(Chunk.join("")),
-      ).pipe(Effect.fork)
-
       // Fork stderr drain
       const stderrFiber = yield* process.stderr.pipe(
         Stream.decodeText(),
@@ -79,33 +95,55 @@ export const runTurn = (config: TurnConfig): Effect.Effect<TurnResult, ClaudeErr
         Effect.map(Chunk.join("")),
       ).pipe(Effect.fork)
 
-      // Race: stdout collection vs timeout
+      // Process stdout: split into lines, demux each for console output,
+      // accumulate text blocks for the final output string
+      const source = config.role as "brain" | "body"
+      const log = yield* CharacterLog
+
+      const streamFiber = yield* process.stdout.pipe(
+        Stream.decodeText(),
+        Stream.splitLines,
+        Stream.filter((line) => line.trim().length > 0),
+        Stream.mapEffect((line) =>
+          Effect.gen(function* () {
+            // Raw capture to stream.jsonl
+            yield* log.raw(config.char, line)
+
+            const event = parseStreamJson(line)
+            if (event) {
+              yield* demuxEvent(config.char, event, source, textAccumulator)
+            }
+          }),
+        ),
+        Stream.runDrain,
+      ).pipe(Effect.fork)
+
+      // Race: stream processing vs timeout
       const timeoutEffect = Effect.sleep(config.timeoutMs).pipe(
         Effect.map(() => ({ timedOut: true as const })),
       )
 
-      const completionEffect = Fiber.join(stdoutFiber).pipe(
-        Effect.map((output) => ({ timedOut: false as const, output })),
+      const completionEffect = Fiber.join(streamFiber).pipe(
+        Effect.map(() => ({ timedOut: false as const })),
       )
 
       const raceResult = yield* Effect.race(completionEffect, timeoutEffect)
 
-      let output: string
       let timedOut: boolean
 
       if (raceResult.timedOut) {
-        // Timeout: interrupt the process, collect whatever we have
         timedOut = true
-        yield* Fiber.interrupt(stdoutFiber).pipe(Effect.catchAll(() => Effect.void))
+        yield* Fiber.interrupt(streamFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* Fiber.interrupt(stderrFiber).pipe(Effect.catchAll(() => Effect.void))
-        // Kill the docker exec process
-        output = "(timed out — partial output may be unavailable)"
+        yield* logToConsole(config.char.name, config.role, "TIMED OUT — interrupting")
       } else {
         timedOut = false
-        output = raceResult.output
-        // Wait for process to finish
         yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.succeed("")))
       }
+
+      // Collect accumulated text
+      const textParts = yield* Ref.get(textAccumulator)
+      const output = textParts.join("\n")
 
       const durationMs = Date.now() - start
 

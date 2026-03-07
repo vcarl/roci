@@ -4,20 +4,21 @@ import type { CycleConfig, CycleResult } from "./types.js"
 import { runTurn } from "./process-runner.js"
 import { summarizeTimeout } from "./timeout-summarizer.js"
 import { Claude, ClaudeError } from "../services/Claude.js"
+import { CharacterLog } from "../logging/log-writer.js"
 import { logToConsole } from "../logging/console-renderer.js"
 
 /**
  * Run a single brain/body cycle:
  * 1. Build the brain's input prompt
- * 2. Run brain (Opus) with timeout
+ * 2. Run brain (Opus) with timeout — streams output to console
  * 3. If brain timed out, summarize
- * 4. Run body (Sonnet) with brain output as prompt
+ * 4. Run body (Sonnet) with brain output as prompt — streams output to console
  * 5. If body timed out, summarize
  * 6. Return results
  */
 export const runCycle = (
   config: CycleConfig,
-): Effect.Effect<CycleResult, ClaudeError | Error, Claude | CommandExecutor.CommandExecutor> =>
+): Effect.Effect<CycleResult, ClaudeError | Error, Claude | CommandExecutor.CommandExecutor | CharacterLog> =>
   Effect.gen(function* () {
     const playerName = config.playerName
 
@@ -35,6 +36,8 @@ export const runCycle = (
       model: config.brainModel,
       timeoutMs: config.brainTimeoutMs,
       env: config.env,
+      char: config.char,
+      role: "brain",
     })
 
     let brainOutput = brainResult.output
@@ -69,6 +72,8 @@ export const runCycle = (
       model: config.bodyModel,
       timeoutMs: config.bodyTimeoutMs,
       env: config.env,
+      char: config.char,
+      role: "body",
     })
 
     let bodySummary: string | undefined

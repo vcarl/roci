@@ -6,7 +6,7 @@ import { ProjectRoot } from "../services/ProjectRoot.js"
 
 export interface LogEntry {
   timestamp: string
-  source: "subagent" | "brain" | "monitor" | "dream" | "dinner" | "orchestrator" | "ws"
+  source: "subagent" | "brain" | "body" | "monitor" | "dream" | "dinner" | "orchestrator" | "ws"
   character: string
   [key: string]: unknown
 }
