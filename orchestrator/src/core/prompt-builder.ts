@@ -26,6 +26,8 @@ export interface InterruptPromptContext {
   currentPlan: Plan | null
   briefing: string
   background: string
+  mode: BrainMode
+  procedureTargets?: string[]
 }
 
 export interface EvaluatePromptContext {

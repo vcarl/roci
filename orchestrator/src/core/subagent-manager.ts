@@ -104,84 +104,70 @@ export const evaluateCompletedSubagent = (
           yield* services.hooks.afterStep(step, conditionCheck)
         }
 
-        // Capture investigation report before clearing
-        if (services.investigationReportRef && currentStep.task === "investigate") {
-          const currentMode = services.modeRef ? yield* Ref.get(services.modeRef) : "select"
-          if (currentMode === "select") {
-            yield* Ref.set(services.investigationReportRef, report)
-          }
-        }
-
-        yield* Ref.set(planRefs.step, step + 1)
-        yield* Ref.set(subagentRefs.fiber, null)
-        yield* Ref.set(subagentRefs.report, "")
-        yield* Ref.set(subagentRefs.spawnState, null)
-        return
-      }
-
-      const mode = services.modeRef ? yield* Ref.get(services.modeRef) : ("select" as BrainMode)
-
-      const result: StepCompletionResult = yield* brainEvaluate.execute({
-        step: currentStep,
-        subagentReport: report,
-        state,
-        stateBefore,
-        stateDiff: diffStr,
-        conditionCheck,
-        ticksConsumed: timing.ticksConsumed,
-        ticksBudgeted: timing.ticksBudgeted,
-        tickIntervalSec: services.tickIntervalSec,
-        mode,
-      }).pipe(
-        Effect.catchTag("ClaudeError", (e) =>
-          Effect.succeed({
-            complete: true as const,
-            reason: `Brain evaluation failed (${e.message}), trusting subagent completion`,
-            matchedCondition: null,
-            relevantState: services.renderer.snapshot(state),
-          }),
-        ),
-      )
-
-      yield* recordStepOutcome(timingRefs.stepTimingHistory, result.complete, result.reason, diffStr)
-      yield* logStepResult(services.char.name, step, result)
-
-      yield* log.action(services.char, {
-        timestamp: new Date().toISOString(),
-        source: "monitor",
-        character: services.char.name,
-        type: "step_complete",
-        stepIndex: step,
-        task: currentStep.task,
-        goal: currentStep.goal,
-        successCondition: currentStep.successCondition,
-        successConditionMet: result.complete,
-        reason: result.reason,
-        stateSnapshot: result.relevantState,
-        subagentReport: report.slice(-500),
-      })
-
-      const finalResult = services.hooks?.afterStep
-        ? yield* services.hooks.afterStep(step, result)
-        : result
-
-      if (finalResult.complete) {
         yield* Ref.set(planRefs.step, step + 1)
       } else {
-        const failureContext = `Step ${step + 1} [${currentStep.task}] "${currentStep.goal}" failed: ${finalResult.reason}\nSubagent report: ${report.slice(-300) || "(no report)"}`
-        yield* Ref.set(planRefs.previousFailure, failureContext)
-        yield* Ref.set(planRefs.plan, null)
-        yield* Ref.set(planRefs.step, 0)
-      }
-    }
+        const mode = services.modeRef ? yield* Ref.get(services.modeRef) : ("select" as BrainMode)
 
-    // Capture investigation report when an investigate task completes in select mode
-    if (services.investigationReportRef && plan) {
-      const currentMode = services.modeRef ? yield* Ref.get(services.modeRef) : "select"
-      const completedStep = step < plan.steps.length ? plan.steps[step] : null
-      if (currentMode === "select" && completedStep?.task === "investigate") {
-        const report = yield* Ref.get(subagentRefs.report)
-        yield* Ref.set(services.investigationReportRef, report)
+        const result: StepCompletionResult = yield* brainEvaluate.execute({
+          step: currentStep,
+          subagentReport: report,
+          state,
+          stateBefore,
+          stateDiff: diffStr,
+          conditionCheck,
+          ticksConsumed: timing.ticksConsumed,
+          ticksBudgeted: timing.ticksBudgeted,
+          tickIntervalSec: services.tickIntervalSec,
+          mode,
+        }).pipe(
+          Effect.catchTag("ClaudeError", (e) =>
+            Effect.succeed({
+              complete: true as const,
+              reason: `Brain evaluation failed (${e.message}), trusting subagent completion`,
+              matchedCondition: null,
+              relevantState: services.renderer.snapshot(state),
+            }),
+          ),
+        )
+
+        yield* recordStepOutcome(timingRefs.stepTimingHistory, result.complete, result.reason, diffStr)
+        yield* logStepResult(services.char.name, step, result)
+
+        yield* log.action(services.char, {
+          timestamp: new Date().toISOString(),
+          source: "monitor",
+          character: services.char.name,
+          type: "step_complete",
+          stepIndex: step,
+          task: currentStep.task,
+          goal: currentStep.goal,
+          successCondition: currentStep.successCondition,
+          successConditionMet: result.complete,
+          reason: result.reason,
+          stateSnapshot: result.relevantState,
+          subagentReport: report.slice(-500),
+        })
+
+        const finalResult = services.hooks?.afterStep
+          ? yield* services.hooks.afterStep(step, result)
+          : result
+
+        if (finalResult.complete) {
+          yield* Ref.set(planRefs.step, step + 1)
+        } else {
+          const failureContext = `Step ${step + 1} [${currentStep.task}] "${currentStep.goal}" failed: ${finalResult.reason}\nSubagent report: ${report.slice(-300) || "(no report)"}`
+          yield* Ref.set(planRefs.previousFailure, failureContext)
+          yield* Ref.set(planRefs.plan, null)
+          yield* Ref.set(planRefs.step, 0)
+        }
+      }
+
+      // Capture investigation report when an investigate task completes in select mode
+      if (services.investigationReportRef && currentStep.task === "investigate") {
+        const currentMode = services.modeRef ? yield* Ref.get(services.modeRef) : "select"
+        if (currentMode === "select") {
+          yield* Ref.set(services.investigationReportRef, report)
+        }
       }
     }
 

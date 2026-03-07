@@ -529,11 +529,15 @@ const gitHubPromptBuilder: PromptBuilder = {
       ? `Current plan:\n${ctx.currentPlan.steps.map((s, i) => `${i + 1}. [${s.task}] ${s.goal}`).join("\n")}`
       : "No active plan."
 
+    const modeContext = ctx.mode !== "select"
+      ? `\n## Interrupted Context\nYou were in **${ctx.mode}** mode${ctx.procedureTargets?.length ? ` targeting ${ctx.procedureTargets.join(", ")}` : ""}. A critical interrupt occurred. You are being reset to **select** mode — investigate and pick a new procedure.\n`
+      : ""
+
     return `INTERRUPT: Critical alerts require immediate attention.
 
 ## Alerts
 ${ctx.alerts.map((a) => `[${a.priority}] ${a.message} (suggested: ${a.suggestedAction ?? "none"})`).join("\n")}
-
+${modeContext}
 ## Current State
 ${ctx.briefing}
 

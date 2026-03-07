@@ -74,6 +74,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
     const modeRef = yield* Ref.make<BrainMode>("select")
     const investigationReportRef = yield* Ref.make<string | null>(null)
     const procedureTargetsRef = yield* Ref.make<string[]>([])
+    const procedureStartStateRef = yield* Ref.make<Record<string, unknown> | null>(null)
 
     // --- Domain state ---
     const gameStateRef = yield* Ref.make<DomainState>(config.initialState)
@@ -96,8 +97,9 @@ export const runStateMachine = (config: StateMachineConfig) =>
       mode: modeRef,
       investigationReport: investigationReportRef,
       procedureTargets: procedureTargetsRef,
+      procedureStartState: procedureStartStateRef,
     }
-    const planningServices = { char: config.char, tickIntervalSec: config.tickIntervalSec, hooks }
+    const planningServices = { char: config.char, tickIntervalSec: config.tickIntervalSec, hooks, renderer }
     const evalServices = {
       renderer,
       classifier,
@@ -178,13 +180,32 @@ export const runStateMachine = (config: StateMachineConfig) =>
         yield* awaitApproval(`procedure '${mode}' complete, spawning diary subagent`)
         yield* logToConsole(config.char.name, "monitor", `Procedure '${mode}' complete, writing diary...`)
 
+        const investigationReport = yield* Ref.get(investigationReportRef)
+        const targets = yield* Ref.get(procedureTargetsRef)
+        const timingHistory = yield* Ref.get(stepTimingHistoryRef)
+        const startState = yield* Ref.get(procedureStartStateRef)
+        const currentState = yield* Ref.get(gameStateRef)
+        const stateDiffSection = startState
+          ? `\n## State Changes\n${renderer.stateDiff(startState, renderer.richSnapshot(currentState))}`
+          : ""
+
+        const timingSection = timingHistory.length > 0
+          ? `\n## Step Timing\n${timingHistory.map(h => {
+              let line = `- [${h.task}] "${h.goal}" — ${h.ticksConsumed}/${h.ticksBudgeted} ticks`
+              if (h.succeeded !== undefined) line += ` → ${h.succeeded ? "SUCCESS" : "FAILED"}${h.reason ? `: ${h.reason}` : ""}`
+              return line
+            }).join("\n")}`
+          : ""
+
         const diaryPrompt = `Update ./me/DIARY.md reflecting on what you accomplished, what you learned, and what to focus on next.
 
 ## Completed Procedure: ${mode}
 ${plan.reasoning}
-
+${targets.length > 0 ? `\n## Targets\n${targets.join(", ")}` : ""}
+${investigationReport ? `\n## Investigation Findings\n${investigationReport.slice(-1500)}` : ""}
 ## Steps Completed
 ${plan.steps.map((s, i) => `${i + 1}. [${s.task}] ${s.goal}`).join("\n")}
+${timingSection}${stateDiffSection}
 
 Write a brief diary entry summarizing outcomes and lessons learned. Append to the existing diary, don't replace it.`
 
@@ -229,6 +250,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         }
 
         yield* logToConsole(config.char.name, "monitor", `INTERRUPT: ${criticals.map((a) => a.message).join("; ")}`)
+        yield* awaitApproval(`INTERRUPT: ${criticals.map(a => a.message).join("; ")}`)
 
         yield* log.thought(config.char, {
           timestamp: new Date().toISOString(),
@@ -241,6 +263,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
 
         yield* killSubagent(subagentFiberRef)
 
+        const mode = yield* Ref.get(modeRef)
+        const procedureTargets = yield* Ref.get(procedureTargetsRef)
         const background = yield* charFs.readBackground(config.char)
         const newPlan = yield* brainInterrupt.execute({
           state,
@@ -249,6 +273,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           currentPlan: yield* Ref.get(planRef),
           briefing,
           background,
+          mode,
+          procedureTargets: procedureTargets.length > 0 ? procedureTargets : undefined,
         })
 
         yield* log.thought(config.char, {
@@ -266,6 +292,11 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         yield* Ref.set(stepRef, 0)
         yield* Ref.set(stepStartTickRef, tickCount)
         yield* Ref.set(softAlertAccRef, new Map())
+
+        // Reset mode — interrupts are "start fresh" events
+        yield* Ref.set(modeRef, "select")
+        yield* Ref.set(investigationReportRef, null)
+        yield* Ref.set(procedureTargetsRef, [])
       })
 
     // --- Main event processing ---

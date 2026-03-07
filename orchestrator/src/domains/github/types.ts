@@ -2,13 +2,22 @@
 // GitHub Domain Types
 // =====================================================
 
+export interface IssueComment {
+  author: string
+  createdAt: string
+  body: string
+}
+
 export interface Issue {
   number: number
   title: string
   labels: string[]
   author: string
   createdAt: string
+  updatedAt: string
   body: string
+  commentCount: number
+  recentComments: IssueComment[]
 }
 
 export interface PullRequest {
@@ -25,12 +34,20 @@ export interface PullRequest {
 // Per-Repo State (from GitHub API + local)
 // =====================================================
 
+export interface RepoCommit {
+  sha: string
+  message: string
+  author: string
+  date: string
+}
+
 export interface RepoState {
   owner: string
   repo: string
   openIssues: Issue[]
   openPRs: PullRequest[]
   ciStatus: "passing" | "failing" | "unknown"
+  recentCommits: RepoCommit[]
   recentActivity: string[]
   /** Path to the shared clone inside the container. */
   clonePath: string

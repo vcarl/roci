@@ -5,6 +5,7 @@ import { CharacterFs } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import type { DomainState, DomainSituation } from "./domain-types.js"
+import type { StateRenderer } from "./state-renderer.js"
 import type { BrainMode, Plan, StepTiming, Alert } from "./types.js"
 import type { LifecycleHooks, PlanContext } from "./lifecycle.js"
 import { brainPlan } from "./brain.js"
@@ -22,12 +23,14 @@ export interface PlanningRefs {
   readonly mode: Ref.Ref<BrainMode>
   readonly investigationReport: Ref.Ref<string | null>
   readonly procedureTargets: Ref.Ref<string[]>
+  readonly procedureStartState: Ref.Ref<Record<string, unknown> | null>
 }
 
 interface PlanningServices {
   readonly char: CharacterConfig
   readonly tickIntervalSec: number
   readonly hooks?: LifecycleHooks
+  readonly renderer?: StateRenderer
 }
 
 /** Request a new plan from the brain if idle and no plan exists. */
@@ -87,6 +90,12 @@ export const maybeRequestPlan = (
         services.char.name,
         "brain-input",
         [
+          mode !== "select" || investigationReport
+            ? `--- Mode ---\n${mode}${investigationReport ? ` (investigation report: ${investigationReport.length} chars)` : ""}`
+            : null,
+          procedureTargets.length > 0
+            ? `--- Procedure Targets ---\n${procedureTargets.join(", ")}`
+            : null,
           `--- Briefing ---\n${briefing}`,
           `--- Diary (last 500 chars) ---\n${diary.slice(-500)}`,
           previousFailure ? `--- Previous Failure ---\n${previousFailure}` : null,
@@ -148,6 +157,9 @@ export const maybeRequestPlan = (
         )
         yield* Ref.set(refs.mode, finalPlan.procedure)
         yield* Ref.set(refs.procedureTargets, finalPlan.targets ?? [])
+        if (services.renderer) {
+          yield* Ref.set(refs.procedureStartState, services.renderer.richSnapshot(state))
+        }
       }
     }
   })

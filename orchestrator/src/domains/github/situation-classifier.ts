@@ -44,12 +44,75 @@ function classify(state: GitHubState): GitHubSituation {
 }
 
 function briefing(state: GitHubState, situation: GitHubSituation): string {
-  const lines = state.repos.map((repo, i) => {
+  const sections = state.repos.map((repo, i) => {
     const sit = situation.repos[i]
-    const branch = repo.currentBranch ?? "?"
-    return `${repo.owner}/${repo.repo}: ${repo.openIssues.length} issues, ${repo.openPRs.length} PRs, CI:${repo.ciStatus}, branch:${branch} → ${sit?.type ?? "?"}`
+    const lines: string[] = []
+
+    // Header with situation type
+    const branch = repo.currentBranch ?? "none"
+    lines.push(`## ${repo.owner}/${repo.repo} — ${sit?.type ?? "?"}`)
+    lines.push(`CI: ${repo.ciStatus} | Branch: ${branch} | Worktree: ${repo.worktreePath ?? "none"}`)
+
+    // Issues breakdown — only show issues active in the past 14 days
+    if (repo.openIssues.length > 0) {
+      const recencyCutoff = Date.now() - 14 * 24 * 60 * 60 * 1000
+      const recent = repo.openIssues.filter(i => new Date(i.updatedAt).getTime() >= recencyCutoff)
+      const older = repo.openIssues.length - recent.length
+      const untriaged = repo.openIssues.filter(i => !i.labels.includes("triaged"))
+      const triaged = repo.openIssues.filter(i => i.labels.includes("triaged"))
+      lines.push(`Issues: ${repo.openIssues.length} open (${untriaged.length} untriaged, ${triaged.length} triaged)`)
+      for (const issue of recent) {
+        const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : ""
+        const commentNote = issue.commentCount > 0 ? ` (${issue.commentCount} comments)` : ""
+        lines.push(`  #${issue.number}: ${issue.title}${labels}${commentNote}`)
+        for (const c of issue.recentComments.slice(0, 2)) {
+          lines.push(`    @${c.author}: ${c.body.slice(0, 100)}${c.body.length > 100 ? "..." : ""}`)
+        }
+      }
+      if (older > 0) {
+        lines.push(`  (${older} older issue${older === 1 ? "" : "s"} not shown)`)
+      }
+    } else {
+      lines.push("Issues: none")
+    }
+
+    // PRs breakdown
+    if (repo.openPRs.length > 0) {
+      const reviewable = repo.openPRs.filter(
+        pr => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required",
+      )
+      const failing = repo.openPRs.filter(pr => pr.checks === "failing")
+      const drafts = repo.openPRs.filter(pr => pr.draft)
+      const summaryParts: string[] = [`${repo.openPRs.length} open`]
+      if (reviewable.length > 0) summaryParts.push(`${reviewable.length} ready for review`)
+      if (failing.length > 0) summaryParts.push(`${failing.length} failing`)
+      if (drafts.length > 0) summaryParts.push(`${drafts.length} draft`)
+      lines.push(`PRs: ${summaryParts.join(", ")}`)
+      for (const pr of repo.openPRs) {
+        const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
+        lines.push(`  #${pr.number}: ${pr.title} (${status})`)
+      }
+    } else {
+      lines.push("PRs: none")
+    }
+
+    // Recent commits
+    if (repo.recentCommits.length > 0) {
+      lines.push(`Recent commits:`)
+      for (const c of repo.recentCommits.slice(0, 5)) {
+        lines.push(`  ${c.sha} ${c.message} (${c.author})`)
+      }
+    }
+
+    // Recent activity
+    if (repo.recentActivity.length > 0) {
+      lines.push(`Recent: ${repo.recentActivity.slice(-3).join("; ")}`)
+    }
+
+    return lines.join("\n")
   })
-  return lines.join("\n")
+
+  return sections.join("\n\n")
 }
 
 const gitHubSituationClassifier: SituationClassifier = {

@@ -1,5 +1,5 @@
 import { Context, Effect, Queue, Schedule, Layer, Scope } from "effect"
-import type { GitHubState, GitHubEvent, RepoState, Issue, PullRequest } from "./types.js"
+import type { GitHubState, GitHubEvent, RepoState, Issue, IssueComment, PullRequest, RepoCommit } from "./types.js"
 
 export interface GitHubClientConfig {
   readonly repos: Array<{ owner: string; repo: string }>
@@ -60,27 +60,51 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
     const headers = apiHeaders(token)
     const base = `https://api.github.com/repos/${owner}/${repo}`
 
-    // Parallel fetch: issues, PRs, workflow runs
-    const [rawIssues, rawPRs, rawRuns] = yield* Effect.all([
+    // Parallel fetch: issues, PRs, workflow runs, recent commits
+    const [rawIssues, rawPRs, rawRuns, rawCommits] = yield* Effect.all([
       fetchJson(`${base}/issues?state=open&per_page=30`, headers),
       fetchJson(`${base}/pulls?state=open&per_page=30`, headers),
       fetchJson(`${base}/actions/runs?per_page=5&branch=main`, headers),
-    ], { concurrency: 3 })
+      fetchJson(`${base}/commits?per_page=10`, headers),
+    ], { concurrency: 4 })
 
     // Map issues (filter out PRs — GitHub returns PRs in the issues endpoint)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const openIssues: Issue[] = (rawIssues as any[])
+    const issuesWithoutPRs = (rawIssues as any[]).filter((i: any) => !i.pull_request)
+
+    // Fetch recent comments for each issue (last 3 per issue, in parallel)
+    const issueCommentResults = yield* Effect.all(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .filter((i: any) => !i.pull_request)
+      issuesWithoutPRs.map((i: any) =>
+        fetchJson(`${base}/issues/${i.number}/comments?per_page=3&direction=desc`, headers).pipe(
+          Effect.catchAll(() => Effect.succeed([])),
+        ),
+      ),
+      { concurrency: 5 },
+    )
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const openIssues: Issue[] = issuesWithoutPRs.map((i: any, idx: number) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((i: any) => ({
+      const rawComments = (issueCommentResults[idx] as any[]) ?? []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recentComments: IssueComment[] = rawComments.map((c: any) => ({
+        author: c.user?.login ?? "unknown",
+        createdAt: c.created_at,
+        body: (c.body ?? "").slice(0, 300),
+      }))
+      return {
         number: i.number,
         title: i.title,
         labels: i.labels?.map((l: { name: string }) => l.name) ?? [],
         author: i.user?.login ?? "unknown",
         createdAt: i.created_at,
+        updatedAt: i.updated_at,
         body: (i.body ?? "").slice(0, 500),
-      }))
+        commentCount: i.comments ?? 0,
+        recentComments,
+      }
+    })
 
     // Map PRs
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -92,6 +116,15 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
       checks: "pending" as const,
       reviewStatus: "none" as const,
       createdAt: pr.created_at,
+    }))
+
+    // Map recent commits
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recentCommits: RepoCommit[] = (rawCommits as any[]).slice(0, 10).map((c: any) => ({
+      sha: (c.sha as string).slice(0, 7),
+      message: (c.commit?.message ?? "").split("\n")[0].slice(0, 120),
+      author: c.commit?.author?.name ?? c.author?.login ?? "unknown",
+      date: c.commit?.author?.date ?? "",
     }))
 
     // Derive CI status from most recent workflow run
@@ -110,6 +143,7 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
       openIssues,
       openPRs,
       ciStatus,
+      recentCommits,
       recentActivity: [],
       clonePath: "",
       worktreePath: null,
@@ -143,6 +177,7 @@ export const GitHubClientLive = Layer.succeed(GitHubClientTag, {
                   owner, repo,
                   openIssues: [], openPRs: [],
                   ciStatus: "unknown" as const,
+                  recentCommits: [],
                   recentActivity: [],
                   clonePath: "",
                   worktreePath: null,
