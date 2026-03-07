@@ -2,14 +2,14 @@
  * Domain-agnostic types for the plan/act/evaluate loop.
  */
 
-/** Brain mode — controls which prompt set the brain uses. */
-export type BrainMode = "select" | "triage" | "feature" | "review"
+/** Brain mode — controls which prompt set the brain uses. Dynamically discovered from procedure files. */
+export type BrainMode = string
 
 export interface Plan {
   steps: PlanStep[]
   reasoning: string
-  procedure?: BrainMode  // set during select mode when brain picks a procedure
-  targets?: string[]     // what the procedure focuses on (issue/PR numbers, etc.)
+  procedure?: string  // set during select mode when brain picks a procedure
+  targets?: string[]  // what the procedure focuses on (issue/PR numbers, etc.)
 }
 
 export interface PlanStep {
