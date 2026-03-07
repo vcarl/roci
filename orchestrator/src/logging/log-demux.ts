@@ -77,7 +77,22 @@ export const demuxEvent = (
             yield* log.word(char, entry)
           }
 
-          // Tool invocations suppressed from stdout
+          // Show tool invocations on console with a compact summary
+          if (toolName === "Bash") {
+            const preview = command.split("\n")[0].slice(0, 120)
+            yield* logStreamEvent(char.name, source, `$ ${preview}`)
+          } else if (toolName === "Agent") {
+            const desc = (input?.description as string) ?? (input?.prompt as string)?.slice(0, 80) ?? ""
+            yield* logStreamEvent(char.name, source, `[Agent] ${desc}`)
+          } else if (toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
+            const target = (input?.file_path as string) ?? (input?.pattern as string) ?? ""
+            yield* logStreamEvent(char.name, source, `[${toolName}] ${target}`)
+          } else if (toolName === "Edit" || toolName === "Write") {
+            const target = (input?.file_path as string) ?? ""
+            yield* logStreamEvent(char.name, source, `[${toolName}] ${target}`)
+          } else {
+            yield* logStreamEvent(char.name, source, `[${toolName}]`)
+          }
         }
         // Other content block types suppressed from stdout
       }
