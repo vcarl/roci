@@ -19,6 +19,31 @@ const interruptRules: ReadonlyArray<InterruptRule> = [
     suggestedAction: "investigate_ci",
   },
 
+  // ── High ─────────────────────────────────────────────
+  {
+    name: "review_requested",
+    priority: "high",
+    condition: (s) => {
+      const state = s as GitHubState
+      return state.repos.some((r) =>
+        r.openPRs.some((pr) =>
+          !pr.draft && pr.requestedReviewers.includes(state.authenticatedUser),
+        ),
+      )
+    },
+    message: (s) => {
+      const state = s as GitHubState
+      const prs = state.repos.flatMap((r) =>
+        r.openPRs
+          .filter((pr) => !pr.draft && pr.requestedReviewers.includes(state.authenticatedUser))
+          .map((pr) => `${r.owner}/${r.repo}#${pr.number} "${pr.title}"`),
+      )
+      return `Your review is requested on: ${prs.join(", ")}`
+    },
+    suggestedAction: "review_pr",
+    suppressWhenTaskIs: "review_pr",
+  },
+
   // ── Medium ─────────────────────────────────────────────
   {
     name: "untriaged_issues",
@@ -38,6 +63,30 @@ const interruptRules: ReadonlyArray<InterruptRule> = [
       return `${total} untriaged issues across repos need attention.`
     },
     suggestedAction: "triage_issues",
+  },
+
+  {
+    name: "claimed_issue_activity",
+    priority: "medium",
+    condition: (s) => {
+      const state = s as GitHubState
+      return state.repos.some((r) =>
+        r.openIssues.some((i) =>
+          i.assignees.includes(state.authenticatedUser) && i.recentComments.length > 0,
+        ),
+      )
+    },
+    message: (s) => {
+      const state = s as GitHubState
+      const issues = state.repos.flatMap((r) =>
+        r.openIssues
+          .filter((i) => i.assignees.includes(state.authenticatedUser) && i.recentComments.length > 0)
+          .map((i) => `${r.owner}/${r.repo}#${i.number} "${i.title}"`),
+      )
+      return `New activity on your claimed issues: ${issues.join(", ")}`
+    },
+    suggestedAction: "respond_to_issue",
+    suppressWhenTaskIs: "respond_to_issue",
   },
 
   // ── Low ────────────────────────────────────────────────

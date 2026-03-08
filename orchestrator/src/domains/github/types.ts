@@ -12,6 +12,7 @@ export interface Issue {
   number: number
   title: string
   labels: string[]
+  assignees: string[]
   author: string
   createdAt: string
   updatedAt: string
@@ -35,6 +36,7 @@ export interface PullRequest {
   checks: "pending" | "passing" | "failing"
   reviewStatus: "none" | "approved" | "changes_requested" | "review_required"
   reviews: PullRequestReview[]
+  requestedReviewers: string[]
   createdAt: string
 }
 
@@ -101,6 +103,8 @@ export interface GitHubSituationFlags {
   untriagedIssues: boolean
   reviewablePRs: boolean
   stalePRs: boolean
+  reviewRequested: boolean
+  claimedIssueActivity: boolean
 }
 
 /** Per-repo situation summary, rolled up for the brain. */

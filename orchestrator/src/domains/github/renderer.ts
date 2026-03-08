@@ -30,6 +30,7 @@ function richSnapshot(state: GitHubState): Record<string, unknown> {
         number: i.number,
         title: i.title,
         labels: i.labels,
+        assignees: i.assignees,
         author: i.author,
       })),
       prs: r.openPRs.map((pr) => ({
@@ -40,6 +41,7 @@ function richSnapshot(state: GitHubState): Record<string, unknown> {
         checks: pr.checks,
         reviewStatus: pr.reviewStatus,
         reviewers: pr.reviews.map((rv) => `${rv.reviewer}:${rv.state}`),
+        requestedReviewers: pr.requestedReviewers,
       })),
     })),
   }
@@ -50,8 +52,8 @@ interface RichRepoSnapshot {
   openIssues: number
   openPRs: number
   ciStatus: string
-  issues?: Array<{ number: number; title: string; labels: string[] }>
-  prs?: Array<{ number: number; title: string; checks: string; reviewStatus: string }>
+  issues?: Array<{ number: number; title: string; labels: string[]; assignees: string[] }>
+  prs?: Array<{ number: number; title: string; checks: string; reviewStatus: string; requestedReviewers: string[] }>
 }
 
 function stateDiff(
@@ -91,6 +93,14 @@ function stateDiff(
         if (removedLabels.length > 0) {
           changes.push(`${repo} #${afterIssue.number}: -labels [${removedLabels.join(", ")}]`)
         }
+        const addedAssignees = (afterIssue.assignees ?? []).filter((a) => !(beforeIssue.assignees ?? []).includes(a))
+        const removedAssignees = (beforeIssue.assignees ?? []).filter((a) => !(afterIssue.assignees ?? []).includes(a))
+        if (addedAssignees.length > 0) {
+          changes.push(`${repo} #${afterIssue.number}: +assigned [${addedAssignees.join(", ")}]`)
+        }
+        if (removedAssignees.length > 0) {
+          changes.push(`${repo} #${afterIssue.number}: -assigned [${removedAssignees.join(", ")}]`)
+        }
       }
     }
 
@@ -108,6 +118,14 @@ function stateDiff(
         }
         if (beforePr.checks !== afterPr.checks) {
           changes.push(`${repo} PR #${afterPr.number} checks: ${beforePr.checks} -> ${afterPr.checks}`)
+        }
+        const addedReviewers = (afterPr.requestedReviewers ?? []).filter((r) => !(beforePr.requestedReviewers ?? []).includes(r))
+        const removedReviewers = (beforePr.requestedReviewers ?? []).filter((r) => !(afterPr.requestedReviewers ?? []).includes(r))
+        if (addedReviewers.length > 0) {
+          changes.push(`${repo} PR #${afterPr.number}: +review requested [${addedReviewers.join(", ")}]`)
+        }
+        if (removedReviewers.length > 0) {
+          changes.push(`${repo} PR #${afterPr.number}: -review requested [${removedReviewers.join(", ")}]`)
         }
       }
     }
@@ -136,7 +154,9 @@ function renderForPlanning(state: GitHubState, situation: GitHubSituation): stri
       lines.push("### Open Issues")
       for (const issue of repo.openIssues) {
         const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : ""
-        lines.push(`- #${issue.number}: ${issue.title}${labels} (by ${issue.author})`)
+        const claimed = state.authenticatedUser && issue.assignees.includes(state.authenticatedUser)
+          ? " **(assigned to you)**" : ""
+        lines.push(`- #${issue.number}: ${issue.title}${labels} (by ${issue.author})${claimed}`)
       }
       lines.push("")
     }
@@ -145,7 +165,9 @@ function renderForPlanning(state: GitHubState, situation: GitHubSituation): stri
       lines.push("### Open PRs")
       for (const pr of repo.openPRs) {
         const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
-        lines.push(`- #${pr.number}: ${pr.title} (${status}, by ${pr.author})`)
+        const reviewReq = state.authenticatedUser && pr.requestedReviewers.includes(state.authenticatedUser)
+          ? " **(your review requested)**" : ""
+        lines.push(`- #${pr.number}: ${pr.title} (${status}, by ${pr.author})${reviewReq}`)
       }
       lines.push("")
     }

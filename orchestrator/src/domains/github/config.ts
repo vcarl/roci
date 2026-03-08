@@ -2,6 +2,7 @@ import * as path from "node:path"
 import { Effect } from "effect"
 import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "../../core/domain-bundle.js"
 import { gitHubPhaseRegistry } from "./phases.js"
+import { gitHubDomainBundle, GitHubClientLive } from "./index.js"
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { execSync } from "node:child_process"
 import * as readline from "node:readline"
@@ -185,6 +186,8 @@ const gitHubCharacterSetupGuide = [
 
 /** Build the GitHub domain config for a given project root. */
 export const gitHubDomainConfig = (projectRoot: string): DomainConfig => ({
+  bundle: gitHubDomainBundle,
+  serviceLayer: GitHubClientLive,
   phaseRegistry: gitHubPhaseRegistry,
   containerMounts: containerMounts(projectRoot),
   imageName: IMAGE_NAME,

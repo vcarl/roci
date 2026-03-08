@@ -138,6 +138,7 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
         number: i.number,
         title: i.title,
         labels: i.labels?.map((l: { name: string }) => l.name) ?? [],
+        assignees: i.assignees?.map((a: { login: string }) => a.login) ?? [],
         author: i.user?.login ?? "unknown",
         createdAt: i.created_at,
         updatedAt: i.updated_at,
@@ -158,6 +159,7 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
       checks: "pending" as const,
       reviewStatus: "review_required" as const,
       reviews: [] as PullRequestReview[],
+      requestedReviewers: pr.requested_reviewers?.map((r: { login: string }) => r.login) ?? [],
       createdAt: pr.created_at,
     }))
 

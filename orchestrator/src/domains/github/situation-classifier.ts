@@ -19,11 +19,18 @@ function classifyRepo(state: RepoState, authenticatedUser?: string): RepoSituati
   )
   const cutoff = Date.now() - STALE_PR_DAYS * 24 * 60 * 60 * 1000
   const stalePRs = state.openPRs.some((pr) => new Date(pr.createdAt).getTime() < cutoff)
+  const reviewRequested = state.openPRs.some(
+    (pr) => !pr.draft && pr.requestedReviewers.includes(authenticatedUser ?? ""),
+  )
+  const claimedIssueActivity = state.openIssues.some(
+    (i) => i.assignees.includes(authenticatedUser ?? "") && i.recentComments.length > 0,
+  )
 
-  const flags = { ciFailing, untriagedIssues, reviewablePRs, stalePRs }
+  const flags = { ciFailing, untriagedIssues, reviewablePRs, stalePRs, reviewRequested, claimedIssueActivity }
 
   let type: GitHubSituationType = "idle"
   if (ciFailing) type = "ci_failing"
+  else if (reviewRequested) type = "review_needed"
   else if (untriagedIssues) type = "triage_needed"
   else if (reviewablePRs) type = "review_needed"
   else if (state.openIssues.length > 0) type = "work_available"
@@ -47,6 +54,7 @@ function classify(state: GitHubState): GitHubSituation {
 function briefing(state: GitHubState, situation: GitHubSituation): string {
   const sections = state.repos.map((repo, i) => {
     const sit = situation.repos[i]
+    const authUser = state.authenticatedUser
     const lines: string[] = []
 
     // Header with situation type
@@ -65,7 +73,8 @@ function briefing(state: GitHubState, situation: GitHubSituation): string {
       for (const issue of recent) {
         const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : ""
         const commentNote = issue.commentCount > 0 ? ` (${issue.commentCount} comments)` : ""
-        lines.push(`  #${issue.number}: ${issue.title}${labels}${commentNote}`)
+        const claimed = authUser && issue.assignees.includes(authUser) ? " (assigned to you)" : ""
+        lines.push(`  #${issue.number}: ${issue.title}${labels}${commentNote}${claimed}`)
         for (const c of issue.recentComments.slice(0, 2)) {
           lines.push(`    @${c.author}: ${c.body.slice(0, 100)}${c.body.length > 100 ? "..." : ""}`)
         }
@@ -79,7 +88,6 @@ function briefing(state: GitHubState, situation: GitHubSituation): string {
 
     // PRs breakdown
     if (repo.openPRs.length > 0) {
-      const authUser = state.authenticatedUser
       const reviewable = repo.openPRs.filter(
         pr => !pr.draft && pr.checks === "passing" && pr.reviewStatus === "review_required"
           && pr.author !== authUser,
@@ -94,7 +102,8 @@ function briefing(state: GitHubState, situation: GitHubSituation): string {
       for (const pr of repo.openPRs) {
         const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
         const yours = authUser && pr.author === authUser ? " (yours)" : ""
-        lines.push(`  #${pr.number}: ${pr.title} (${status})${yours}`)
+        const reviewReq = authUser && pr.requestedReviewers.includes(authUser) ? " (your review requested)" : ""
+        lines.push(`  #${pr.number}: ${pr.title} (${status})${yours}${reviewReq}`)
       }
     } else {
       lines.push("PRs: none")
