@@ -1,24 +1,25 @@
-import { Effect, Deferred, Queue } from "effect"
+import { Effect, Queue } from "effect"
 import { FileSystem } from "@effect/platform"
+import { CommandExecutor } from "@effect/platform"
+import { readFileSync } from "node:fs"
+import * as path from "node:path"
 import type { GitHubCharacterConfig } from "./types.js"
 import type { GitHubState } from "./types.js"
 import type { GitHubEvent } from "./types.js"
+import type { GitHubSituation } from "./types.js"
 import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
-import type { ExitReason } from "../../core/types.js"
-import type { LifecycleHooks } from "../../core/limbic/amygdala/lifecycle.js"
 import { Docker } from "../../services/Docker.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import { CharacterLog } from "../../logging/log-writer.js"
-import { runStateMachine } from "../../core/limbic/amygdala/state-machine.js"
 import { EventProcessorTag } from "../../core/limbic/amygdala/event-source.js"
 import { InterruptRegistryTag } from "../../core/limbic/amygdala/interrupt.js"
 import { SituationClassifierTag } from "../../core/limbic/amygdala/situation.js"
 import { GitHubClientTag } from "./github-client.js"
 import { dream } from "../../core/limbic/hippocampus/dream.js"
-
-/** Safety valve: max turns before forcing exit even if no procedure completes. */
-const MAX_ACTIVE_TURNS = 360
+import { runCycle } from "../../core/limbic/hypothalamus/scheduler.js"
+import { renderStateSummary } from "./prompt-helpers.js"
+import { Claude } from "../../services/Claude.js"
 
 /** Break duration in milliseconds (90 minutes). */
 const BREAK_DURATION_MS = 90 * 60 * 1000
@@ -28,6 +29,15 @@ const BREAK_POLL_INTERVAL_SEC = 5
 
 /** Diary lines above this threshold trigger dream compression. */
 const DIARY_COMPRESSION_THRESHOLD = 200
+
+/** Max brain/body cycles per active phase. */
+const MAX_CYCLES = 3
+
+/** Brain timeout in milliseconds (5 minutes). */
+const BRAIN_TIMEOUT_MS = 5 * 60 * 1000
+
+/** Body timeout in milliseconds (15 minutes). */
+const BODY_TIMEOUT_MS = 15 * 60 * 1000
 
 /** Shared clone path inside the container. */
 function sharedClonePath(owner: string, repo: string): string {
@@ -209,13 +219,21 @@ const startupPhase = {
 }
 
 /**
- * Active phase: run the plan/act/evaluate state machine.
+ * Active phase: run the hypervisor brain/body cycle.
+ *
+ * Each cycle:
+ *   1. Drain pending events and update state
+ *   2. Build a brain prompt from current state, diary, and recent body reports
+ *   3. Run a brain/body cycle via the hypervisor scheduler
+ *   4. Store body output as a timestamped report in the container
  */
 const activePhase = {
   name: "active",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
       const log = yield* CharacterLog
+      const charFs = yield* CharacterFs
+      const docker = yield* Docker
 
       if (!context.connection) {
         yield* logToConsole(context.char.name, "orchestrator", "No connection in active phase — shutting down")
@@ -228,14 +246,22 @@ const activePhase = {
       }
 
       const conn = context.connection as GHConnection
-      const { events, initialState, tickIntervalSec, initialTick } = conn
+      let currentState = conn.initialState
 
       const containerEnv = {
         ...context.containerEnv,
         GH_TOKEN: (context.phaseData?.ghToken as string) ?? "",
       }
 
-      yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
+      // Load system prompts from .md files in this directory
+      const brainSystemPrompt = readFileSync(path.join(import.meta.dirname, "brain-system-prompt.md"), "utf-8")
+        .replace(/\{\{characterName\}\}/g, context.char.name)
+        .replace(/\{\{playerName\}\}/g, context.char.name)
+      const bodySystemPrompt = readFileSync(path.join(import.meta.dirname, "body-system-prompt.md"), "utf-8")
+        .replace(/\{\{characterName\}\}/g, context.char.name)
+        .replace(/\{\{playerName\}\}/g, context.char.name)
+
+      yield* logToConsole(context.char.name, "orchestrator", "Starting hypervisor cycle...")
 
       yield* log.action(context.char, {
         timestamp: new Date().toISOString(),
@@ -245,29 +271,107 @@ const activePhase = {
         containerId: context.containerId,
       })
 
-      const exitSignal = yield* Deferred.make<ExitReason, never>()
+      // Ensure reports directory exists in the container
+      yield* docker.exec(context.containerId, [
+        "mkdir", "-p", `/work/players/${context.char.name}/reports`,
+      ]).pipe(Effect.catchAll(() => Effect.void))
 
-      const hooks: LifecycleHooks = {
-        onProcedureComplete: () =>
-          Deferred.succeed(exitSignal, { _tag: "HookRequested", reason: "procedure complete" } as ExitReason)
-            .pipe(Effect.asVoid),
-        shouldExit: (turnCount: number) => Effect.succeed(turnCount >= MAX_ACTIVE_TURNS),
+      for (let cycle = 0; cycle < MAX_CYCLES; cycle++) {
+        // Drain pending events and update state
+        let drained = false
+        while (!drained) {
+          const maybeEvent = yield* Queue.poll(conn.events)
+          if (maybeEvent._tag === "None") {
+            drained = true
+          } else {
+            const event = maybeEvent.value
+            yield* Effect.gen(function* () {
+              const eventProcessor = yield* EventProcessorTag
+              const result = eventProcessor.processEvent(event, currentState)
+              if (result.stateUpdate) {
+                currentState = result.stateUpdate(currentState) as GitHubState
+              }
+            }).pipe(Effect.provide(context.domainBundle!))
+          }
+        }
+
+        // Get situation from classifier (via domainBundle) and render state summary
+        const brainPromptParts = yield* Effect.gen(function* () {
+          const classifier = yield* SituationClassifierTag
+          const situation = classifier.classify(currentState)
+          const stateSummary = renderStateSummary(currentState as GitHubState, situation as GitHubSituation)
+          return { stateSummary }
+        }).pipe(Effect.provide(context.domainBundle!))
+
+        // Read character diary
+        const diary = yield* charFs.readDiary(context.char)
+
+        // Read recent reports from container
+        const reportsListing = yield* docker.exec(context.containerId, [
+          "sh", "-c", `ls -t /work/players/${context.char.name}/reports/ 2>/dev/null | head -5`,
+        ]).pipe(Effect.catchAll(() => Effect.succeed("")))
+
+        let recentReports = ""
+        if (reportsListing.trim()) {
+          for (const file of reportsListing.trim().split("\n").slice(0, 3)) {
+            const content = yield* docker.exec(context.containerId, [
+              "cat", `/work/players/${context.char.name}/reports/${file}`,
+            ]).pipe(Effect.catchAll(() => Effect.succeed("")))
+            if (content.trim()) {
+              recentReports += `\n### Report: ${file}\n${content.trim().slice(0, 2000)}\n`
+            }
+          }
+        }
+
+        const buildBrainPrompt = () => {
+          const parts = [
+            `# Current State\n\n${brainPromptParts.stateSummary}`,
+            `\n\n# Diary\n\n${diary.slice(-3000)}`,
+          ]
+          if (recentReports) {
+            parts.push(`\n\n# Recent Body Reports\n${recentReports}`)
+          }
+          return parts.join("")
+        }
+
+        yield* logToConsole(context.char.name, "orchestrator", `Cycle ${cycle + 1}/${MAX_CYCLES}`)
+
+        const cycleResult = yield* runCycle({
+          containerId: context.containerId,
+          playerName: context.char.name,
+          brainSystemPrompt,
+          bodySystemPrompt,
+          brainModel: "opus",
+          bodyModel: "sonnet",
+          brainTimeoutMs: BRAIN_TIMEOUT_MS,
+          bodyTimeoutMs: BODY_TIMEOUT_MS,
+          env: containerEnv,
+          char: context.char,
+          buildBrainPrompt,
+        })
+
+        // Store body output as a timestamped report
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+        const reportPath = `/work/players/${context.char.name}/reports/${timestamp}.md`
+        const reportContent = cycleResult.bodyResult.output || "(no output)"
+        yield* docker.exec(context.containerId, [
+          "sh", "-c", `printf '%s' ${JSON.stringify(reportContent).slice(0, 4000)} > ${reportPath}`,
+        ]).pipe(
+          Effect.catchAll((e) =>
+            logToConsole(context.char.name, "orchestrator", `Failed to write report: ${e}`)
+          ),
+        )
+
+        yield* logToConsole(
+          context.char.name,
+          "orchestrator",
+          `Cycle ${cycle + 1} complete — brain: ${Math.round(cycleResult.brainResult.durationMs / 1000)}s, body: ${Math.round(cycleResult.bodyResult.durationMs / 1000)}s`,
+        )
       }
 
-      yield* runStateMachine({
-        char: context.char,
-        containerId: context.containerId,
-        playerName: context.char.name,
-        containerEnv,
-        events: events as Queue.Queue<unknown>,
-        initialState,
-        tickIntervalSec,
-        initialTick,
-        exitSignal,
-        hooks,
-      }).pipe(Effect.provide(context.domainBundle))
-
-      return { _tag: "Continue", next: "break", connection: context.connection } as PhaseResult
+      // Thread updated state into the connection for the next phase
+      const updatedConnection: GHConnection = { ...conn, initialState: currentState }
+      return { _tag: "Continue", next: "break", connection: updatedConnection } as PhaseResult
     }),
 }
 
