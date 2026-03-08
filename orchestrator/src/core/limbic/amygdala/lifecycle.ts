@@ -36,6 +36,11 @@ export interface LifecycleHooks {
   /** Called when a reset event is processed (e.g. character death). Observe-only. */
   readonly onReset?: () => Effect.Effect<void>
   /**
+   * Called when a procedure completes (plan finished in a non-"select" mode).
+   * Fires after the diary subagent and mode reset.
+   */
+  readonly onProcedureComplete?: (procedureName: string) => Effect.Effect<void>
+  /**
    * Called after each event iteration.
    * Receives the current turn count for informed decisions.
    * Return true to signal the state machine should exit.

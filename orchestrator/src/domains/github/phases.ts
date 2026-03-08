@@ -1,27 +1,33 @@
-import { Effect } from "effect"
+import { Effect, Deferred, Queue } from "effect"
 import { FileSystem } from "@effect/platform"
 import type { GitHubCharacterConfig } from "./types.js"
-import type { Phase, PhaseContext, PhaseResult, PhaseRegistry } from "../../core/phase.js"
+import type { GitHubState } from "./types.js"
+import type { GitHubEvent } from "./types.js"
+import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
+import type { ExitReason } from "../../core/types.js"
+import type { LifecycleHooks } from "../../core/limbic/amygdala/lifecycle.js"
 import { Docker } from "../../services/Docker.js"
+import { CharacterFs } from "../../services/CharacterFs.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import { CharacterLog } from "../../logging/log-writer.js"
-import { runCycle } from "../../core/limbic/hypothalamus/scheduler.js"
-import { pollAndWriteState } from "./state-poller.js"
-import { renderTemplate } from "../../core/template.js"
-import { readFileSync } from "node:fs"
-import * as path from "node:path"
+import { runStateMachine } from "../../core/limbic/amygdala/state-machine.js"
+import { EventProcessorTag } from "../../core/limbic/amygdala/event-source.js"
+import { InterruptRegistryTag } from "../../core/limbic/amygdala/interrupt.js"
+import { SituationClassifierTag } from "../../core/limbic/amygdala/situation.js"
+import { GitHubClientTag } from "./github-client.js"
+import { dream } from "../../core/limbic/hippocampus/dream.js"
 
-/** Number of brain/body cycles before exiting. */
-const MAX_CYCLES = 20
+/** Safety valve: max turns before forcing exit even if no procedure completes. */
+const MAX_ACTIVE_TURNS = 360
 
-/** Brain timeout: 2 minutes. */
-const BRAIN_TIMEOUT_MS = 2 * 60 * 1000
+/** Break duration in milliseconds (90 minutes). */
+const BREAK_DURATION_MS = 90 * 60 * 1000
 
-/** Body timeout: 8 minutes. */
-const BODY_TIMEOUT_MS = 8 * 60 * 1000
+/** How often to poll the event queue during break (seconds). */
+const BREAK_POLL_INTERVAL_SEC = 5
 
-/** Poll interval between cycles: 30 seconds. */
-const POLL_INTERVAL_MS = 30_000
+/** Diary lines above this threshold trigger dream compression. */
+const DIARY_COMPRESSION_THRESHOLD = 200
 
 /** Shared clone path inside the container. */
 function sharedClonePath(owner: string, repo: string): string {
@@ -118,15 +124,11 @@ const ensureWorktreeDir = (
     return wtBase
   })
 
-/** Load a system prompt template from disk and render variables. */
-function loadSystemPrompt(filename: string, vars: Record<string, string>): string {
-  const filePath = path.resolve(import.meta.dirname, filename)
-  const raw = readFileSync(filePath, "utf-8")
-  return renderTemplate(raw, vars)
-}
+/** Internal connection type for GitHub phases. */
+type GHConnection = ConnectionState<GitHubState, GitHubEvent>
 
 /**
- * Startup phase: read github.json, validate token, clone repos, set up worktree dirs.
+ * Startup phase: read github.json, validate token, clone repos, connect via GitHubClient.
  */
 const startupPhase = {
   name: "startup",
@@ -182,20 +184,32 @@ const startupPhase = {
 
       yield* logToConsole(context.char.name, "orchestrator", `All repos ready`)
 
+      // Connect via GitHubClient to get event queue + initial state
+      const ghClient = yield* GitHubClientTag
+      const { events, initialState, tickIntervalSec, initialTick } =
+        yield* ghClient.connect({
+          repos: parsedRepos,
+          pollIntervalMs: 30_000,
+          token: ghConfig.token,
+        })
+
+      yield* logToConsole(context.char.name, "orchestrator", `GitHubClient connected — polling started`)
+
+      const connection: GHConnection = { events, initialState, tickIntervalSec, initialTick }
       return {
         _tag: "Continue",
         next: "active",
+        connection,
         data: {
           ghToken: ghConfig.token,
           ghUsername: authenticatedUser,
-          ghConfig,
         },
       } as PhaseResult
     }),
 }
 
 /**
- * Active phase: run brain/body cycles using the hypervisor scheduler.
+ * Active phase: run the plan/act/evaluate state machine.
  */
 const activePhase = {
   name: "active",
@@ -203,131 +217,172 @@ const activePhase = {
     Effect.gen(function* () {
       const log = yield* CharacterLog
 
-      const ghToken = context.phaseData?.ghToken as string | undefined
-      const ghUsername = context.phaseData?.ghUsername as string ?? ""
-      const ghConfig = context.phaseData?.ghConfig as GitHubCharacterConfig | undefined
-
-      if (!ghConfig || !ghToken) {
-        yield* logToConsole(context.char.name, "orchestrator", "No GitHub config in active phase — shutting down")
+      if (!context.connection) {
+        yield* logToConsole(context.char.name, "orchestrator", "No connection in active phase — shutting down")
         return { _tag: "Shutdown" } as PhaseResult
       }
 
+      if (!context.domainBundle) {
+        yield* logToConsole(context.char.name, "orchestrator", "No domainBundle in active phase — shutting down")
+        return { _tag: "Shutdown" } as PhaseResult
+      }
+
+      const conn = context.connection as GHConnection
+      const { events, initialState, tickIntervalSec, initialTick } = conn
+
       const containerEnv = {
         ...context.containerEnv,
-        GH_TOKEN: ghToken,
+        GH_TOKEN: (context.phaseData?.ghToken as string) ?? "",
       }
 
-      // Load system prompt templates
-      const templateVars = {
-        characterName: context.char.name,
-        playerName: context.char.name,
-      }
-      const brainSystemPrompt = loadSystemPrompt("brain-system-prompt.md", templateVars)
-      const bodySystemPrompt = loadSystemPrompt("body-system-prompt.md", templateVars)
-
-      yield* logToConsole(context.char.name, "hypervisor", "Starting brain/body cycles...")
+      yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
 
       yield* log.action(context.char, {
         timestamp: new Date().toISOString(),
         source: "orchestrator",
         character: context.char.name,
-        type: "hypervisor_start",
+        type: "loop_start",
         containerId: context.containerId,
       })
 
-      // Create reports directory in container
-      const docker = yield* Docker
-      yield* docker.exec(context.containerId, [
-        "mkdir", "-p", `/work/players/${context.char.name}/reports`,
-      ]).pipe(Effect.catchAll(() => Effect.void))
+      const exitSignal = yield* Deferred.make<ExitReason, never>()
 
-      let cycleCount = 0
-
-      while (cycleCount < MAX_CYCLES) {
-        cycleCount++
-        yield* logToConsole(context.char.name, "hypervisor", `--- Cycle ${cycleCount}/${MAX_CYCLES} ---`)
-
-        // 1. Poll GitHub state and write to container
-        yield* logToConsole(context.char.name, "hypervisor", "Polling GitHub state...")
-        const stateMarkdown = yield* pollAndWriteState(
-          context.containerId,
-          context.char.name,
-          ghConfig,
-          ghUsername,
-        ).pipe(
-          Effect.catchAll((e) => {
-            return logToConsole(context.char.name, "hypervisor", `Poll failed: ${e}`).pipe(
-              Effect.map(() => "# State unavailable — poll failed\n"),
-            )
-          }),
-        )
-
-        // 2. Run brain/body cycle
-        const cycleResult = yield* runCycle({
-          containerId: context.containerId,
-          playerName: context.char.name,
-          char: context.char,
-          brainSystemPrompt,
-          bodySystemPrompt,
-          brainModel: "opus",
-          bodyModel: "sonnet",
-          brainTimeoutMs: BRAIN_TIMEOUT_MS,
-          bodyTimeoutMs: BODY_TIMEOUT_MS,
-          env: containerEnv,
-          buildBrainPrompt: () => [
-            "Read your state file, diary, and recent reports, then prepare a briefing for the body.",
-            "",
-            "Current state summary (also available at /work/players/" + context.char.name + "/state.md):",
-            "",
-            stateMarkdown,
-          ].join("\n"),
-        }).pipe(
-          Effect.catchAll((e) => {
-            return logToConsole(context.char.name, "hypervisor", `Cycle failed: ${e}`).pipe(
-              Effect.map(() => null),
-            )
-          }),
-        )
-
-        if (cycleResult) {
-          // 3. Store body report for next brain cycle
-          const report = cycleResult.bodySummary ?? cycleResult.bodyResult.output
-          const reportTimestamp = new Date().toISOString().replace(/[:.]/g, "-")
-          const b64Report = Buffer.from(report).toString("base64")
-          yield* docker.exec(context.containerId, [
-            "bash", "-c",
-            `echo '${b64Report}' | base64 -d > /work/players/${context.char.name}/reports/${reportTimestamp}.md`,
-          ]).pipe(Effect.catchAll(() => Effect.void))
-
-          // Log cycle results
-          yield* log.action(context.char, {
-            timestamp: new Date().toISOString(),
-            source: "orchestrator",
-            character: context.char.name,
-            type: "cycle_complete",
-            cycle: cycleCount,
-            brainDurationMs: cycleResult.brainResult.durationMs,
-            bodyDurationMs: cycleResult.bodyResult.durationMs,
-            brainTimedOut: cycleResult.brainResult.timedOut,
-            bodyTimedOut: cycleResult.bodyResult.timedOut,
-          })
-        }
-
-        // Brief pause between cycles
-        if (cycleCount < MAX_CYCLES) {
-          yield* logToConsole(context.char.name, "hypervisor", `Waiting ${POLL_INTERVAL_MS / 1000}s before next cycle...`)
-          yield* Effect.sleep(POLL_INTERVAL_MS)
-        }
+      const hooks: LifecycleHooks = {
+        onProcedureComplete: () =>
+          Deferred.succeed(exitSignal, { _tag: "HookRequested", reason: "procedure complete" } as ExitReason)
+            .pipe(Effect.asVoid),
+        shouldExit: (turnCount: number) => Effect.succeed(turnCount >= MAX_ACTIVE_TURNS),
       }
 
-      yield* logToConsole(context.char.name, "hypervisor", `Completed ${cycleCount} cycles — shutting down`)
-      return { _tag: "Shutdown" } as PhaseResult
+      yield* runStateMachine({
+        char: context.char,
+        containerId: context.containerId,
+        playerName: context.char.name,
+        containerEnv,
+        events: events as Queue.Queue<unknown>,
+        initialState,
+        tickIntervalSec,
+        initialTick,
+        exitSignal,
+        hooks,
+      }).pipe(Effect.provide(context.domainBundle))
+
+      return { _tag: "Continue", next: "break", connection: context.connection } as PhaseResult
+    }),
+}
+
+/**
+ * Break phase: sleep 90 minutes, polling for critical interrupts.
+ * If a critical interrupt fires, exit early to the active phase.
+ * Otherwise, proceed to reflection (dream) then active.
+ */
+const breakPhase = {
+  name: "break",
+  run: (context: PhaseContext) =>
+    Effect.gen(function* () {
+      if (!context.connection || !context.domainBundle) {
+        return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
+      }
+
+      const conn = context.connection as GHConnection
+
+      yield* logToConsole(context.char.name, "orchestrator", `Break phase — resting for ${BREAK_DURATION_MS / 60_000} minutes (monitoring for critical interrupts)`)
+
+      const startTime = Date.now()
+      // Track state locally so we can detect critical interrupts
+      let currentState = conn.initialState
+
+      // Poll loop: drain events, check for critical interrupts
+      let interrupted = false
+      while (Date.now() - startTime < BREAK_DURATION_MS) {
+        // Drain all pending events without blocking
+        let drained = false
+        while (!drained) {
+          const maybeEvent = yield* Queue.poll(conn.events)
+          if (maybeEvent._tag === "None") {
+            drained = true
+          } else {
+            const event = maybeEvent.value
+
+            // Process through domain event processor to get state update
+            yield* Effect.gen(function* () {
+              const eventProcessor = yield* EventProcessorTag
+              const classifier = yield* SituationClassifierTag
+              const interruptRegistry = yield* InterruptRegistryTag
+
+              const result = eventProcessor.processEvent(event, currentState)
+
+              if (result.stateUpdate) {
+                currentState = result.stateUpdate(currentState) as GitHubState
+              }
+
+              // Only check for critical interrupts on state updates
+              if (result.isStateUpdate || result.isInterrupt) {
+                const situation = classifier.classify(currentState)
+                const criticals = interruptRegistry.criticals(currentState, situation)
+
+                if (criticals.length > 0) {
+                  yield* logToConsole(
+                    context.char.name,
+                    "orchestrator",
+                    `Critical interrupt during break: ${criticals.map(a => a.message).join("; ")} — waking up`,
+                  )
+                  interrupted = true
+                }
+              }
+            }).pipe(Effect.provide(context.domainBundle))
+
+            if (interrupted) break
+          }
+        }
+
+        if (interrupted) break
+
+        yield* Effect.sleep(`${BREAK_POLL_INTERVAL_SEC} seconds`)
+      }
+
+      // Thread updated state into the connection for the next active phase
+      const updatedConnection: GHConnection = { ...conn, initialState: currentState }
+
+      if (interrupted) {
+        return { _tag: "Continue", next: "active", connection: updatedConnection } as PhaseResult
+      }
+
+      const elapsedMin = Math.round((Date.now() - startTime) / 60_000)
+      yield* logToConsole(context.char.name, "orchestrator", `Break complete (${elapsedMin} min) — proceeding to reflection`)
+      return { _tag: "Continue", next: "reflection", connection: updatedConnection } as PhaseResult
+    }),
+}
+
+/**
+ * Reflection phase: dream to compress diary, then loop back to active.
+ */
+const reflectionPhase = {
+  name: "reflection",
+  run: (context: PhaseContext) =>
+    Effect.gen(function* () {
+      const charFs = yield* CharacterFs
+
+      const diary = yield* charFs.readDiary(context.char)
+      const diaryLines = diary.split("\n").length
+      if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
+        yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
+        yield* dream.execute({ char: context.char }).pipe(
+          Effect.catchAll((e) =>
+            logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
+          ),
+        )
+      }
+
+      return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }
 
 const allPhases = [
   startupPhase as unknown as Phase,
   activePhase as unknown as Phase,
+  breakPhase as unknown as Phase,
+  reflectionPhase as unknown as Phase,
 ] as const
 
 export const gitHubPhaseRegistry: PhaseRegistry = {

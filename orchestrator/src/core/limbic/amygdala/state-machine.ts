@@ -240,6 +240,10 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         yield* Ref.set(modeRef, "select")
         yield* Ref.set(investigationReportRef, null)
         yield* Ref.set(procedureTargetsRef, [])
+
+        if (hooks?.onProcedureComplete) {
+          yield* hooks.onProcedureComplete(mode)
+        }
       })
 
     /** Handle critical interrupts: kill subagent, ask brain for new plan. */
