@@ -1,7 +1,15 @@
 import { Effect, Ref, Stream } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterLog, type LogEntry } from "./log-writer.js"
-import { tag } from "./console-renderer.js"
+import {
+  tag,
+  logCharThought,
+  logThinking,
+  logCharResult,
+} from "./console-renderer.js"
+
+const RESET = "\x1b[0m"
+const DIM = "\x1b[2m"
 
 /** Patterns matching sm CLI commands that are social (chat/forum). */
 const SOCIAL_COMMAND_PATTERN = /^sm\s+(chat|forum)\b/
@@ -20,6 +28,69 @@ export function printRaw(character: string, source: string, line: string): void 
   console.log(`${tag(character, source)} ${line}`)
 }
 
+/** Indent string for nested sub-agent output. */
+const INDENT = "  "
+
+/** Compute indent: subagent source or nested Claude agent (parent_tool_use_id). */
+function indentFor(source: string, event: Record<string, unknown>): string {
+  if (source === "subagent") return INDENT
+  if (event.parent_tool_use_id) return INDENT
+  return ""
+}
+
+/** Print formatted console output for a stream-json event. */
+function printEvent(character: string, source: string, event: Record<string, unknown>): void {
+  const type = event.type as string | undefined
+  const indent = indentFor(source, event)
+
+  if (type === "system") {
+    const model = (event as Record<string, unknown>).model as string | undefined
+    console.log(`${indent}${tag(character, source)} ${DIM}init${model ? ` model=${model}` : ""}${RESET}`)
+    return
+  }
+
+  if (type === "rate_limit_event") {
+    const info = event.rate_limit_info as Record<string, unknown> | undefined
+    const status = info?.status ?? "unknown"
+    console.log(`${indent}${tag(character, source)} ${DIM}rate_limit: ${status}${RESET}`)
+    return
+  }
+
+  if (type === "assistant") {
+    const message = event.message as Record<string, unknown> | undefined
+    const content = message?.content as Array<Record<string, unknown>> | undefined
+    if (!content) {
+      console.log(`${indent}${tag(character, source)} ${DIM}assistant (empty)${RESET}`)
+      return
+    }
+
+    for (const block of content) {
+      if (block.type === "thinking") {
+        // Handled by logThinking Effect below — skip sync printing
+      } else if (block.type === "text") {
+        // Handled by logCharThought Effect below — skip sync printing
+      } else if (block.type === "tool_use") {
+        const toolName = block.name as string
+        const input = block.input as Record<string, unknown> | undefined
+        const desc = (input?.description as string) ?? (input?.command as string) ?? ""
+        const summary = desc.length > 120 ? desc.slice(0, 120) + "..." : desc
+        console.log(`${indent}${tag(character, source)} ${toolName}: ${summary}`)
+      } else {
+        console.log(`${indent}${tag(character, source)} ${DIM}${String(block.type ?? "block")}${RESET}`)
+      }
+    }
+    return
+  }
+
+  if (type === "user") {
+    // tool_result — handled by logCharResult Effect below for content display
+    return
+  }
+
+  // Unknown event type — always show something
+  console.log(`${indent}${tag(character, source)} ${DIM}${type ?? "unknown"}${RESET}`)
+}
+
 /** Classify and route a single stream-json event to the appropriate log streams. */
 export const demuxEvent = (
   char: CharacterConfig,
@@ -33,8 +104,9 @@ export const demuxEvent = (
     const ts = new Date().toISOString()
     const type = event.type as string | undefined
 
-    // Raw stream-json to console — every event, untruncated
-    printRaw(char.name, source, rawLine)
+    // Formatted console output — preserves something from every event
+    const indent = indentFor(source, event)
+    printEvent(char.name, source, event)
 
     if (type === "assistant") {
       const message = event.message as Record<string, unknown> | undefined
@@ -42,7 +114,11 @@ export const demuxEvent = (
       if (!content) return
 
       for (const block of content) {
-        if (block.type === "text") {
+        if (block.type === "thinking") {
+          yield* logThinking(char.name, block.thinking as string, indent)
+        } else if (block.type === "text") {
+          yield* logCharThought(char.name, block.text as string, indent)
+
           yield* log.thought(char, {
             timestamp: ts,
             source,
@@ -79,7 +155,18 @@ export const demuxEvent = (
         }
       }
     } else if (type === "user") {
-      // tool_result — log to actions
+      // tool_result — log to actions + show truncated output
+      const msg = event.message as Record<string, unknown> | undefined
+      const resultContent = msg?.content as Array<Record<string, unknown>> | undefined
+      if (resultContent) {
+        for (const block of resultContent) {
+          const text = block.content as string | undefined
+          if (text) {
+            yield* logCharResult(char.name, text, indent)
+          }
+        }
+      }
+
       yield* log.action(char, {
         timestamp: ts,
         source,

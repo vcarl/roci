@@ -105,11 +105,11 @@ export const logStderr = (_character: string, _stderr: string) => Effect.void
 // ── Character narrative lines (used by log-demux) ────────
 
 /** Character thought — the LLM's voice IS the character. Full text shown. */
-export const logCharThought = (character: string, text: string) =>
+export const logCharThought = (character: string, text: string, indent = "") =>
   Effect.sync(() => {
     const lines = text.split("\n").filter((l) => l.trim().length > 0)
     if (lines.length > 0) {
-      const prefix = `${name(character)}:`
+      const prefix = `${indent}${name(character)}:`
       for (const line of lines) {
         console.log(`${prefix} ${line.trim()}`)
       }
@@ -117,11 +117,11 @@ export const logCharThought = (character: string, text: string) =>
   })
 
 /** Extended thinking block from the LLM. */
-export const logThinking = (character: string, text: string) =>
+export const logThinking = (character: string, text: string, indent = "") =>
   Effect.sync(() => {
     const lines = text.split("\n").filter((l) => l.trim().length > 0)
     if (lines.length > 0) {
-      const prefix = tag(character, "thinking")
+      const prefix = `${indent}${tag(character, "thinking")}`
       for (const line of lines) {
         console.log(`${prefix} ${DIM}${line.trim()}${RESET}`)
       }
@@ -132,7 +132,7 @@ export const logThinking = (character: string, text: string) =>
 export const logCharAction = (_character: string, _command: string) => Effect.void
 
 /** Tool result — first 10 + last 5 lines, with truncation indicator. */
-export const logCharResult = (character: string, text: string) =>
+export const logCharResult = (character: string, text: string, indent = "") =>
   Effect.sync(() => {
     const lines = text.split("\n").filter((l) => l.trim().length > 0)
     if (lines.length === 0) return
@@ -140,7 +140,7 @@ export const logCharResult = (character: string, text: string) =>
     const MAX_HEAD = 10
     const MAX_TAIL = 5
     const c = colorFor(character)
-    const prefix = `${c}  >${RESET}`
+    const prefix = `${indent}${c}  >${RESET}`
 
     if (lines.length <= MAX_HEAD + MAX_TAIL) {
       for (const line of lines) {
