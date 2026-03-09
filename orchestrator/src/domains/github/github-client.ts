@@ -20,28 +20,117 @@ export interface GitHubClient {
 
 export class GitHubClientTag extends Context.Tag("GitHubClient")<GitHubClientTag, GitHubClient>() {}
 
-/** Standard GitHub API headers. Works with both classic PATs (ghp_) and fine-grained tokens. */
-function apiHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `token ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  }
-}
-
-/** Fetch JSON from a URL with error handling — includes response body in errors. */
-const fetchJson = (url: string, headers: Record<string, string>) =>
+/** Execute a GraphQL query against GitHub's API. */
+const graphql = (token: string, query: string, variables: Record<string, unknown> = {}) =>
   Effect.tryPromise({
     try: async () => {
-      const r = await fetch(url, { headers })
+      const r = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query, variables }),
+      })
       if (!r.ok) {
         const body = await r.text().catch(() => "(no body)")
-        throw new Error(`GitHub API ${r.status}: ${r.statusText} — ${body}`)
+        throw new Error(`GitHub GraphQL ${r.status}: ${r.statusText} — ${body}`)
       }
-      return r.json()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const json = await r.json() as any
+      if (json.errors?.length) {
+        throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`)
+      }
+      return json.data
     },
-    catch: (e) => new Error(`GitHub API failed: ${e}`),
+    catch: (e) => new Error(`GitHub GraphQL failed: ${e}`),
   })
+
+const REPO_STATE_QUERY = `
+query RepoState($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    issues(first: 30, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        author { login }
+        createdAt
+        updatedAt
+        body
+        labels(first: 10) { nodes { name } }
+        assignees(first: 10) { nodes { login } }
+        comments(last: 3) {
+          totalCount
+          nodes {
+            author { login }
+            createdAt
+            body
+          }
+        }
+      }
+    }
+    pullRequests(first: 30, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        author { login }
+        isDraft
+        createdAt
+        headRefOid
+        reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
+        reviews(last: 10) {
+          nodes {
+            author { login }
+            state
+            submittedAt
+          }
+        }
+        commits(last: 1) {
+          nodes {
+            commit {
+              statusCheckRollup {
+                state
+                contexts(first: 30) {
+                  nodes {
+                    ... on CheckRun {
+                      __typename
+                      status
+                      conclusion
+                    }
+                    ... on StatusContext {
+                      __typename
+                      state
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 10) {
+            nodes {
+              oid
+              message
+              author { name user { login } }
+              committedDate
+            }
+          }
+          checkSuites(last: 1) {
+            nodes {
+              conclusion
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
 
 /** Derive review status from a list of reviews. */
 function deriveReviewStatus(reviews: PullRequestReview[]): PullRequest["reviewStatus"] {
@@ -65,20 +154,20 @@ function deriveReviewStatus(reviews: PullRequestReview[]): PullRequest["reviewSt
   return "review_required"
 }
 
-/** Derive check status from check runs API response. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function deriveCheckStatus(checkRuns: any[]): PullRequest["checks"] {
-  if (checkRuns.length === 0) return "pending"
-  const allSuccess = checkRuns.every(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (cr: any) => cr.status === "completed" && cr.conclusion === "success",
-  )
+function deriveChecksFromRollup(contexts: any[]): PullRequest["checks"] {
+  if (contexts.length === 0) return "pending"
+  const allSuccess = contexts.every((c) => {
+    if (c.__typename === "CheckRun") return c.status === "COMPLETED" && c.conclusion === "SUCCESS"
+    if (c.__typename === "StatusContext") return c.state === "SUCCESS"
+    return false
+  })
   if (allSuccess) return "passing"
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const anyFailure = checkRuns.some(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (cr: any) => cr.status === "completed" && cr.conclusion === "failure",
-  )
+  const anyFailure = contexts.some((c) => {
+    if (c.__typename === "CheckRun") return c.status === "COMPLETED" && c.conclusion === "FAILURE"
+    if (c.__typename === "StatusContext") return c.state === "FAILURE" || c.state === "ERROR"
+    return false
+  })
   if (anyFailure) return "failing"
   return "pending"
 }
@@ -94,143 +183,98 @@ function validateToken(token: string): Effect.Effect<void, Error> {
 }
 
 /**
- * Fetch current state for a single repo from the GitHub REST API.
+ * Fetch current state for a single repo via GitHub GraphQL API (1 request).
  */
 const fetchRepoState = (owner: string, repo: string, token: string) =>
   Effect.gen(function* () {
-    const headers = apiHeaders(token)
-    const base = `https://api.github.com/repos/${owner}/${repo}`
-
-    // Parallel fetch: issues, PRs, workflow runs, recent commits
-    const [rawIssues, rawPRs, rawRuns, rawCommits] = yield* Effect.all([
-      fetchJson(`${base}/issues?state=open&per_page=30`, headers),
-      fetchJson(`${base}/pulls?state=open&per_page=30`, headers),
-      fetchJson(`${base}/actions/runs?per_page=5&branch=main`, headers),
-      fetchJson(`${base}/commits?per_page=10`, headers),
-    ], { concurrency: 4 })
-
-    // Map issues (filter out PRs — GitHub returns PRs in the issues endpoint)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const issuesWithoutPRs = (rawIssues as any[]).filter((i: any) => !i.pull_request)
+    const data = yield* graphql(token, REPO_STATE_QUERY, { owner, repo }) as Effect.Effect<any, Error>
+    const repoData = data.repository
 
-    // Fetch recent comments for each issue (last 3 per issue, in parallel)
-    const issueCommentResults = yield* Effect.all(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      issuesWithoutPRs.map((i: any) =>
-        fetchJson(`${base}/issues/${i.number}/comments?per_page=3&direction=desc`, headers).pipe(
-          Effect.catchAll(() => Effect.succeed([])),
-        ),
-      ),
-      { concurrency: 5 },
-    )
-
+    // Map issues
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const openIssues: Issue[] = issuesWithoutPRs.map((i: any, idx: number) => {
+    const openIssues: Issue[] = (repoData.issues.nodes ?? []).map((i: any) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rawComments = (issueCommentResults[idx] as any[]) ?? []
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const recentComments: IssueComment[] = rawComments.map((c: any) => ({
-        author: c.user?.login ?? "unknown",
-        createdAt: c.created_at,
+      const recentComments: IssueComment[] = (i.comments.nodes ?? []).map((c: any) => ({
+        author: c.author?.login ?? "unknown",
+        createdAt: c.createdAt,
         body: (c.body ?? "").slice(0, 300),
       }))
       return {
         number: i.number,
         title: i.title,
-        labels: i.labels?.map((l: { name: string }) => l.name) ?? [],
-        assignees: i.assignees?.map((a: { login: string }) => a.login) ?? [],
-        author: i.user?.login ?? "unknown",
-        createdAt: i.created_at,
-        updatedAt: i.updated_at,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        labels: (i.labels.nodes ?? []).map((l: any) => l.name),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        assignees: (i.assignees.nodes ?? []).map((a: any) => a.login),
+        author: i.author?.login ?? "unknown",
+        createdAt: i.createdAt,
+        updatedAt: i.updatedAt,
         body: (i.body ?? "").slice(0, 500),
-        commentCount: i.comments ?? 0,
+        commentCount: i.comments.totalCount ?? 0,
         recentComments,
       }
     })
 
-    // Map PRs (initial pass — reviews/checks enriched below)
+    // Map PRs
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const basePRs: PullRequest[] = (rawPRs as any[]).map((pr: any) => ({
-      number: pr.number,
-      title: pr.title,
-      author: pr.user?.login ?? "unknown",
-      draft: pr.draft ?? false,
-      headSha: pr.head?.sha ?? "",
-      checks: "pending" as const,
-      reviewStatus: "review_required" as const,
-      reviews: [] as PullRequestReview[],
-      requestedReviewers: pr.requested_reviewers?.map((r: { login: string }) => r.login) ?? [],
-      createdAt: pr.created_at,
+    const openPRs: PullRequest[] = (repoData.pullRequests.nodes ?? []).map((pr: any) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const reviews: PullRequestReview[] = (pr.reviews.nodes ?? []).map((r: any) => ({
+        reviewer: r.author?.login ?? "unknown",
+        state: r.state as PullRequestReview["state"],
+        submittedAt: r.submittedAt ?? "",
+      }))
+
+      const commitNode = pr.commits?.nodes?.[0]?.commit
+      const rollup = commitNode?.statusCheckRollup
+      const contexts = rollup?.contexts?.nodes ?? []
+      let checks: PullRequest["checks"]
+      if (!rollup) {
+        checks = "pending"
+      } else if (rollup.state === "SUCCESS") {
+        checks = "passing"
+      } else if (rollup.state === "FAILURE" || rollup.state === "ERROR") {
+        checks = "failing"
+      } else {
+        checks = deriveChecksFromRollup(contexts)
+      }
+
+      return {
+        number: pr.number,
+        title: pr.title,
+        author: pr.author?.login ?? "unknown",
+        draft: pr.isDraft ?? false,
+        headSha: pr.headRefOid ?? "",
+        checks,
+        reviewStatus: deriveReviewStatus(reviews),
+        reviews,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        requestedReviewers: (pr.reviewRequests.nodes ?? [])
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((rr: any) => rr.requestedReviewer?.login)
+          .filter(Boolean) as string[],
+        createdAt: pr.createdAt,
+      }
+    })
+
+    // Map recent commits from default branch
+    const commitHistory = repoData.defaultBranchRef?.target?.history?.nodes ?? []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recentCommits: RepoCommit[] = commitHistory.map((c: any) => ({
+      sha: (c.oid as string).slice(0, 7),
+      message: (c.message ?? "").split("\n")[0].slice(0, 120),
+      author: c.author?.name ?? c.author?.user?.login ?? "unknown",
+      date: c.committedDate ?? "",
     }))
 
-    // Enrich each PR with real reviews and check status (concurrency 5)
-    const openPRs: PullRequest[] = yield* Effect.all(
-      basePRs.map((pr) =>
-        Effect.gen(function* () {
-          const [rawReviews, rawCheckRuns] = yield* Effect.all([
-            fetchJson(`${base}/pulls/${pr.number}/reviews`, headers),
-            fetchJson(`${base}/commits/${pr.headSha}/check-runs`, headers),
-          ], { concurrency: 2 })
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const reviews: PullRequestReview[] = (rawReviews as any[]).map((r: any) => ({
-            reviewer: r.user?.login ?? "unknown",
-            state: r.state as PullRequestReview["state"],
-            submittedAt: r.submitted_at ?? "",
-          }))
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let checkRuns = ((rawCheckRuns as any).check_runs ?? []) as any[]
-
-          // Fall back to legacy status API if no check runs
-          if (checkRuns.length === 0 && pr.headSha) {
-            const rawStatus = yield* fetchJson(
-              `${base}/commits/${pr.headSha}/status`, headers,
-            ).pipe(Effect.catchAll(() => Effect.succeed({ state: "pending" })))
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const statusState = (rawStatus as any).state as string
-            const legacyChecks: PullRequest["checks"] =
-              statusState === "success" ? "passing"
-              : statusState === "failure" ? "failing"
-              : "pending"
-            return {
-              ...pr,
-              reviews,
-              reviewStatus: deriveReviewStatus(reviews),
-              checks: legacyChecks,
-            }
-          }
-
-          return {
-            ...pr,
-            reviews,
-            reviewStatus: deriveReviewStatus(reviews),
-            checks: deriveCheckStatus(checkRuns),
-          }
-        }).pipe(
-          Effect.catchAll(() => Effect.succeed(pr)),
-        ),
-      ),
-      { concurrency: 5 },
-    )
-
-    // Map recent commits
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recentCommits: RepoCommit[] = (rawCommits as any[]).slice(0, 10).map((c: any) => ({
-      sha: (c.sha as string).slice(0, 7),
-      message: (c.commit?.message ?? "").split("\n")[0].slice(0, 120),
-      author: c.commit?.author?.name ?? c.author?.login ?? "unknown",
-      date: c.commit?.author?.date ?? "",
-    }))
-
-    // Derive CI status from most recent workflow run
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const runs = (rawRuns as any).workflow_runs ?? []
+    // CI status from default branch's latest check suite
+    const checkSuites = repoData.defaultBranchRef?.target?.checkSuites?.nodes ?? []
     let ciStatus: RepoState["ciStatus"] = "unknown"
-    if (runs.length > 0) {
-      const latest = runs[0]
-      if (latest.conclusion === "success") ciStatus = "passing"
-      else if (latest.conclusion === "failure") ciStatus = "failing"
+    if (checkSuites.length > 0) {
+      const conclusion = checkSuites[0]?.conclusion
+      if (conclusion === "SUCCESS") ciStatus = "passing"
+      else if (conclusion === "FAILURE") ciStatus = "failing"
     }
 
     const state: RepoState = {
@@ -250,7 +294,7 @@ const fetchRepoState = (owner: string, repo: string, token: string) =>
   })
 
 /**
- * GitHub client that polls the REST API for repo state across multiple repos.
+ * GitHub client that polls repo state via GraphQL (1 query per repo per poll).
  */
 export const GitHubClientLive = Layer.succeed(GitHubClientTag, {
   connect: (config: GitHubClientConfig) =>
@@ -263,10 +307,10 @@ export const GitHubClientLive = Layer.succeed(GitHubClientTag, {
         Effect.catchAll((e) => Effect.logWarning(`Token validation: ${e.message}`)),
       )
 
-      // Fetch authenticated username
-      const authenticatedUser = yield* fetchJson("https://api.github.com/user", apiHeaders(token)).pipe(
+      // Fetch authenticated username via GraphQL viewer query
+      const authenticatedUser = yield* graphql(token, `query { viewer { login } }`).pipe(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        Effect.map((u: any) => (u as { login: string }).login),
+        Effect.map((d: any) => d.viewer.login as string),
         Effect.catchAll(() => Effect.succeed("")),
       )
 
