@@ -39,6 +39,7 @@ export const runCycle = (
       char: config.char,
       role: "brain",
       allowedTools: config.brainAllowedTools,
+      disallowedTools: config.brainDisallowedTools,
     })
 
     let brainOutput = brainResult.output

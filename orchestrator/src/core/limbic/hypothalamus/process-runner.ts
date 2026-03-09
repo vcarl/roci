@@ -72,6 +72,10 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
         claudeArgs.push("--allowedTools", config.allowedTools.join(","))
       }
 
+      if (config.disallowedTools && config.disallowedTools.length > 0) {
+        claudeArgs.push("--disallowedTools", config.disallowedTools.join(","))
+      }
+
       if (config.systemPrompt) {
         claudeArgs.push("--system-prompt", shellEscape(config.systemPrompt))
       }

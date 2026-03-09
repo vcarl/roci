@@ -16,6 +16,8 @@ export interface TurnConfig {
   role: "brain" | "body"
   /** If set, restrict available tools via --allowedTools. */
   allowedTools?: string[]
+  /** If set, block these tools via --disallowedTools. */
+  disallowedTools?: string[]
 }
 
 /** Result of a completed (or timed-out) turn. */
@@ -42,6 +44,8 @@ export interface CycleConfig {
   buildBrainPrompt: () => string
   /** If set, restrict the brain's available tools via --allowedTools. */
   brainAllowedTools?: string[]
+  /** If set, block these tools from the brain via --disallowedTools. */
+  brainDisallowedTools?: string[]
 }
 
 /** Result of a full brain/body cycle. */

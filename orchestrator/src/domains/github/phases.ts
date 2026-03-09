@@ -362,6 +362,12 @@ const activePhase = {
           env: containerEnv,
           char: context.char,
           buildBrainPrompt,
+          brainDisallowedTools: [
+            "ToolSearch", "MCPSearch",
+            "WebFetch", "WebSearch",
+            "NotebookEdit",
+            "Edit",
+          ],
         })
 
         // Store body output as a timestamped report
