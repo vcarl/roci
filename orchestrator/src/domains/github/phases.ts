@@ -33,8 +33,8 @@ const DIARY_COMPRESSION_THRESHOLD = 200
 /** Max brain/body cycles per active phase. */
 const MAX_CYCLES = 3
 
-/** Brain timeout in milliseconds (5 minutes). */
-const BRAIN_TIMEOUT_MS = 5 * 60 * 1000
+/** Brain timeout in milliseconds (8 minutes). */
+const BRAIN_TIMEOUT_MS = 8 * 60 * 1000
 
 /** Body timeout in milliseconds (15 minutes). */
 const BODY_TIMEOUT_MS = 15 * 60 * 1000
@@ -303,6 +303,14 @@ const activePhase = {
           return { stateSummary }
         }).pipe(Effect.provide(context.domainBundle!))
 
+        // Read character identity
+        const background = yield* charFs.readBackground(context.char).pipe(
+          Effect.catchAll(() => Effect.succeed(""))
+        )
+        const values = yield* charFs.readValues(context.char).pipe(
+          Effect.catchAll(() => Effect.succeed(""))
+        )
+
         // Read character diary
         const diary = yield* charFs.readDiary(context.char)
 
@@ -326,8 +334,14 @@ const activePhase = {
         const buildBrainPrompt = () => {
           const parts = [
             `# Current State\n\n${brainPromptParts.stateSummary}`,
-            `\n\n# Diary\n\n${diary.slice(-3000)}`,
           ]
+          if (background) {
+            parts.push(`\n\n# Your Identity\n\n${background}`)
+          }
+          if (values) {
+            parts.push(`\n\n# Your Values\n\n${values}`)
+          }
+          parts.push(`\n\n# Diary\n\n${diary.slice(-3000)}`)
           if (recentReports) {
             parts.push(`\n\n# Recent Body Reports\n${recentReports}`)
           }
