@@ -183,6 +183,37 @@ runGenericSubagent()                              core/subagent.ts
   │                     │         │               │                │
 ```
 
+## GitHub Domain — Hypervisor Architecture
+
+The GitHub domain does **not** use the state machine event loop. Instead it runs a **hypervisor brain/body cycle** that alternates between planning and execution.
+
+```
+phases.ts
+ ├─ startup: read github.json, validate token, clone repos, start poller
+ ├─ active: run brain/body cycles (up to 3)
+ │   └─ for each cycle:
+ │       1. Drain event queue, update state
+ │       2. Build brain prompt (state + identity + values + diary + recent reports)
+ │       3. Brain (Opus, 8 min timeout) → directives
+ │       4. Body (Sonnet, 15 min timeout) receives brain stdout as prompt
+ │       5. Store body output as timestamped report
+ ├─ break: sleep 90 min, polling for critical interrupts
+ └─ reflection: dream to compress diary, loop → active
+```
+
+### Key differences from SpaceMolt
+
+| | SpaceMolt | GitHub |
+|---|-----------|--------|
+| **Loop** | State machine event loop (plan/act/evaluate per event) | Hypervisor brain/body cycle (up to 3 per active phase) |
+| **Brain** | Opus plans steps, Haiku/Sonnet executes each step | Opus writes directives, Sonnet executes full session |
+| **Polling** | WebSocket events | Single GraphQL query per repo per poll (replaces REST) |
+| **Reports** | Step timing history + diffs | Body output stored as per-session reports, fed to next brain cycle |
+
+### Process runner
+
+The process runner (`core/limbic/hypothalamus/process-runner.ts`) runs `claude -p` inside the container. It waits for `process.exitCode` (not stdout drain) to detect completion, then joins the stderr fiber and returns the result.
+
 ## Container Layout
 
 Single shared container `roci-crew`, all characters isolated via `--add-dir`.
@@ -191,14 +222,17 @@ Single shared container `roci-crew`, all characters isolated via `--add-dir`.
 
 | Host Path | Container Path | Access |
 |-----------|---------------|--------|
-| `players/` | `/work/players` | RW |
-| `shared-resources/workspace/` | `/work/shared/workspace` | RW |
-| `shared-resources/spacemolt-docs/` | `/work/shared/spacemolt-docs` | RW |
-| `docs/` | `/work/shared/docs` | RW |
-| `shared-resources/sm-cli/` | `/work/sm-cli` | RW |
-| `.claude/` | `/work/.claude` | RO |
-| `.devcontainer/` | `/opt/devcontainer` | RO |
-| `scripts/` | `/opt/scripts` | RO |
+| Host Path | Container Path | Access | Domain |
+|-----------|---------------|--------|--------|
+| `players/` | `/work/players` | RW | Both |
+| `repos/` | `/work/repos` | RW | GitHub |
+| `shared-resources/workspace/` | `/work/shared/workspace` | RW | SpaceMolt |
+| `shared-resources/spacemolt-docs/` | `/work/shared/spacemolt-docs` | RW | SpaceMolt |
+| `docs/` | `/work/shared/docs` | RW | Both |
+| `shared-resources/sm-cli/` | `/work/sm-cli` | RW | SpaceMolt |
+| `.claude/` | `/work/.claude` | RO | Both |
+| `.devcontainer/` | `/opt/devcontainer` | RO | Both |
+| `scripts/` | `/opt/scripts` | RO | Both |
 
 **What the subagent sees** (via `--add-dir` in `run-step.sh`):
 
@@ -275,6 +309,20 @@ All events printed type-tagged with timestamp and character name:
 | `core/prompt-builder.ts` | `PromptBuilder` interface + prompt context types |
 | `core/event-source.ts` | `EventProcessor` interface |
 | `core/types.ts` | Plan, PlanStep, StepTiming, StepCompletionResult, Alert |
+
+### GitHub domain
+
+| File | Role |
+|------|------|
+| `domains/github/phases.ts` | Phase registry: startup, active (brain/body cycles), break, reflection |
+| `domains/github/github-client.ts` | GraphQL polling, single query per repo, token validation |
+| `domains/github/brain-system-prompt.md` | Brain (Opus) system prompt — identity-injected planner |
+| `domains/github/body-system-prompt.md` | Body (Sonnet) system prompt — execution-focused |
+| `domains/github/prompt-helpers.ts` | State summary renderer for brain prompt |
+| `core/limbic/hypothalamus/process-runner.ts` | Run claude in container, exit code detection, stream demux |
+| `core/limbic/hypothalamus/scheduler.ts` | Brain/body cycle orchestration, timeout handling |
+| `core/limbic/hypothalamus/types.ts` | CycleConfig, CycleResult, TurnConfig, TurnResult |
+| `core/limbic/hypothalamus/timeout-summarizer.ts` | Summarize partial output on timeout |
 
 ### SpaceMolt domain
 

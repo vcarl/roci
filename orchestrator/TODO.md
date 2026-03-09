@@ -42,6 +42,9 @@ The GitHub domain is feature-complete for a first run. To test:
 - Worktree creation: handled entirely by the agent via prompts. If the
   agent doesn't follow instructions, worktrees won't be created. May
   need orchestrator-level worktree management if this is unreliable.
+- REST rate limit risk resolved — now uses GraphQL (1 query/repo/poll).
+- Process exit detection: fixed (waits for exitCode), but ToolSearch tool
+  use by subagent can still cause early exit in some cases.
 
 ## Next: First Real Test
 
@@ -50,9 +53,16 @@ The GitHub domain is feature-complete for a first run. To test:
 - [ ] Run the full loop and observe: does the agent clone, create worktrees, triage, code, PR?
 - [ ] Fix whatever breaks
 
+## Recent Changes (2026-03-09)
+
+- Brain/body prompts overhauled — identity injected into brain, directive-style briefings, body trusts brain output
+- Process runner now waits for `process.exitCode` (not stdout drain) — fixes premature completion detection
+- GraphQL migration — replaced ~39 REST API calls per poll with 1 GraphQL query per repo
+- Enriched state — PR branches, body, mergeable, mergeStateStatus, size stats, comments; issue milestone + reactions
+
 ## Next: Hardening
 
-- [ ] Periodic `git fetch` on shared clones during poll cycle
+- [ ] Periodic `git fetch` on shared clones during poll cycle (GraphQL polling replaces REST for state, but local clones still only fetched at startup)
 - [x] Delete old `credentials.txt` from github-test (SpaceMolt vestige)
 - [ ] Error recovery: what happens if clone fails mid-startup?
 - [ ] Worktree cleanup: stale worktrees from merged branches
