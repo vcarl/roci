@@ -77,6 +77,8 @@ export interface DomainConfig {
   readonly firewallExtraDomains?: string[]
   /** Container --add-dir paths for claude subagent (colon-separated in ROCI_ADD_DIRS env var). */
   readonly containerAddDirs?: string[]
+  /** Per-character setup procedure — creates domain-specific config files interactively. */
+  readonly setupCharacter?: DomainProcedure<InitContext>
   /** Per-character init procedure — validates domain-specific setup. */
   readonly initProcedure?: DomainProcedure<InitContext>
   /** Project-level init (create directories, etc). Runs once before per-character checks. */

@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import { execSync } from "node:child_process"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import WebSocket from "ws"
 import { Docker, DockerLive } from "./services/Docker.js"
 import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "./services/CharacterFs.js"
@@ -427,9 +428,116 @@ const initCommand = Command.make("init", { domain: initDomain }, (args) =>
   }),
 ).pipe(Command.withDescription("Initialize a domain — validate config, create directories"))
 
+// --- setup command ---
+const setupCharacters = Args.text({ name: "characters" }).pipe(Args.repeated)
+const setupDomain = Options.text("domain").pipe(
+  Options.withDescription("Domain to set up characters for (e.g. github, spacemolt)"),
+)
+
+const setupCommand = Command.make("setup", { characters: setupCharacters, domain: setupDomain }, (args) =>
+  Effect.gen(function* () {
+    const characters = [...args.characters]
+    const domainName = args.domain
+
+    if (characters.length === 0) {
+      yield* logToConsole("setup", "cli", "No characters specified. Usage: roci setup <character> [character...] --domain <domain>")
+      return
+    }
+
+    // 1. Look up domain
+    const factory = DOMAIN_REGISTRY[domainName]
+    if (!factory) {
+      yield* logToConsole("setup", "cli", `Unknown domain: ${domainName}. Known domains: ${Object.keys(DOMAIN_REGISTRY).join(", ")}`)
+      return
+    }
+    const domainConfig = factory(PROJECT_ROOT)
+
+    // 2. Run project-level init once
+    if (domainConfig.initProject) {
+      const msgs = yield* domainConfig.initProject(PROJECT_ROOT)
+      for (const msg of msgs) yield* logProcMsg(msg)
+    }
+
+    // 3. Process each character
+    const configPath = path.resolve(PROJECT_ROOT, "config.json")
+    const addedCharacters: string[] = []
+
+    for (const charName of characters) {
+      yield* logToConsole("setup", "cli", `\n--- Setting up ${charName} ---`)
+      const charDir = path.resolve(PROJECT_ROOT, "players", charName, "me")
+
+      // Create character dir if missing
+      if (!existsSync(charDir)) {
+        mkdirSync(charDir, { recursive: true })
+        yield* logToConsole("setup", "cli", `Created ${charDir}`)
+      }
+
+      // Check required files
+      const bgPath = path.resolve(charDir, "background.md")
+      const valuesPath = path.resolve(charDir, "VALUES.md")
+      if (!existsSync(bgPath) || !existsSync(valuesPath)) {
+        yield* logToConsole("setup", "cli", `ERROR: ${charName} is missing background.md or VALUES.md — skipping`)
+        yield* logToConsole("setup", "cli", `  Create these files first, then re-run setup.`)
+        continue
+      }
+
+      // Create empty supporting files if missing
+      for (const file of ["DIARY.md", "SECRETS.md"]) {
+        const filePath = path.resolve(charDir, file)
+        if (!existsSync(filePath)) {
+          writeFileSync(filePath, "")
+          yield* logToConsole("setup", "cli", `Created empty ${file}`)
+        }
+      }
+
+      // Domain-specific setup
+      if (domainConfig.setupCharacter) {
+        const msgs = yield* domainConfig.setupCharacter.run({
+          projectRoot: PROJECT_ROOT,
+          characterName: charName,
+          characterDir: charDir,
+        })
+        for (const msg of msgs) yield* logProcMsg(msg)
+        // Check if any errors occurred
+        if (msgs.some(m => m.level === "error")) {
+          yield* logToConsole("setup", "cli", `Skipping config.json registration for ${charName} due to errors`)
+          continue
+        }
+      }
+
+      addedCharacters.push(charName)
+    }
+
+    // 4. Update config.json
+    if (addedCharacters.length > 0) {
+      let config: Record<string, { characters: string[] }> = {}
+      if (existsSync(configPath)) {
+        try {
+          config = JSON.parse(readFileSync(configPath, "utf-8"))
+        } catch {
+          // Start fresh if invalid
+        }
+      }
+      if (!config[domainName]) {
+        config[domainName] = { characters: [] }
+      }
+      for (const name of addedCharacters) {
+        if (!config[domainName].characters.includes(name)) {
+          config[domainName].characters.push(name)
+        }
+      }
+      writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n")
+      yield* logToConsole("setup", "cli", `\nUpdated config.json — ${domainName} characters: ${config[domainName].characters.join(", ")}`)
+    }
+
+    yield* logToConsole("setup", "cli", `\nSetup complete. Run: npx tsx src/main.ts init --domain ${domainName} to validate.`)
+  }),
+).pipe(Command.withDescription("Set up character(s) for a domain — create files and config"))
+
 // --- root command ---
 const rociCommand = Command.make("roci").pipe(
   Command.withSubcommands([
+    setupCommand,
     initCommand,
     startCommand,
     stopCommand,

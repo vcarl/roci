@@ -5,7 +5,7 @@ import { gitHubPhaseRegistry } from "./phases.js"
 import { gitHubDomainBundle, GitHubClientLive } from "./index.js"
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { execSync } from "node:child_process"
-import * as readline from "node:readline"
+import { askUser } from "../../util/prompt.js"
 
 const IMAGE_NAME = "github-agent"
 
@@ -56,16 +56,6 @@ export function validateGitHubToken(
     return { ok: false as const, status: resp.status }
   }).catch(() => null)
 }
-
-/** Prompt the user for a line of input. */
-const askUser = (question: string): Effect.Effect<string> =>
-  Effect.async<string>((resume) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-    rl.question(question, (answer) => {
-      rl.close()
-      resume(Effect.succeed(answer.trim()))
-    })
-  })
 
 /** Returns true if a repo string looks like a placeholder. */
 const isPlaceholderRepo = (repo: string) =>
@@ -168,6 +158,77 @@ const gitHubInitProject = (projectRoot: string): Effect.Effect<ProcedureMessage[
     return [{ level: "ok" as const, text: `${reposDir} already exists` }]
   })
 
+/** Per-character setup procedure — creates github.json interactively. */
+const gitHubSetupCharacter: DomainProcedure<InitContext> = {
+  name: "github-setup",
+  run: (ctx) =>
+    Effect.gen(function* () {
+      const messages: ProcedureMessage[] = []
+      const ghJsonPath = path.resolve(ctx.characterDir, "github.json")
+
+      if (existsSync(ghJsonPath)) {
+        messages.push({ level: "ok", text: `${ctx.characterName} — github.json already exists, skipping setup` })
+        return messages
+      }
+
+      // Try to get token from gh CLI, else prompt
+      let token = ""
+      try {
+        token = execSync("gh auth token", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim()
+        if (token) {
+          messages.push({ level: "ok", text: `${ctx.characterName} — using token from \`gh auth token\`` })
+        }
+      } catch {
+        // gh CLI not available or not logged in
+      }
+
+      if (!token) {
+        token = yield* askUser(`  Enter GitHub PAT for ${ctx.characterName}: `)
+        if (!token) {
+          messages.push({ level: "error", text: `${ctx.characterName} — no token provided, skipping` })
+          return messages
+        }
+      }
+
+      // Prompt for repos
+      const repos: string[] = []
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const prompt = repos.length === 0
+          ? `  Enter a repo (owner/repo) for ${ctx.characterName}: `
+          : `  Another repo (or press Enter to finish): `
+        const input = yield* askUser(prompt)
+        if (!input) {
+          if (repos.length === 0) {
+            messages.push({ level: "warning", text: `${ctx.characterName} — no repos configured` })
+          }
+          break
+        }
+        if (!input.includes("/")) {
+          messages.push({ level: "warning", text: `"${input}" doesn't look like owner/repo — skipping` })
+          continue
+        }
+        repos.push(input)
+      }
+
+      // Write github.json
+      writeFileSync(ghJsonPath, JSON.stringify({ token, repos }, null, 2) + "\n")
+      messages.push({ level: "ok", text: `${ctx.characterName} — wrote github.json with ${repos.length} repo(s)` })
+
+      // Validate token
+      const tokenResult = yield* Effect.tryPromise(() => validateGitHubToken(token))
+      if (tokenResult === null) {
+        messages.push({ level: "warning", text: `${ctx.characterName} — could not reach GitHub API (offline?)` })
+      } else if (tokenResult.ok) {
+        messages.push({ level: "ok", text: `${ctx.characterName} — authenticated as ${tokenResult.login}` })
+      } else {
+        messages.push({ level: "error", text: `${ctx.characterName} — token returned HTTP ${tokenResult.status}` })
+      }
+
+      return messages
+    }),
+}
+
 /** Instructions shown when no GitHub characters are configured. */
 const gitHubCharacterSetupGuide = [
   `Each character needs its own GitHub service account:`,
@@ -196,5 +257,6 @@ export const gitHubDomainConfig = (projectRoot: string): DomainConfig => ({
   containerAddDirs: ["/work/repos"],
   initProcedure: gitHubInitProcedure,
   initProject: gitHubInitProject,
+  setupCharacter: gitHubSetupCharacter,
   characterSetupGuide: gitHubCharacterSetupGuide,
 })
