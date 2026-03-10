@@ -1,6 +1,18 @@
 import { Context } from "effect"
 import type { DomainState, DomainEvent } from "../../domain-types.js"
-import type { Alert } from "../../types.js"
+
+export interface DomainContext {
+  readonly chatMessages?: ReadonlyArray<{
+    readonly channel: string
+    readonly sender: string
+    readonly content: string
+  }>
+}
+
+export type EventCategory =
+  | { readonly _tag: "Heartbeat"; readonly tick: number }
+  | { readonly _tag: "StateChange" }
+  | { readonly _tag: "LifecycleReset"; readonly reason: string }
 
 /**
  * Translates raw domain events into state machine operations.
@@ -11,24 +23,10 @@ export interface EventProcessor {
 }
 
 export interface EventResult {
-  /** Merge into state. If undefined, state is unchanged. */
-  stateUpdate?: (prev: DomainState) => DomainState
-  /** Update tick counter. If undefined, tick is unchanged. */
-  tick?: number
-  /** Trigger interrupt processing (check for critical alerts). */
-  isInterrupt?: boolean
-  /** Kill everything and start fresh (e.g. death). */
-  isReset?: boolean
-  /** Flag indicating this is a full state update (triggers plan/spawn cycle). */
-  isStateUpdate?: boolean
-  /** Flag indicating this is a tick heartbeat (triggers mid-run checks + plan/spawn). */
-  isTick?: boolean
-  /** Accumulated context data (e.g. chat messages). Keyed by context type. */
-  accumulatedContext?: Record<string, unknown>
-  /** Domain-constructed alerts for interrupt events. When present and isInterrupt is true, these are used instead of querying the InterruptRegistry. */
-  alerts?: Alert[]
-  /** Logging side effect — called after state is updated. */
-  log?: () => void
+  readonly category?: EventCategory
+  readonly stateUpdate?: (prev: DomainState) => DomainState
+  readonly context?: DomainContext
+  readonly log?: () => void
 }
 
 /**

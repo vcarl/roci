@@ -16,7 +16,7 @@ export interface StateRenderer {
   /** Render domain state for planning context. */
   renderForPlanning(state: DomainState, situation: DomainSituation): string
   /** Compact console output line per tick. */
-  logStateBar(name: string, state: DomainState, situation: DomainSituation): void
+  logStateBar(name: string, metrics: Record<string, string | number | boolean>): void
 }
 
 /**

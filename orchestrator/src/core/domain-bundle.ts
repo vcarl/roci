@@ -3,7 +3,6 @@ import type { EventProcessorTag } from "./limbic/thalamus/event-processor.js"
 import type { SituationClassifierTag } from "./limbic/thalamus/situation-classifier.js"
 import type { StateRendererTag } from "./state-renderer.js"
 import type { InterruptRegistryTag } from "./limbic/amygdala/interrupt.js"
-import type { ContextHandlerTag } from "./limbic/thalamus/context-handler.js"
 import type { PromptBuilderTag } from "./prompt-builder.js"
 import type { SkillRegistryTag } from "./skill.js"
 import type { PhaseRegistry } from "./phase.js"
@@ -36,7 +35,7 @@ export interface InitContext {
 /** Complete set of domain service layers for the core state machine. */
 export type DomainBundle = Layer.Layer<
   EventProcessorTag | SituationClassifierTag | StateRendererTag |
-  InterruptRegistryTag | ContextHandlerTag | PromptBuilderTag | SkillRegistryTag,
+  InterruptRegistryTag | PromptBuilderTag | SkillRegistryTag,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

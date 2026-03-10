@@ -2,17 +2,21 @@
  * Homeostatic timing parameters — how a domain configures the
  * tempo of the limbic system's cyclic regulation.
  */
-export interface TempoConfig {
-  /** Heartbeat rate of the system in seconds. */
+export interface TempoBase {
   readonly tickIntervalSec: number
-  /** Max event-loop turns before transitioning (state-machine domains). */
-  readonly maxTurns?: number
-  /** Max brain/body cycles per active phase (hypervisor domains). */
-  readonly maxCycles?: number
-  /** Rest duration in milliseconds between active phases. */
-  readonly breakDurationMs?: number
-  /** Poll interval during rest periods, in seconds. */
-  readonly breakPollIntervalSec?: number
-  /** Diary line count above which hippocampus consolidation triggers. */
-  readonly dreamThreshold?: number
+  readonly dreamThreshold: number
 }
+
+export interface StateMachineTempo extends TempoBase {
+  readonly _tag: "StateMachine"
+  readonly maxTurns: number
+}
+
+export interface HypervisorTempo extends TempoBase {
+  readonly _tag: "Hypervisor"
+  readonly maxCycles: number
+  readonly breakDurationMs: number
+  readonly breakPollIntervalSec: number
+}
+
+export type TempoConfig = StateMachineTempo | HypervisorTempo

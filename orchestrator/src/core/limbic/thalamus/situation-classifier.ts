@@ -1,14 +1,22 @@
 import { Context } from "effect"
 import type { DomainState, DomainSituation } from "../../domain-types.js"
 
+export interface SituationSummary {
+  situation: DomainSituation
+  headline: string
+  sections: ReadonlyArray<{
+    id: string
+    heading: string
+    body: string
+  }>
+  metrics: Record<string, string | number | boolean>
+}
+
 /**
  * Derives a structured situation from raw domain state.
  */
 export interface SituationClassifier {
-  /** Derive structured situation (type, flags, alerts) from raw state. */
-  classify(state: DomainState): DomainSituation
-  /** Human-readable briefing for the brain. */
-  briefing(state: DomainState, situation: DomainSituation): string
+  summarize(state: DomainState): SituationSummary
 }
 
 /**

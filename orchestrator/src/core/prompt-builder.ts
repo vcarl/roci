@@ -1,11 +1,11 @@
 import { Context } from "effect"
 import type { DomainState, DomainSituation } from "./domain-types.js"
+import type { SituationSummary } from "./limbic/thalamus/situation-classifier.js"
 import type { Alert, BrainMode, Plan, PlanStep, StepCompletionResult, StepTiming } from "./types.js"
 
 export interface PlanPromptContext {
   state: DomainState
-  situation: DomainSituation
-  briefing: string
+  summary: SituationSummary
   diary: string
   background: string
   values: string
@@ -21,10 +21,9 @@ export interface PlanPromptContext {
 
 export interface InterruptPromptContext {
   state: DomainState
-  situation: DomainSituation
+  summary: SituationSummary
   alerts: Alert[]
   currentPlan: Plan | null
-  briefing: string
   background: string
   mode: BrainMode
   procedureTargets?: string[]
