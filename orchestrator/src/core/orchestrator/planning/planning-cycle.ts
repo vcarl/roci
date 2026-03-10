@@ -4,7 +4,8 @@ import type { CharacterConfig } from "../../../services/CharacterFs.js"
 import { CharacterFs } from "../../../services/CharacterFs.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
-import type { DomainState, DomainSituation } from "../../domain-types.js"
+import type { DomainState } from "../../domain-types.js"
+import type { SituationSummary } from "../../limbic/thalamus/situation-classifier.js"
 import type { StateRenderer } from "../../state-renderer.js"
 import type { BrainMode, Plan, StepTiming, Alert } from "../../types.js"
 import type { LifecycleHooks, PlanContext } from "../lifecycle.js"
@@ -38,8 +39,7 @@ export const maybeRequestPlan = (
   refs: PlanningRefs,
   services: PlanningServices,
   state: DomainState,
-  situation: DomainSituation,
-  briefing: string,
+  summary: SituationSummary,
 ) =>
   Effect.gen(function* () {
     const plan = yield* Ref.get(refs.plan)
@@ -64,9 +64,8 @@ export const maybeRequestPlan = (
       let additionalContext: string | undefined
       if (services.hooks?.beforePlan) {
         const planContext: PlanContext = {
-          briefing,
+          summary,
           state,
-          situation,
           diary,
           previousFailure: previousFailure ?? undefined,
         }
@@ -96,7 +95,7 @@ export const maybeRequestPlan = (
           procedureTargets.length > 0
             ? `--- Procedure Targets ---\n${procedureTargets.join(", ")}`
             : null,
-          `--- Briefing ---\n${briefing}`,
+          `--- Summary ---\n${summary.headline}\n${summary.sections.map(s => `## ${s.heading}\n${s.body}`).join("\n\n")}`,
           `--- Diary (last 500 chars) ---\n${diary.slice(-500)}`,
           previousFailure ? `--- Previous Failure ---\n${previousFailure}` : null,
           recentChat.length > 0 ? `--- Recent Chat ---\n${recentChat.map((m) => `[${m.channel}] ${m.sender}: ${m.content}`).join("\n")}` : null,
@@ -106,9 +105,8 @@ export const maybeRequestPlan = (
 
       const newPlan = yield* brainPlan.execute({
         state,
-        situation,
+        summary,
         diary,
-        briefing,
         background,
         values,
         previousFailure: previousFailure ?? undefined,

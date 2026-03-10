@@ -9,12 +9,12 @@ import {
 } from "../../logging/console-renderer.js"
 import type { EventResult } from "../limbic/thalamus/event-processor.js"
 import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
-import { ContextHandlerTag } from "../limbic/thalamus/context-handler.js"
+import type { SituationSummary } from "../limbic/thalamus/situation-classifier.js"
 import { SkillRegistryTag } from "../skill.js"
 import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
 import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
 import { StateRendererTag } from "../state-renderer.js"
-import type { DomainState, DomainSituation, DomainEvent } from "../domain-types.js"
+import type { DomainState, DomainEvent } from "../domain-types.js"
 import type { BrainMode, Plan, StepTiming, Alert, ExitReason, StateMachineResult } from "../types.js"
 import type { LifecycleHooks } from "./lifecycle.js"
 import { brainInterrupt } from "./planning/brain.js"
@@ -50,7 +50,6 @@ export const runStateMachine = (config: StateMachineConfig) =>
     const interrupts = yield* InterruptRegistryTag
     const classifier = yield* SituationClassifierTag
     const renderer = yield* StateRendererTag
-    const contextHandler = yield* ContextHandlerTag
     const charFs = yield* CharacterFs
     const log = yield* CharacterLog
 
@@ -137,7 +136,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
     }
 
     /** Plan + spawn cycle with manual approval gates. */
-    const planAndSpawn = (state: DomainState, situation: DomainSituation, briefing: string) =>
+    const planAndSpawn = (state: DomainState, summary: SituationSummary) =>
       Effect.gen(function* () {
         // Check if planning will happen (same condition as maybeRequestPlan)
         const plan = yield* Ref.get(planRef)
@@ -150,7 +149,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
           yield* awaitApproval(`requesting plan (mode: ${mode})`)
         }
 
-        yield* maybeRequestPlan(planningRefs, planningServices, state, situation, briefing)
+        yield* maybeRequestPlan(planningRefs, planningServices, state, summary)
 
         // Check if spawning will happen (same condition as maybeSpawnSubagent)
         const planAfter = yield* Ref.get(planRef)
@@ -161,7 +160,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
           yield* awaitApproval(`spawning subagent: [${nextStep.task}] ${nextStep.goal}`)
         }
 
-        yield* maybeSpawnSubagent(subagentRefs, planRefs, timingRefs, spawnConfig, spawnServices, state, situation)
+        yield* maybeSpawnSubagent(subagentRefs, planRefs, timingRefs, spawnConfig, spawnServices, state, summary.situation)
       })
 
     // --- Inline helpers ---
@@ -215,7 +214,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         const promptBuilder = yield* PromptBuilderTag
         const systemPromptText = promptBuilder.systemPrompt(mode, "diary")
         const state = yield* Ref.get(gameStateRef)
-        const situation = classifier.classify(state)
+        const procedureSummary = classifier.summarize(state)
 
         yield* runGenericSubagent({
           char: config.char,
@@ -225,7 +224,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           containerEnv: config.containerEnv,
           step: { task: "diary", goal: diaryPrompt, model: "haiku", successCondition: "diary updated", timeoutTicks: 3 },
           state,
-          situation,
+          situation: procedureSummary.situation,
           personality,
           values,
           tickIntervalSec: config.tickIntervalSec,
@@ -247,7 +246,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
       })
 
     /** Handle critical interrupts: kill subagent, ask brain for new plan. */
-    const handleInterrupt = (criticals: Alert[], state: DomainState, situation: DomainSituation, briefing: string) =>
+    const handleInterrupt = (criticals: Alert[], state: DomainState, summary: SituationSummary) =>
       Effect.gen(function* () {
         if (hooks?.onInterrupt) {
           yield* hooks.onInterrupt(criticals)
@@ -272,10 +271,9 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         const background = yield* charFs.readBackground(config.char)
         const newPlan = yield* brainInterrupt.execute({
           state,
-          situation,
+          summary,
           alerts: criticals,
           currentPlan: yield* Ref.get(planRef),
-          briefing,
           background,
           mode,
           procedureTargets: procedureTargets.length > 0 ? procedureTargets : undefined,
@@ -308,10 +306,9 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
     /** Process a state update: the core decision cycle. */
     const handleStateUpdateEvent = (state: DomainState) =>
       Effect.gen(function* () {
-        const situation = classifier.classify(state)
-        const briefing = classifier.briefing(state, situation)
+        const summary = classifier.summarize(state)
 
-        renderer.logStateBar(config.char.name, state, situation)
+        renderer.logStateBar(config.char.name, summary.metrics)
 
         // Get current task for suppression
         const plan = yield* Ref.get(planRef)
@@ -319,7 +316,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         const currentTask = plan && step < plan.steps.length ? plan.steps[step].task : undefined
 
         // Evaluate all rules once, partition
-        const allAlerts = interrupts.evaluate(state, situation, currentTask)
+        const allAlerts = interrupts.evaluate(state, summary.situation, currentTask)
         const criticals = allAlerts.filter(a => a.priority === "critical")
         const softAlerts = allAlerts.filter(a => a.priority !== "critical")
 
@@ -346,7 +343,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
 
         // Critical → hard interrupt
         if (criticals.length > 0) {
-          yield* handleInterrupt(criticals, state, situation, briefing)
+          yield* handleInterrupt(criticals, state, summary)
         }
 
         // Non-critical → accumulate, dedup by ruleName
@@ -371,7 +368,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         }
 
         // Plan + spawn cycle
-        yield* planAndSpawn(state, situation, briefing)
+        yield* planAndSpawn(state, summary)
       })
 
     /** Process a tick: heartbeat, timeout checks, and proactive plan/spawn. */
@@ -382,10 +379,9 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         yield* Ref.set(tickCountRef, tick)
 
         const state = yield* Ref.get(gameStateRef)
-        const situation = classifier.classify(state)
-        const briefing = classifier.briefing(state, situation)
+        const summary = classifier.summarize(state)
 
-        yield* checkMidRun(subagentRefs, planRefs, timingRefs, { skills }, state, situation)
+        yield* checkMidRun(subagentRefs, planRefs, timingRefs, { skills }, state, summary.situation)
 
         const currentFiber = yield* Ref.get(subagentFiberRef)
         if (currentFiber) {
@@ -396,7 +392,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           }
         }
 
-        yield* planAndSpawn(state, situation, briefing)
+        yield* planAndSpawn(state, summary)
       })
 
     /** Process a reset event (e.g. death): kill everything, start fresh. */
@@ -421,9 +417,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
     // Initial planning on startup
     yield* Effect.gen(function* () {
       const state = yield* Ref.get(gameStateRef)
-      const situation = classifier.classify(state)
-      const briefing = classifier.briefing(state, situation)
-      yield* planAndSpawn(state, situation, briefing)
+      const summary = classifier.summarize(state)
+      yield* planAndSpawn(state, summary)
     }).pipe(
       Effect.catchAllCause((cause) => {
         const msg = cause.toString().slice(0, 500)
@@ -448,56 +443,36 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           yield* Ref.update(gameStateRef, result.stateUpdate)
         }
 
-        // Update tick if present
-        if (result.tick !== undefined) {
-          yield* Ref.set(tickCountRef, result.tick)
-        }
-
         // Run logging side effect
         if (result.log) {
           yield* Effect.sync(() => result.log!())
         }
 
-        // Accumulate context (e.g. chat messages) via domain context handler
-        if (result.accumulatedContext) {
-          const { chatMessages } = yield* contextHandler.processContext(
-            result.accumulatedContext, config.char)
+        // Accumulate context (e.g. chat messages)
+        if (result.context?.chatMessages) {
           yield* Ref.update(chatContextRef, (msgs) =>
-            [...msgs, ...(chatMessages ?? [])].slice(-20))
+            [...msgs, ...result.context!.chatMessages!.map(m => ({ channel: m.channel, sender: m.sender, content: m.content }))].slice(-20))
         }
 
-        // Handle the different event result types
+        // Handle the different event result types via discriminated union
         yield* Effect.gen(function* () {
-          if (result.isReset) {
+          const tag = result.category?._tag
+
+          if (tag === "LifecycleReset") {
             yield* handleReset()
             return
           }
 
-          if (result.isInterrupt) {
-            const plan = yield* Ref.get(planRef)
-            const currentStep = yield* Ref.get(stepRef)
-            const currentTask = plan && currentStep < plan.steps.length ? plan.steps[currentStep].task : undefined
-
-            const state = yield* Ref.get(gameStateRef)
-            const situation = classifier.classify(state)
-
-            // Use domain-provided alerts if present, otherwise fall back to the interrupt registry
-            const alerts: Alert[] = result.alerts ?? interrupts.criticals(state, situation, currentTask)
-            if (alerts.length > 0) {
-              const briefing = classifier.briefing(state, situation)
-              yield* handleInterrupt(alerts, state, situation, briefing)
-            }
-            return
-          }
-
-          if (result.isStateUpdate) {
+          if (tag === "StateChange") {
             const state = yield* Ref.get(gameStateRef)
             yield* handleStateUpdateEvent(state)
             return
           }
 
-          if (result.isTick && result.tick !== undefined) {
-            yield* handleTickEvent(result.tick)
+          if (tag === "Heartbeat") {
+            const tick = (result.category as { _tag: "Heartbeat"; tick: number }).tick
+            yield* Ref.set(tickCountRef, tick)
+            yield* handleTickEvent(tick)
             return
           }
         }).pipe(

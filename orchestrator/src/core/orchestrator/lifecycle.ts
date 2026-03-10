@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import type { Plan, PlanStep, StepCompletionResult } from "../types.js"
+import type { SituationSummary } from "../limbic/thalamus/situation-classifier.js"
 
 /**
  * Context passed to the beforePlan hook.
@@ -7,9 +8,8 @@ import type { Plan, PlanStep, StepCompletionResult } from "../types.js"
  * not typed state.
  */
 export interface PlanContext {
-  briefing: string
+  summary: SituationSummary
   state: unknown
-  situation: unknown
   diary: string
   previousFailure?: string
 }

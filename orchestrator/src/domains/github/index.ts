@@ -9,7 +9,6 @@ import { GitHubInterruptRegistryLive } from "./interrupts.js"
 import { GitHubSituationClassifierLive } from "./situation-classifier.js"
 import { GitHubStateRendererLive } from "./renderer.js"
 import { GitHubPromptBuilderLive } from "./prompt-builder.js"
-import { GitHubContextHandlerLive } from "./context-handler.js"
 import { GitHubClientLive } from "./github-client.js"
 import { parseFrontmatter } from "../../core/template.js"
 
@@ -66,7 +65,6 @@ export const gitHubDomainBundle: DomainBundle = Layer.mergeAll(
   GitHubInterruptRegistryLive,
   GitHubSituationClassifierLive,
   GitHubStateRendererLive,
-  GitHubContextHandlerLive,
 )
 
 /** GitHub-specific service layer (GitHubClient) for the CLI's global service layer. */

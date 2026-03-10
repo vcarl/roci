@@ -5,6 +5,7 @@ import type { GameEvent, StateUpdateEvent } from "./ws-types.js"
 
 function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult {
   return {
+    category: { _tag: "StateChange" },
     stateUpdate: (prev) => {
       const smPrev = prev as GameState
       return {
@@ -25,8 +26,6 @@ function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult {
           : null,
       }
     },
-    tick: payload.tick > 0 ? payload.tick : undefined,
-    isStateUpdate: true,
   }
 }
 
@@ -43,22 +42,15 @@ const spaceMoltEventProcessor: EventProcessor = {
 
       case "tick":
         return {
-          tick: smEvent.payload.tick,
-          isTick: true,
+          category: { _tag: "Heartbeat", tick: smEvent.payload.tick },
         }
 
       case "combat_update": {
         const { payload } = smEvent
         return {
-          isInterrupt: true,
-          alerts: [{
-            priority: "critical" as const,
-            message: `Combat: ${payload.attacker} attacking ${payload.target} for ${payload.damage} damage`,
-            suggestedAction: "Assess threat and respond",
-            ruleName: "combat_update",
-          }],
-          accumulatedContext: {
-            combatUpdate: payload,
+          category: { _tag: "StateChange" },
+          context: {
+            chatMessages: [],
           },
           log: () => {
             // Console logging handled by the state machine's interrupt path
@@ -68,27 +60,21 @@ const spaceMoltEventProcessor: EventProcessor = {
 
       case "player_died":
         return {
-          isReset: true,
+          category: { _tag: "LifecycleReset", reason: "player_died" },
           log: () => {
             // Logging handled by the state machine
-          },
-          accumulatedContext: {
-            deathEvent: smEvent.payload,
           },
         }
 
       case "chat_message": {
         const { payload } = smEvent
         return {
-          accumulatedContext: {
-            chatMessage: {
-              id: payload.id,
-              sender_id: payload.sender_id,
-              sender: payload.sender,
+          context: {
+            chatMessages: [{
               channel: payload.channel,
+              sender: payload.sender,
               content: payload.content,
-              timestamp: payload.timestamp,
-            },
+            }],
           },
         }
       }
@@ -97,9 +83,6 @@ const spaceMoltEventProcessor: EventProcessor = {
         return {
           log: () => {
             // Logging handled externally
-          },
-          accumulatedContext: {
-            error: smEvent.payload,
           },
         }
 

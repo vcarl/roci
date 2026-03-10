@@ -77,10 +77,11 @@ function buildAdditionalSection(additionalContext?: string): string {
 
 const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilder, "systemPrompt"> => ({
   planPrompt(ctx) {
+    const briefing = ctx.summary.sections.map(s => `## ${s.heading}\n${s.body}`).join("\n\n")
     return renderTemplate(templates.plan, {
       taskList: TASK_LIST,
       tickIntervalSec: String(ctx.tickIntervalSec),
-      briefing: ctx.briefing,
+      briefing,
       failureSection: buildFailureSection(ctx.previousFailure),
       chatSection: buildChatSection(ctx.recentChat),
       timingSection: buildTimingSection(ctx.stepTimingHistory),
@@ -88,7 +89,7 @@ const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilde
       background: ctx.background,
       values: ctx.values,
       diary: ctx.diary.slice(-2000),
-      situationType: (ctx.situation as Situation).type,
+      situationType: (ctx.summary.situation as Situation).type,
     })
   },
 
@@ -97,9 +98,10 @@ const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilde
       ? `Current plan:\n${ctx.currentPlan.steps.map((s: { task: string; goal: string }, i: number) => `${i + 1}. [${s.task}] ${s.goal}`).join("\n")}`
       : "No active plan."
 
+    const briefing = `${ctx.summary.headline}\n\n${ctx.summary.sections.map(s => `## ${s.heading}\n${s.body}`).join("\n\n")}`
     return renderTemplate(templates.interrupt, {
       alerts: ctx.alerts.map((a) => `[${a.priority}] ${a.message} (suggested: ${a.suggestedAction ?? "none"})`).join("\n"),
-      briefing: ctx.briefing,
+      briefing,
       currentPlanSummary,
       background: ctx.background.slice(0, 1000),
     })

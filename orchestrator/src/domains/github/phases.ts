@@ -6,7 +6,6 @@ import * as path from "node:path"
 import type { GitHubCharacterConfig } from "./types.js"
 import type { GitHubState } from "./types.js"
 import type { GitHubEvent } from "./types.js"
-import type { GitHubSituation } from "./types.js"
 import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
 import { Docker } from "../../services/Docker.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
@@ -18,20 +17,17 @@ import { SituationClassifierTag } from "../../core/limbic/thalamus/situation-cla
 import { GitHubClientTag } from "./github-client.js"
 import { dream } from "../../core/limbic/hippocampus/dream.js"
 import { runCycle } from "../../core/limbic/hypothalamus/cycle-runner.js"
-import { renderStateSummary } from "./prompt-helpers.js"
 import { Claude } from "../../services/Claude.js"
+import type { HypervisorTempo } from "../../core/limbic/hypothalamus/tempo.js"
 
-/** Break duration in milliseconds (90 minutes). */
-const BREAK_DURATION_MS = 90 * 60 * 1000
-
-/** How often to poll the event queue during break (seconds). */
-const BREAK_POLL_INTERVAL_SEC = 5
-
-/** Diary lines above this threshold trigger dream compression. */
-const DIARY_COMPRESSION_THRESHOLD = 200
-
-/** Max brain/body cycles per active phase. */
-const MAX_CYCLES = 3
+const tempo: HypervisorTempo = {
+  _tag: "Hypervisor",
+  tickIntervalSec: 30,
+  maxCycles: 3,
+  breakDurationMs: 90 * 60 * 1000,
+  breakPollIntervalSec: 5,
+  dreamThreshold: 200,
+}
 
 /** Brain timeout in milliseconds (8 minutes). */
 const BRAIN_TIMEOUT_MS = 8 * 60 * 1000
@@ -270,7 +266,7 @@ const activePhase = {
         containerId: context.containerId,
       })
 
-      for (let cycle = 0; cycle < MAX_CYCLES; cycle++) {
+      for (let cycle = 0; cycle < tempo.maxCycles; cycle++) {
         // Drain pending events and update state
         let drained = false
         while (!drained) {
@@ -289,12 +285,10 @@ const activePhase = {
           }
         }
 
-        // Get situation from classifier (via domainBundle) and render state summary
-        const brainPromptParts = yield* Effect.gen(function* () {
+        // Get situation summary from classifier (via domainBundle)
+        const summary = yield* Effect.gen(function* () {
           const classifier = yield* SituationClassifierTag
-          const situation = classifier.classify(currentState)
-          const stateSummary = renderStateSummary(currentState as GitHubState, situation as GitHubSituation)
-          return { stateSummary }
+          return classifier.summarize(currentState)
         }).pipe(Effect.provide(context.domainBundle!))
 
         // Read character identity
@@ -309,8 +303,11 @@ const activePhase = {
         const diary = yield* charFs.readDiary(context.char)
 
         const buildBrainPrompt = () => {
+          const stateSummary = summary.sections
+            .map(s => `## ${s.heading}\n${s.body}`)
+            .join("\n\n")
           const parts = [
-            `# Current State\n\n${brainPromptParts.stateSummary}`,
+            `# Current State\n\n${stateSummary}`,
           ]
           if (background) {
             parts.push(`\n\n# Your Identity\n\n${background}`)
@@ -322,7 +319,7 @@ const activePhase = {
           return parts.join("")
         }
 
-        yield* logToConsole(context.char.name, "orchestrator", `Cycle ${cycle + 1}/${MAX_CYCLES}`)
+        yield* logToConsole(context.char.name, "orchestrator", `Cycle ${cycle + 1}/${tempo.maxCycles}`)
 
         const cycleResult = yield* runCycle({
           containerId: context.containerId,
@@ -372,7 +369,7 @@ const breakPhase = {
 
       const conn = context.connection as GHConnection
 
-      yield* logToConsole(context.char.name, "orchestrator", `Break phase — resting for ${BREAK_DURATION_MS / 60_000} minutes (monitoring for critical interrupts)`)
+      yield* logToConsole(context.char.name, "orchestrator", `Break phase — resting for ${tempo.breakDurationMs / 60_000} minutes (monitoring for critical interrupts)`)
 
       const startTime = Date.now()
       // Track state locally so we can detect critical interrupts
@@ -380,7 +377,7 @@ const breakPhase = {
 
       // Poll loop: drain events, check for critical interrupts
       let interrupted = false
-      while (Date.now() - startTime < BREAK_DURATION_MS) {
+      while (Date.now() - startTime < tempo.breakDurationMs) {
         // Drain all pending events without blocking
         let drained = false
         while (!drained) {
@@ -403,9 +400,9 @@ const breakPhase = {
               }
 
               // Only check for critical interrupts on state updates
-              if (result.isStateUpdate || result.isInterrupt) {
-                const situation = classifier.classify(currentState)
-                const criticals = interruptRegistry.criticals(currentState, situation)
+              if (result.category?._tag === "StateChange") {
+                const summary = classifier.summarize(currentState)
+                const criticals = interruptRegistry.criticals(currentState, summary.situation)
 
                 if (criticals.length > 0) {
                   yield* logToConsole(
@@ -424,7 +421,7 @@ const breakPhase = {
 
         if (interrupted) break
 
-        yield* Effect.sleep(`${BREAK_POLL_INTERVAL_SEC} seconds`)
+        yield* Effect.sleep(`${tempo.breakPollIntervalSec} seconds`)
       }
 
       // Thread updated state into the connection for the next active phase
@@ -451,7 +448,7 @@ const reflectionPhase = {
 
       const diary = yield* charFs.readDiary(context.char)
       const diaryLines = diary.split("\n").length
-      if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
+      if (diaryLines > tempo.dreamThreshold) {
         yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
         yield* dream.execute({ char: context.char }).pipe(
           Effect.catchAll((e) =>

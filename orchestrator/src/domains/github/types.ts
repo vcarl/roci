@@ -129,7 +129,6 @@ export interface RepoSituation {
 export interface GitHubSituation {
   type: GitHubSituationType  // worst across all repos
   repos: RepoSituation[]
-  alerts: Array<{ priority: "critical" | "high" | "medium" | "low"; message: string; suggestedAction?: string }>
 }
 
 // =====================================================

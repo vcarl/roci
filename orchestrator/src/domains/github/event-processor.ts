@@ -18,20 +18,19 @@ const gitHubEventProcessor: EventProcessor = {
           currentBranch: repos[repoIndex]?.currentBranch ?? null,
         }
         return {
+          category: { _tag: "StateChange" },
           stateUpdate: () => ({
             ...prev,
             repos,
             timestamp: Date.now(),
             authenticatedUser: prev.authenticatedUser,
           }) as unknown,
-          isStateUpdate: true,
         } satisfies EventResult
       }
 
       case "tick":
         return {
-          tick: ghEvent.payload.tick,
-          isTick: true,
+          category: { _tag: "Heartbeat", tick: ghEvent.payload.tick },
         } satisfies EventResult
 
       default:

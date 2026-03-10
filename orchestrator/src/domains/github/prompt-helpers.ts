@@ -29,36 +29,6 @@ export function renderReposSummary(state: GitHubState, situation: GitHubSituatio
   }).join("\n\n")
 }
 
-export function renderStateSummary(state: GitHubState, situation: GitHubSituation): string {
-  const authUser = state.authenticatedUser
-  return state.repos.map((repo, i) => {
-    const sit = situation.repos[i]
-    const lines = [
-      `## ${repo.owner}/${repo.repo} — ${sit?.type ?? "unknown"}`,
-      `CI: ${repo.ciStatus} | Issues: ${repo.openIssues.length} | PRs: ${repo.openPRs.length}`,
-    ]
-
-    if (repo.openIssues.length > 0) {
-      lines.push("Issues:")
-      for (const issue of repo.openIssues) {
-        const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : ""
-        lines.push(`  #${issue.number}: ${issue.title}${labels}`)
-      }
-    }
-
-    if (repo.openPRs.length > 0) {
-      lines.push("PRs:")
-      for (const pr of repo.openPRs) {
-        const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
-        const yours = authUser && pr.author === authUser ? " (yours)" : ""
-        lines.push(`  #${pr.number}: ${pr.title} (${status})${yours}`)
-      }
-    }
-
-    return lines.join("\n")
-  }).join("\n\n")
-}
-
 export function buildTimingSection(ctx: PlanPromptContext): string {
   if (!ctx.stepTimingHistory || ctx.stepTimingHistory.length === 0) return ""
   return `\n## Recent Step Outcomes\n${ctx.stepTimingHistory.map((h) => {

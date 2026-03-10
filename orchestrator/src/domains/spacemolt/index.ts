@@ -6,7 +6,6 @@ import { SpaceMoltInterruptRegistryLive } from "./interrupts.js"
 import { SpaceMoltSituationClassifierLive } from "./situation.js"
 import { SpaceMoltStateRendererLive } from "./renderer.js"
 import { SpaceMoltPromptBuilderLive } from "./prompt-builder.js"
-import { SpaceMoltContextHandlerLive } from "./context-handler.js"
 import { makeGameSocketLive } from "./game-socket.js"
 
 /** No-op skill registry — all step completion falls through to the LLM evaluator. */
@@ -30,7 +29,6 @@ export const spaceMoltDomainBundle: DomainBundle = Layer.mergeAll(
   SpaceMoltInterruptRegistryLive,
   SpaceMoltSituationClassifierLive,
   SpaceMoltStateRendererLive,
-  SpaceMoltContextHandlerLive,
 )
 
 /** SpaceMolt-specific service layer (GameSocket) for the CLI's global service layer. */

@@ -9,11 +9,10 @@ import type {
   SubagentPromptContext,
 } from "../../core/prompt-builder.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
-import type { GitHubState, GitHubSituation } from "./types.js"
+import type { GitHubState } from "./types.js"
 import type { BrainMode } from "../../core/types.js"
 import { parseFrontmatter, renderTemplate } from "../../core/template.js"
 import {
-  renderStateSummary,
   buildTimingSection,
   renderIdentitySection,
   renderProcedureContext,
@@ -130,7 +129,6 @@ Respond with JSON (the "procedure" field is REQUIRED):
 
 function planPrompt(ctx: PlanPromptContext): string {
   const state = ctx.state as GitHubState
-  const situation = ctx.situation as GitHubSituation
 
   const template = procedureTemplates.get(ctx.mode)
   if (!template) {
@@ -145,11 +143,17 @@ function planPrompt(ctx: PlanPromptContext): string {
   const repoCount = String(state.repos.length)
   const repoPlural = state.repos.length === 1 ? "y" : "ies"
 
+  // Build stateSummary and briefing from summary.sections
+  const stateSummary = ctx.summary.sections
+    .map(s => `## ${s.heading}\n${s.body}`)
+    .join("\n\n")
+  const briefing = `${ctx.summary.headline}\n\n${stateSummary}`
+
   const baseVars: Record<string, string> = {
     repoCount,
     repoPlural,
-    stateSummary: renderStateSummary(state, situation),
-    briefing: ctx.briefing,
+    stateSummary,
+    briefing,
     identitySection: renderIdentitySection(ctx),
     timingSection: buildTimingSection(ctx),
     tickIntervalSec: String(ctx.tickIntervalSec),
@@ -549,10 +553,12 @@ function interruptPrompt(ctx: InterruptPromptContext): string {
     `[${a.priority}] ${a.message} (suggested: ${a.suggestedAction ?? "none"})`
   ).join("\n")
 
+  const briefing = `${ctx.summary.headline}\n\n${ctx.summary.sections.map(s => `## ${s.heading}\n${s.body}`).join("\n\n")}`
+
   return renderTemplate(template.template, {
     alertLines,
     modeContext,
-    briefing: ctx.briefing,
+    briefing,
     currentPlanSummary,
     background: ctx.background.slice(0, 1000),
   })

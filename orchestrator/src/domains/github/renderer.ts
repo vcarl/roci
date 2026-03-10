@@ -178,11 +178,13 @@ function renderForPlanning(state: GitHubState, situation: GitHubSituation): stri
   return sections.join("\n---\n\n")
 }
 
-function logStateBar(name: string, state: GitHubState, situation: GitHubSituation): void {
-  const repoSummaries = state.repos.map((r) =>
-    `${r.owner}/${r.repo}:i${r.openIssues.length}/p${r.openPRs.length}/${r.ciStatus}`,
-  )
-  const line = `[${name}] ${repoSummaries.join(" ")} | ${situation.type}`
+function logStateBar(name: string, metrics: Record<string, string | number | boolean>): void {
+  const parts: string[] = []
+  if (metrics.totalRepos !== undefined) parts.push(`repos:${metrics.totalRepos}`)
+  if (metrics.openIssues !== undefined) parts.push(`issues:${metrics.openIssues}`)
+  if (metrics.openPRs !== undefined) parts.push(`PRs:${metrics.openPRs}`)
+  if (metrics.ciFailingRepos !== undefined && Number(metrics.ciFailingRepos) > 0) parts.push(`CI-fail:${metrics.ciFailingRepos}`)
+  const line = `[${name}] ${parts.join(" ")}`
   process.stderr.write(`\r${line}`)
 }
 
@@ -199,8 +201,8 @@ const gitHubStateRenderer: StateRenderer = {
   renderForPlanning(state, situation) {
     return renderForPlanning(state as GitHubState, situation as GitHubSituation)
   },
-  logStateBar(name, state, situation) {
-    logStateBar(name, state as GitHubState, situation as GitHubSituation)
+  logStateBar(name, metrics) {
+    logStateBar(name, metrics)
   },
 }
 

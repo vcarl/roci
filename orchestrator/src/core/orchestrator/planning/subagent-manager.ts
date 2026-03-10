@@ -91,8 +91,8 @@ export const evaluateCompletedSubagent = (
       const diffStr = services.renderer.stateDiff(stateBefore, stateAfter)
 
       // Run deterministic condition check
-      const situation = services.classifier.classify(state)
-      const conditionCheck = services.skills.isStepComplete(currentStep, state, situation)
+      const evalSummary = services.classifier.summarize(state)
+      const conditionCheck = services.skills.isStepComplete(currentStep, state, evalSummary.situation)
 
       // Short-circuit: if deterministic check passes with a recognized condition, skip LLM
       if (conditionCheck.complete && conditionCheck.matchedCondition) {

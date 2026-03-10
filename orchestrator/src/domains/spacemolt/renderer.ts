@@ -7,7 +7,6 @@ import {
   snapshot,
   richSnapshot,
   stateDiff,
-  logStateBar,
 } from "./state-renderer.js"
 
 const spaceMoltStateRenderer: StateRenderer = {
@@ -27,8 +26,16 @@ const spaceMoltStateRenderer: StateRenderer = {
     return generateBriefing(state as GameState, situation as Situation)
   },
 
-  logStateBar(name, state, situation) {
-    logStateBar(name, state as GameState, situation as Situation)
+  logStateBar(name, metrics) {
+    // Reconstruct minimal state info from metrics for the existing logStateBar function
+    // The SpaceMolt logStateBar needs full state, so we just print key metrics
+    const parts: string[] = []
+    if (metrics.situationType) parts.push(`${metrics.situationType}`)
+    if (metrics.inCombat) parts.push("COMBAT")
+    if (typeof metrics.fuel === "number") parts.push(`fuel:${Math.round(metrics.fuel * 100)}%`)
+    if (typeof metrics.hull === "number") parts.push(`hull:${Math.round(metrics.hull * 100)}%`)
+    if (metrics.cargoUsed !== undefined) parts.push(`cargo:${metrics.cargoUsed}/${metrics.cargoCapacity}`)
+    process.stderr.write(`\r[${name}] ${parts.join(" ")}`)
   },
 }
 
