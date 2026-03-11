@@ -6,7 +6,7 @@ import type { ExitReason } from "../../core/types.js"
 import type { LifecycleHooks } from "../../core/orchestrator/lifecycle.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { GameSocket } from "./game-socket.js"
-import { dream } from "../../core/limbic/hippocampus/dream.js"
+import { runReflection } from "../../core/orchestrator/hypervisor.js"
 import { dinner } from "./dinner.js"
 import { runStateMachine } from "../../core/orchestrator/state-machine.js"
 import { logToConsole } from "../../logging/console-renderer.js"
@@ -43,16 +43,7 @@ const startupPhase = {
       )
 
       // Dream if diary is long
-      const diary = yield* charFs.readDiary(context.char)
-      const diaryLines = diary.split("\n").length
-      if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
-        yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-        yield* dream.execute({ char: context.char }).pipe(
-          Effect.catchAll((e) =>
-            logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
-          ),
-        )
-      }
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
 
       const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
       return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -146,19 +137,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      const charFs = yield* CharacterFs
-
-      const diary = yield* charFs.readDiary(context.char)
-      const diaryLines = diary.split("\n").length
-      if (diaryLines > DIARY_COMPRESSION_THRESHOLD) {
-        yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-        yield* dream.execute({ char: context.char }).pipe(
-          Effect.catchAll((e) =>
-            logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
-          ),
-        )
-      }
-
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }
