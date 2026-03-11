@@ -4,25 +4,61 @@ How to build a new domain for the Rocinante orchestrator.
 
 ## What is a Domain?
 
-The orchestrator is a generic plan/act/evaluate loop. It reads events from a queue, classifies the current situation, asks an LLM to plan, spawns subagents to execute steps, and evaluates results. None of this logic knows about any specific game or environment.
+The orchestrator is a generic engine for running autonomous character-driven sessions. It reads events from a queue, classifies the current situation, and drives agent work cycles. Two execution models are available: a **state machine** (reactive plan/act/evaluate loop) and a **hypervisor** (batch brain/body cycles with breaks). None of this logic knows about any specific game or environment.
 
-A **domain** plugs into this loop by implementing 7 service interfaces (plus a phase registry and config object). The core never imports domain code — services are injected via Effect tags at startup. SpaceMolt is the reference implementation; this guide explains how to build a second one.
+A **domain** plugs into this engine by implementing 6 service interfaces (plus a phase registry and config object). The core never imports domain code — services are injected via Effect tags at startup. SpaceMolt (state machine) and GitHub (hypervisor) are the two reference implementations.
 
-## The 7 Services at a Glance
+## The 6 Services at a Glance
 
 | # | Interface | Tag | Purpose | Difficulty |
 |---|-----------|-----|---------|------------|
-| 1 | `EventProcessor` | `EventProcessorTag` | Translate raw events → `EventResult` flags | Medium |
-| 2 | `SituationClassifier` | `SituationClassifierTag` | Derive structured situation from state | Medium |
+| 1 | `EventProcessor` | `EventProcessorTag` | Translate raw events → `EventResult` with `EventCategory` | Medium |
+| 2 | `SituationClassifier` | `SituationClassifierTag` | Derive `SituationSummary` (headline, sections, metrics) from state | Medium |
 | 3 | `StateRenderer` | `StateRendererTag` | State → human-readable text (snapshots, diffs, console bar) | Medium |
 | 4 | `InterruptRegistry` | `InterruptRegistryTag` | Declarative rules that trigger replanning | Easy |
-| 5 | `ContextHandler` | `ContextHandlerTag` | Process accumulated context (chat, errors, etc.) | Easy |
-| 6 | `PromptBuilder` | `PromptBuilderTag` | Assemble the 4 LLM prompts (plan, interrupt, evaluate, subagent) | Hard |
-| 7 | `SkillRegistry` | `SkillRegistryTag` | Deterministic step-completion checks + task catalog | Easy (stub OK) |
+| 5 | `PromptBuilder` | `PromptBuilderTag` | Assemble LLM prompts (plan, interrupt, evaluate, subagent, brain) | Hard |
+| 6 | `SkillRegistry` | `SkillRegistryTag` | Deterministic step-completion checks + task catalog | Easy (stub OK) |
 
 Additionally:
 - **`PhaseRegistry`** — defines the session lifecycle (connect → play → reflect → repeat)
+- **`TempoConfig`** — timing parameters for the execution engine (see "Execution Models" below)
 - **`DomainConfig`** — bundles everything together for the orchestrator
+
+## Execution Models
+
+Domains choose one of two core engines. Your active phase calls the chosen engine; the engine pulls services from the `DomainBundle` you provide.
+
+### State Machine (`runStateMachine`)
+
+A reactive event loop: read events from a queue, plan a sequence of steps, spawn subagents to execute each step, evaluate completion, replan on interrupts. Used by **SpaceMolt**.
+
+Configured with `StateMachineTempo`:
+```ts
+interface StateMachineTempo {
+  _tag: "StateMachine"
+  tickIntervalSec: number     // heartbeat / polling interval
+  maxTurns: number             // exit after this many event-loop turns
+  dreamThreshold: number       // diary lines before triggering dream compression
+}
+```
+
+### Hypervisor (`runHypervisor`)
+
+A batch brain/body cycle: drain pending events, build a brain prompt from state + identity, run a brain session (Opus plans), then a body session (Sonnet executes), repeat for N cycles, then take a break. Used by **GitHub**.
+
+Configured with `HypervisorTempo`:
+```ts
+interface HypervisorTempo {
+  _tag: "Hypervisor"
+  tickIntervalSec: number       // heartbeat / polling interval
+  maxCycles: number             // brain/body cycles per active phase
+  breakDurationMs: number       // rest period between active phases
+  breakPollIntervalSec: number  // how often to check for critical interrupts during break
+  dreamThreshold: number        // diary lines before triggering dream compression
+}
+```
+
+Both types extend `TempoBase` (`tickIntervalSec`, `dreamThreshold`). The discriminant is `_tag`.
 
 ## Step-by-Step: Building a Domain
 
@@ -51,7 +87,6 @@ export interface MySituation {
     deployPending: boolean
     // ...
   }
-  alerts: Alert[]  // always empty from classify(); alerts come from InterruptRegistry
 }
 
 export enum MySituationType {
@@ -69,12 +104,12 @@ export type MyEvent =
 
 ### 2. `EventProcessor` — Translate Events
 
-Maps raw domain events into `EventResult` objects that tell the state machine what to do.
+Maps raw domain events into `EventResult` objects that tell the engine how to react.
 
 ```ts
 // domains/mydomain/event-processor.ts
 import { Layer } from "effect"
-import { EventProcessorTag, type EventResult } from "../../core/event-source.js"
+import { EventProcessorTag, type EventResult } from "../../core/limbic/thalamus/event-processor.js"
 import type { MyEvent } from "./types.js"
 
 const myEventProcessor = {
@@ -83,20 +118,16 @@ const myEventProcessor = {
     switch (e.type) {
       case "state_update":
         return {
+          category: { _tag: "StateChange" },
           stateUpdate: () => e.payload,
-          isStateUpdate: true,
         }
       case "tick":
-        return { tick: e.payload.tick, isTick: true }
-      case "webhook":
-        // Interrupt events can attach alerts directly
         return {
-          isInterrupt: true,
-          alerts: [{
-            priority: "critical",
-            message: `Incident: ${e.payload.title}`,
-            suggestedAction: "investigate",
-          }],
+          category: { _tag: "Heartbeat", tick: e.payload.tick },
+        }
+      case "lifecycle_reset":
+        return {
+          category: { _tag: "LifecycleReset", reason: "Session ended" },
         }
       default:
         return {}
@@ -107,50 +138,76 @@ const myEventProcessor = {
 export const MyEventProcessorLive = Layer.succeed(EventProcessorTag, myEventProcessor)
 ```
 
-Key `EventResult` fields:
-- `stateUpdate?: (prev) => next` — merge function applied to the state ref
-- `isStateUpdate` / `isTick` / `isInterrupt` / `isReset` — flags that route to the right handler
-- `alerts?: Alert[]` — when `isInterrupt: true`, these alerts are used directly instead of querying the `InterruptRegistry`
-- `accumulatedContext?: Record<string, unknown>` — data passed to `ContextHandler`
-- `log?: () => void` — synchronous side effect for console logging
+`EventResult` uses a discriminated union `EventCategory` instead of boolean flags:
 
-### 3. `SituationClassifier` — `classify()` + `briefing()`
+```ts
+type EventCategory =
+  | { _tag: "Heartbeat"; tick: number }
+  | { _tag: "StateChange" }
+  | { _tag: "LifecycleReset"; reason: string }
 
-Derives a structured situation from raw state. Called on every state update and tick.
+interface EventResult {
+  category?: EventCategory            // what kind of event this is
+  stateUpdate?: (prev) => next        // merge function applied to the state ref
+  context?: DomainContext              // typed context (e.g. chatMessages)
+  log?: () => void                    // synchronous side effect for console logging
+}
+```
+
+`DomainContext` is a typed interface (currently carries optional `chatMessages`), replacing the old untyped `accumulatedContext` map.
+
+### 3. `SituationClassifier` — `summarize()`
+
+Derives a structured `SituationSummary` from raw state. Called on every state change and at the start of each brain/body cycle.
 
 ```ts
 import { Layer } from "effect"
-import { SituationClassifierTag } from "../../core/situation.js"
+import { SituationClassifierTag } from "../../core/limbic/thalamus/situation-classifier.js"
+import type { SituationSummary } from "../../core/limbic/thalamus/situation-classifier.js"
 import type { MyState, MySituation } from "./types.js"
 
 const myClassifier = {
-  classify(state: unknown): unknown {
+  summarize(state: unknown): SituationSummary {
     const s = state as MyState
-    return {
+    const situation: MySituation = {
       type: s.openIssues.some(i => i.severity === "critical") ? "incident" : "idle",
       flags: {
         hasCriticalBug: s.openIssues.some(i => i.severity === "critical"),
         deployPending: s.lastDeploy?.status === "pending",
       },
-      alerts: [],  // always empty — alerts come from InterruptRegistry
-    } satisfies MySituation
-  },
+    }
 
-  briefing(state: unknown, situation: unknown): string {
-    const s = state as MyState
-    const sit = situation as MySituation
-    return `Project: ${s.projectName}. Status: ${sit.type}. ${s.openIssues.length} open issues.`
+    return {
+      situation,
+      headline: `${s.projectName}: ${situation.type} — ${s.openIssues.length} open issues`,
+      sections: [
+        {
+          id: "issues",
+          heading: "Open Issues",
+          body: s.openIssues.map(i => `- [${i.severity}] ${i.title}`).join("\n"),
+        },
+      ],
+      metrics: {
+        issueCount: s.openIssues.length,
+        ciFailing: s.ciStatus === "red",
+        deployPending: s.lastDeploy?.status === "pending" ?? false,
+      },
+    }
   },
 }
 
 export const MySituationClassifierLive = Layer.succeed(SituationClassifierTag, myClassifier)
 ```
 
-**`briefing()` vs `renderForPlanning()`**: `briefing()` is a short summary passed to the brain's planning and interrupt prompts. `renderForPlanning()` (on `StateRenderer`) is the detailed state dump included in planning context. Both are called each planning cycle, but briefing is ~1 sentence while renderForPlanning can be many lines.
+The `SituationSummary` shape:
+- **`situation`** — your domain-specific situation object (opaque to the core)
+- **`headline`** — one-line summary used in brain prompts and logging
+- **`sections`** — structured content blocks for detailed brain prompts (each has `id`, `heading`, `body`)
+- **`metrics`** — key/value pairs passed to `StateRenderer.logStateBar()` for console output
 
 ### 4. `StateRenderer` — Snapshots, Diffs, Console Bar
 
-Renders state into human-readable forms for prompts, logging, and diff tracking.
+Renders state into human-readable forms for diff tracking and logging. Detailed state for prompts is now handled by `SituationSummary.sections` (from the classifier).
 
 ```ts
 import { Layer } from "effect"
@@ -174,21 +231,16 @@ const myRenderer = {
     return `Issues: ${before.issues} → ${(after as any).issues}`
   },
 
-  renderForPlanning(state: unknown, situation: unknown): string {
-    // Detailed state for the planning prompt
-    const s = state as MyState
-    return JSON.stringify(s, null, 2)
-  },
-
-  logStateBar(name: string, state: unknown, situation: unknown): void {
-    // One-line console output per state update
-    const s = state as MyState
-    console.log(`[${name}] ${s.projectName} | ${s.openIssues.length} issues`)
+  logStateBar(name: string, metrics: Record<string, string | number | boolean>): void {
+    // One-line console output — `metrics` comes from SituationSummary.metrics
+    console.log(`[${name}] issues=${metrics.issueCount} ci=${metrics.ciFailing ? "red" : "green"}`)
   },
 }
 
 export const MyStateRendererLive = Layer.succeed(StateRendererTag, myRenderer)
 ```
+
+Note: `logStateBar` receives the `metrics` record from `SituationSummary`, not the raw state and situation. This keeps the renderer decoupled from the situation classifier's internals.
 
 ### 5. `InterruptRegistry` — Rules + `createInterruptRegistry()`
 
@@ -227,55 +279,35 @@ export const MyInterruptRegistryLive = Layer.succeed(InterruptRegistryTag, myInt
 
 The factory handles: iterating rules, checking conditions, building `Alert` objects, respecting `suppressWhenTaskIs`, and sorting by priority (critical > high > medium > low).
 
-### 6. `ContextHandler` — Process Accumulated Context
+### 6. `PromptBuilder` — Assemble the Prompts
 
-Processes the `accumulatedContext` map from `EventResult`. Returns a `ProcessedContext` (with optional `chatMessages`). Also a good place for logging side effects.
+This is the hardest service. The methods you need depend on your execution model.
 
-```ts
-import { Effect, Layer } from "effect"
-import { ContextHandlerTag } from "../../core/context-handler.js"
-import { CharacterLog } from "../../logging/log-writer.js"
+**State machine domains** use these 5 methods:
 
-const myContextHandler = {
-  processContext(context: Record<string, unknown>, char: any) {
-    return Effect.gen(function* () {
-      const log = yield* CharacterLog
-
-      if (context.webhookEvent) {
-        yield* log.action(char, {
-          timestamp: new Date().toISOString(),
-          source: "webhook",
-          character: char.name,
-          type: "webhook_received",
-          event: context.webhookEvent,
-        }).pipe(Effect.catchAll(() => Effect.void))
-      }
-
-      // chatMessages is optional — return {} if your domain has no chat
-      return {}
-    })
-  },
-}
-
-export const MyContextHandlerLive = Layer.succeed(ContextHandlerTag, myContextHandler)
-```
-
-### 7. `PromptBuilder` — Assemble the 4 Prompts
-
-This is the hardest service. You build 4 prompts that the brain uses:
-
-| Prompt | When Called | Expected LLM Response Format |
+| Method | When Called | Expected LLM Response Format |
 |--------|-----------|------------------------------|
 | `planPrompt` | Initial planning + replanning | JSON: `{ reasoning, steps: [{ task, goal, model, successCondition, timeoutTicks }] }` |
 | `interruptPrompt` | Critical alert fires | Same JSON format as planPrompt |
 | `evaluatePrompt` | After subagent completes a step | JSON: `{ complete: boolean, reason: string }` |
 | `subagentPrompt` | Before spawning a subagent | Free-form instructions for the subagent |
+| `systemPrompt` | Container system prompt for each subagent run | Free-form system prompt |
 
-See `core/prompt-builder.ts` for the exact context types (`PlanPromptContext`, `InterruptPromptContext`, `EvaluatePromptContext`, `SubagentPromptContext`).
+**Hypervisor domains** additionally use:
 
-The SpaceMolt implementation (`domains/spacemolt/prompt-builder.ts`) is the best reference — it shows how to weave state, situation, diary, background, and identity into effective prompts.
+| Method | When Called | Expected LLM Response Format |
+|--------|-----------|------------------------------|
+| `brainPrompt` | Each hypervisor cycle, before the brain session | Free-form briefing for the brain |
 
-### 8. `SkillRegistry` — Stub or Implement
+The `brainPrompt` receives a `HypervisorBrainPromptContext` with the `SituationSummary`, diary, background, values, cycle number, max cycles, soft alerts, and state diff. It should produce a complete briefing document that the brain session uses to decide what work to direct the body to do.
+
+State machine domains can stub `brainPrompt` with a throw (it will never be called). Hypervisor domains typically stub the state-machine-only methods (`planPrompt`, `interruptPrompt`, `evaluatePrompt`, `subagentPrompt`) the same way.
+
+See `core/prompt-builder.ts` for the exact context types (`PlanPromptContext`, `InterruptPromptContext`, `EvaluatePromptContext`, `SubagentPromptContext`, `HypervisorBrainPromptContext`).
+
+The SpaceMolt implementation (`domains/spacemolt/prompt-builder.ts`) is the best reference for state machine prompts. The GitHub implementation (`domains/github/prompt-builder.ts`) is the reference for hypervisor prompts.
+
+### 7. `SkillRegistry` — Stub or Implement
 
 A stub is valid for getting started:
 
@@ -298,34 +330,19 @@ export const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
 
 With a stub, all step completion falls through to the LLM evaluator (`brain.evaluate`). Real skills provide deterministic completion checks — useful when state changes are machine-verifiable (e.g., "cargo sold" can be checked by comparing cargo counts).
 
-### 9. `PhaseRegistry` — Define Session Lifecycle
+### 8. `PhaseRegistry` — Define Session Lifecycle
 
-Phases are the top-level session structure. A minimal registry needs at least a startup phase (which connects and returns a `ConnectionState`) and an active phase (which runs the event loop).
+Phases are the top-level session structure. A minimal registry needs at least a startup phase (which connects and returns a `ConnectionState`) and an active phase (which runs the chosen engine).
+
+**Active phases should be thin.** They configure the engine and call it — they should not reimplement orchestration logic. The core engine (`runStateMachine` or `runHypervisor`) handles event draining, state classification, interrupt detection, brain/body execution, and logging.
+
+#### State Machine Pattern (SpaceMolt-style)
 
 ```ts
 import { Effect, Deferred, Queue } from "effect"
-import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
-import type { ExitReason } from "../../core/types.js"
-import type { LifecycleHooks } from "../../core/lifecycle.js"
-import { eventLoop } from "../../monitor/event-loop.js"
+import { runStateMachine } from "../../core/orchestrator/state-machine.js"
 
-const startupPhase: Phase = {
-  name: "startup",
-  run: (context: PhaseContext) =>
-    Effect.gen(function* () {
-      // Connect to your event source, get initial state
-      const events = yield* Queue.bounded(500)
-      const initialState = { /* ... */ }
-
-      // Start your event source (WebSocket, polling, etc.) that pushes to `events`
-      // ...
-
-      const connection: ConnectionState = { events, initialState, tickIntervalSec: 30, initialTick: 0 }
-      return { _tag: "Continue", next: "active", connection } as PhaseResult
-    }),
-}
-
-const activePhase: Phase = {
+const activePhase = {
   name: "active",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
@@ -334,11 +351,8 @@ const activePhase: Phase = {
       }
       const conn = context.connection
       const exitSignal = yield* Deferred.make<ExitReason, never>()
-      const hooks: LifecycleHooks = {
-        shouldExit: (turns) => Effect.succeed(turns >= 100),
-      }
 
-      yield* eventLoop({
+      yield* runStateMachine({
         char: context.char,
         containerId: context.containerId,
         playerName: context.char.name,
@@ -348,26 +362,67 @@ const activePhase: Phase = {
         tickIntervalSec: conn.tickIntervalSec,
         initialTick: conn.initialTick,
         exitSignal,
-        hooks,
-        domainBundle: context.domainBundle,
-      })
+        hooks: { shouldExit: (turns) => Effect.succeed(turns >= 100) },
+      }).pipe(Effect.provide(context.domainBundle))
 
-      return { _tag: "Continue", next: "startup", connection: context.connection } as PhaseResult
+      return { _tag: "Continue", next: "social", connection: context.connection } as PhaseResult
     }),
-}
-
-const phases = [startupPhase, activePhase]
-
-export const myPhaseRegistry: PhaseRegistry = {
-  phases,
-  getPhase: (name) => phases.find((p) => p.name === name),
-  initialPhase: "startup",
 }
 ```
 
-The `domainBundle` is threaded through `PhaseContext` — pass it to `eventLoop()` so the state machine gets your service layers.
+#### Hypervisor Pattern (GitHub-style)
 
-### 10. `DomainConfig` — Assemble Everything
+```ts
+import { runHypervisor } from "../../core/orchestrator/hypervisor.js"
+import type { HypervisorTempo } from "../../core/limbic/hypothalamus/tempo.js"
+
+const tempo: HypervisorTempo = {
+  _tag: "Hypervisor",
+  tickIntervalSec: 30,
+  maxCycles: 3,
+  breakDurationMs: 90 * 60 * 1000,
+  breakPollIntervalSec: 5,
+  dreamThreshold: 200,
+}
+
+const activePhase = {
+  name: "active",
+  run: (context: PhaseContext) =>
+    Effect.gen(function* () {
+      if (!context.connection || !context.domainBundle) {
+        return { _tag: "Shutdown" } as PhaseResult
+      }
+      const conn = context.connection
+
+      const result = yield* runHypervisor({
+        char: context.char,
+        containerId: context.containerId,
+        containerEnv: context.containerEnv,
+        events: conn.events as Queue.Queue<unknown>,
+        initialState: conn.initialState as unknown,
+        tempo,
+        brainSystemPrompt: "...",
+        bodySystemPrompt: "...",
+        brainModel: "opus",
+        bodyModel: "sonnet",
+        brainTimeoutMs: 8 * 60 * 1000,
+        bodyTimeoutMs: 15 * 60 * 1000,
+      }).pipe(Effect.provide(context.domainBundle!))
+
+      const updatedConnection = { ...conn, initialState: result.finalState }
+      if (result._tag === "Interrupted") {
+        return { _tag: "Continue", next: "active", connection: updatedConnection } as PhaseResult
+      }
+      return { _tag: "Continue", next: "break", connection: updatedConnection } as PhaseResult
+    }),
+}
+```
+
+The key pattern in both cases: **`Effect.provide(context.domainBundle)`** — this injects your 6 service layers into the engine so it can access EventProcessor, SituationClassifier, etc.
+
+Hypervisor domains typically add `break` and `reflection` phases alongside `active`. The core provides `runBreak` (polls for critical interrupts during rest) and `runReflection` (dream compression) as reusable building blocks.
+
+### 9. `DomainConfig` — Assemble Everything
 
 ```ts
 import { Layer } from "effect"
@@ -380,7 +435,6 @@ export const myDomainBundle: DomainBundle = Layer.mergeAll(
   MySituationClassifierLive,
   MyStateRendererLive,
   MyInterruptRegistryLive,
-  MyContextHandlerLive,
   MyPromptBuilderLive,
   StubSkillRegistryLive,
 )
@@ -396,17 +450,27 @@ export const myDomainConfig = (projectRoot: string): DomainConfig => ({
 })
 ```
 
-To wire it up, update `cli.ts` to import your domain config instead of (or alongside) SpaceMolt's.
+Register your domain in `domains/registry.ts` — one line in `DOMAIN_REGISTRY`:
+
+```ts
+export const DOMAIN_REGISTRY: Record<string, DomainConfigFactory> = {
+  spacemolt: spaceMoltDomainConfig,
+  github: gitHubDomainConfig,
+  mydomain: myDomainConfig,  // <-- add here
+}
+```
+
+Then add an entry to `config.json` at the project root with your domain name and character list.
 
 ## Implicit Contracts
 
 Things the type system doesn't enforce but your domain must respect:
 
-### `accumulatedContext` Keys
+### `DomainContext` from `EventResult`
 
-`EventProcessor.processEvent()` returns `accumulatedContext: Record<string, unknown>`. `ContextHandler.processContext()` receives that same record. There's no schema — keys must match by convention between the two. Document your keys.
+`EventProcessor.processEvent()` can return a `context` field of type `DomainContext`. Currently this carries optional `chatMessages`. If your domain has chat-like input, populate this; otherwise omit it.
 
-### `planPrompt` Response Format
+### `planPrompt` Response Format (State Machine Domains)
 
 The brain parses plan responses as JSON. Your `planPrompt` must instruct the LLM to return:
 
@@ -427,7 +491,7 @@ The brain parses plan responses as JSON. Your `planPrompt` must instruct the LLM
 
 This is parsed by `brain.ts:parsePlan()`. Missing fields get defaults (`model: "haiku"`, `timeoutTicks: 10`).
 
-### `evaluatePrompt` Response Format
+### `evaluatePrompt` Response Format (State Machine Domains)
 
 The brain parses evaluate responses as JSON:
 
@@ -440,16 +504,13 @@ The brain parses evaluate responses as JSON:
 
 This is parsed by `brain.ts:brainEvaluate`.
 
-### `briefing()` vs `renderForPlanning()`
+### `SituationSummary` Structure
 
-- `briefing()` (SituationClassifier): ~1 sentence summary, used in planning and interrupt prompts as quick context
-- `renderForPlanning()` (StateRenderer): detailed state dump, included in the full planning context
+`summarize()` returns all state context the brain needs. The `headline` is a short summary (~1 sentence). The `sections` array provides structured detail for brain prompts. The `metrics` record feeds `logStateBar()` for console output. Design your sections so the brain gets enough context to make decisions without needing raw state.
 
-Both are called each planning cycle.
+### Alerts Come from `InterruptRegistry`, Not `summarize()`
 
-### `situation.alerts` Should Be Empty from `classify()`
-
-The `classify()` method should return `alerts: []`. Alerts are owned by the `InterruptRegistry` — they're evaluated separately by the state machine. The alerts field on your situation type is for your own domain-internal use if needed, but the state machine doesn't read it.
+The `InterruptRegistry` owns all alert evaluation. `summarize()` should not produce alerts — it classifies state. The engine calls `interruptRegistry.evaluate()` separately after each state change.
 
 ### Soft Alert Dedup
 
@@ -484,7 +545,6 @@ export interface ProjectSituation {
     stalePRs: boolean
     deployReady: boolean
   }
-  alerts: Alert[]
 }
 
 export type ProjectEvent =
@@ -542,20 +602,21 @@ const startupPhase = {
 const activePhase = {
   name: "active",
   run: (ctx: PhaseContext) => Effect.gen(function* () {
-    // same pattern as the template in section 9
+    // same pattern as the template in section 8
   }),
 }
 ```
 
-## Reference: SpaceMolt Implementation Map
+## Reference: Implementation Maps
 
-| Service | SpaceMolt File |
-|---------|---------------|
+### SpaceMolt (State Machine)
+
+| Service | File |
+|---------|------|
 | `EventProcessor` | `domains/spacemolt/event-processor.ts` |
 | `SituationClassifier` | `domains/spacemolt/situation.ts` → `situation-classifier.ts` |
 | `StateRenderer` | `domains/spacemolt/renderer.ts` → `state-renderer.ts` |
 | `InterruptRegistry` | `domains/spacemolt/interrupts.ts` |
-| `ContextHandler` | `domains/spacemolt/context-handler.ts` |
 | `PromptBuilder` | `domains/spacemolt/prompt-builder.ts` |
 | `SkillRegistry` | Stub in `domains/spacemolt/index.ts` |
 | `PhaseRegistry` | `domains/spacemolt/phases.ts` |
@@ -563,9 +624,24 @@ const activePhase = {
 | Domain bundle | `domains/spacemolt/index.ts` |
 | Domain types | `domains/spacemolt/types.ts` + `ws-types.ts` |
 | Event source (WebSocket) | `domains/spacemolt/game-socket-impl.ts` |
-| Briefing helper | `domains/spacemolt/briefing.ts` |
 
 Note: SpaceMolt has a wrapper pattern where `situation.ts` wraps `situation-classifier.ts` and `renderer.ts` wraps `state-renderer.ts`. This is a SpaceMolt organizational choice, not a requirement.
+
+### GitHub (Hypervisor)
+
+| Service | File |
+|---------|------|
+| `EventProcessor` | `domains/github/event-processor.ts` |
+| `SituationClassifier` | `domains/github/situation-classifier.ts` |
+| `StateRenderer` | `domains/github/renderer.ts` |
+| `InterruptRegistry` | `domains/github/interrupts.ts` |
+| `PromptBuilder` | `domains/github/prompt-builder.ts` |
+| `SkillRegistry` | File-based loader in `domains/github/index.ts` |
+| `PhaseRegistry` | `domains/github/phases.ts` |
+| `DomainConfig` | `domains/github/config.ts` |
+| Domain bundle | `domains/github/index.ts` |
+| Domain types | `domains/github/types.ts` |
+| Event source (GraphQL polling) | `domains/github/github-client.ts` |
 
 ## Container Architecture
 
@@ -605,20 +681,19 @@ SpaceMolt additionally mounts `/work/shared/*` and `/work/sm-cli`. GitHub curren
 New domain author checklist:
 
 - [ ] `types.ts` — State, Situation, and Event types defined
-- [ ] `EventProcessor` — translates events → `EventResult`
-- [ ] `SituationClassifier` — `classify()` returns situation with `alerts: []`; `briefing()` returns short summary
-- [ ] `StateRenderer` — `snapshot()`, `richSnapshot()`, `stateDiff()`, `renderForPlanning()`, `logStateBar()`
+- [ ] `EventProcessor` — translates events → `EventResult` with `EventCategory` discriminated union
+- [ ] `SituationClassifier` — `summarize()` returns `SituationSummary` with `situation`, `headline`, `sections`, `metrics`
+- [ ] `StateRenderer` — `snapshot()`, `richSnapshot()`, `stateDiff()`, `logStateBar(name, metrics)`
 - [ ] `InterruptRegistry` — rules array + `createInterruptRegistry()` factory
-- [ ] `ContextHandler` — processes `accumulatedContext` keys (or returns `{}`)
-- [ ] `PromptBuilder` — 4 prompts (`planPrompt`, `interruptPrompt`, `evaluatePrompt`, `subagentPrompt`)
+- [ ] `PromptBuilder` — state machine: `planPrompt`, `interruptPrompt`, `evaluatePrompt`, `subagentPrompt`, `systemPrompt`; hypervisor: `brainPrompt` + `systemPrompt`
 - [ ] `SkillRegistry` — stub or real implementation
-- [ ] `PhaseRegistry` — at least startup + active phases; active phase passes `context.domainBundle` to `eventLoop()`
+- [ ] `PhaseRegistry` — at least startup + active phases; active phase calls `runStateMachine()` or `runHypervisor()` with `Effect.provide(context.domainBundle)`
+- [ ] `TempoConfig` — `StateMachineTempo` or `HypervisorTempo` defined for your execution model
 - [ ] `DomainConfig` — bundle, phaseRegistry, containerMounts, imageName, serviceLayer, dockerfilePath, dockerContext, containerAddDirs
-- [ ] Domain bundle — `Layer.mergeAll(...)` of all 7 service layers
+- [ ] Domain bundle — `Layer.mergeAll(...)` of all 6 service layers
 - [ ] Domain registered in `orchestrator/src/domains/registry.ts`
 - [ ] Domain entry added to `config.json` at project root
-- [ ] `planPrompt` instructs LLM to return `{ reasoning, steps: [{ task, goal, model, successCondition, timeoutTicks }] }`
-- [ ] `evaluatePrompt` instructs LLM to return `{ complete: boolean, reason: string }`
-- [ ] `accumulatedContext` keys match between `EventProcessor` and `ContextHandler`
+- [ ] (State machine) `planPrompt` instructs LLM to return `{ reasoning, steps: [{ task, goal, model, successCondition, timeoutTicks }] }`
+- [ ] (State machine) `evaluatePrompt` instructs LLM to return `{ complete: boolean, reason: string }`
 - [ ] Event source connection/reconnection handled in startup phase
 - [ ] `npm run check && npm run lint` passes
