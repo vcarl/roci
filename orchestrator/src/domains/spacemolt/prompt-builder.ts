@@ -4,6 +4,7 @@ import { Effect, Layer } from "effect"
 import type {
   PromptBuilder,
   PlanPromptContext,
+  HypervisorBrainPromptContext,
 } from "../../core/prompt-builder.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
 import type { GameState, Situation } from "./types.js"
@@ -69,6 +70,10 @@ function buildAdditionalSection(additionalContext?: string): string {
 // ── Prompt builder ──────────────────────────────────────────
 
 const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilder, "systemPrompt"> => ({
+  brainPrompt(_ctx: HypervisorBrainPromptContext): string {
+    throw new Error("SpaceMolt does not use the hypervisor model")
+  },
+
   planPrompt(ctx) {
     const briefing = ctx.summary.sections.map(s => `## ${s.heading}\n${s.body}`).join("\n\n")
     return renderTemplate(templates.plan, {
@@ -155,6 +160,9 @@ export const SpaceMoltPromptBuilderLive = Layer.effect(
       templates[name] = yield* loadTemplate(path.join(PROMPTS_DIR, `${name}.md`))
     }
     const inGameClaudeMd = yield* loadTemplate(path.join(PROMPTS_DIR, "in-game-claude.md"))
-    return { ...makePromptBuilder(templates), systemPrompt: (_mode, _task) => inGameClaudeMd }
+    return {
+      ...makePromptBuilder(templates),
+      systemPrompt: (_mode: string, _task: string) => inGameClaudeMd,
+    }
   }),
 )

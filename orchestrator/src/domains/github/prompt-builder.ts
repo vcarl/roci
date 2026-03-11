@@ -7,6 +7,7 @@ import type {
   InterruptPromptContext,
   EvaluatePromptContext,
   SubagentPromptContext,
+  HypervisorBrainPromptContext,
 } from "../../core/prompt-builder.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
 import type { GitHubState } from "./types.js"
@@ -579,6 +580,36 @@ const gitHubPromptBuilder: PromptBuilder = {
   systemPrompt(mode: BrainMode, task: string): string {
     const promptFn = SYSTEM_PROMPT_BY_TASK[task] ?? SYSTEM_PROMPT_BY_MODE[mode] ?? SYSTEM_PROMPT_BY_MODE.select
     return promptFn(task)
+  },
+
+  brainPrompt(ctx: HypervisorBrainPromptContext): string {
+    const stateSummary = ctx.summary.sections
+      .map(s => `## ${s.heading}\n${s.body}`)
+      .join("\n\n")
+
+    const parts = [`# Current State\n\n${stateSummary}`]
+
+    if (ctx.background) {
+      parts.push(`\n\n# Your Identity\n\n${ctx.background}`)
+    }
+    if (ctx.values) {
+      parts.push(`\n\n# Your Values\n\n${ctx.values}`)
+    }
+    parts.push(`\n\n# Diary\n\n${ctx.diary.slice(-3000)}`)
+    parts.push(`\n\n# Cycle Progress\n\nCycle ${ctx.cycleNumber} of ${ctx.maxCycles}`)
+
+    if (ctx.softAlerts.length > 0) {
+      const alertLines = ctx.softAlerts
+        .map(a => `- [${a.priority}] ${a.message}`)
+        .join("\n")
+      parts.push(`\n\n# Alerts\n\n${alertLines}`)
+    }
+
+    if (ctx.stateDiff) {
+      parts.push(`\n\n# Changes Since Last Cycle\n\n${ctx.stateDiff}`)
+    }
+
+    return parts.join("")
   },
 }
 

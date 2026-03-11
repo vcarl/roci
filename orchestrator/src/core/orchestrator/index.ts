@@ -3,6 +3,9 @@
 export type { StateMachineConfig } from "./state-machine.js"
 export { runStateMachine } from "./state-machine.js"
 
+export type { HypervisorConfig, HypervisorResult, BreakConfig, BreakResult } from "./hypervisor.js"
+export { runHypervisor, runBreak, runReflection } from "./hypervisor.js"
+
 export type { PlanContext, LifecycleHooks } from "./lifecycle.js"
 
 export {

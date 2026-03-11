@@ -1,6 +1,5 @@
 import { Effect, Queue } from "effect"
 import { FileSystem } from "@effect/platform"
-import { CommandExecutor } from "@effect/platform"
 import { readFileSync } from "node:fs"
 import * as path from "node:path"
 import type { GitHubCharacterConfig } from "./types.js"
@@ -8,16 +7,10 @@ import type { GitHubState } from "./types.js"
 import type { GitHubEvent } from "./types.js"
 import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
 import { Docker } from "../../services/Docker.js"
-import { CharacterFs } from "../../services/CharacterFs.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import { CharacterLog } from "../../logging/log-writer.js"
-import { EventProcessorTag } from "../../core/limbic/thalamus/event-processor.js"
-import { InterruptRegistryTag } from "../../core/limbic/amygdala/interrupt.js"
-import { SituationClassifierTag } from "../../core/limbic/thalamus/situation-classifier.js"
 import { GitHubClientTag } from "./github-client.js"
-import { dream } from "../../core/limbic/hippocampus/dream.js"
-import { runCycle } from "../../core/limbic/hypothalamus/cycle-runner.js"
-import { Claude } from "../../services/Claude.js"
+import { runHypervisor, runBreak, runReflection } from "../../core/orchestrator/hypervisor.js"
 import type { HypervisorTempo } from "../../core/limbic/hypothalamus/tempo.js"
 
 const tempo: HypervisorTempo = {
@@ -227,8 +220,6 @@ const activePhase = {
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
       const log = yield* CharacterLog
-      const charFs = yield* CharacterFs
-      const docker = yield* Docker
 
       if (!context.connection) {
         yield* logToConsole(context.char.name, "orchestrator", "No connection in active phase — shutting down")
@@ -241,7 +232,6 @@ const activePhase = {
       }
 
       const conn = context.connection as GHConnection
-      let currentState = conn.initialState
 
       const containerEnv = {
         ...context.containerEnv,
@@ -266,90 +256,31 @@ const activePhase = {
         containerId: context.containerId,
       })
 
-      for (let cycle = 0; cycle < tempo.maxCycles; cycle++) {
-        // Drain pending events and update state
-        let drained = false
-        while (!drained) {
-          const maybeEvent = yield* Queue.poll(conn.events)
-          if (maybeEvent._tag === "None") {
-            drained = true
-          } else {
-            const event = maybeEvent.value
-            yield* Effect.gen(function* () {
-              const eventProcessor = yield* EventProcessorTag
-              const result = eventProcessor.processEvent(event, currentState)
-              if (result.stateUpdate) {
-                currentState = result.stateUpdate(currentState) as GitHubState
-              }
-            }).pipe(Effect.provide(context.domainBundle!))
-          }
-        }
+      const result = yield* runHypervisor({
+        char: context.char,
+        containerId: context.containerId,
+        containerEnv,
+        events: conn.events as Queue.Queue<unknown>,
+        initialState: conn.initialState as unknown,
+        tempo,
+        brainSystemPrompt,
+        bodySystemPrompt,
+        brainModel: "opus",
+        bodyModel: "sonnet",
+        brainTimeoutMs: BRAIN_TIMEOUT_MS,
+        bodyTimeoutMs: BODY_TIMEOUT_MS,
+        brainDisallowedTools: [
+          "ToolSearch", "MCPSearch",
+          "WebFetch", "WebSearch",
+          "NotebookEdit",
+          "Edit",
+        ],
+      }).pipe(Effect.provide(context.domainBundle!))
 
-        // Get situation summary from classifier (via domainBundle)
-        const summary = yield* Effect.gen(function* () {
-          const classifier = yield* SituationClassifierTag
-          return classifier.summarize(currentState)
-        }).pipe(Effect.provide(context.domainBundle!))
-
-        // Read character identity
-        const background = yield* charFs.readBackground(context.char).pipe(
-          Effect.catchAll(() => Effect.succeed(""))
-        )
-        const values = yield* charFs.readValues(context.char).pipe(
-          Effect.catchAll(() => Effect.succeed(""))
-        )
-
-        // Read character diary
-        const diary = yield* charFs.readDiary(context.char)
-
-        const buildBrainPrompt = () => {
-          const stateSummary = summary.sections
-            .map(s => `## ${s.heading}\n${s.body}`)
-            .join("\n\n")
-          const parts = [
-            `# Current State\n\n${stateSummary}`,
-          ]
-          if (background) {
-            parts.push(`\n\n# Your Identity\n\n${background}`)
-          }
-          if (values) {
-            parts.push(`\n\n# Your Values\n\n${values}`)
-          }
-          parts.push(`\n\n# Diary\n\n${diary.slice(-3000)}`)
-          return parts.join("")
-        }
-
-        yield* logToConsole(context.char.name, "orchestrator", `Cycle ${cycle + 1}/${tempo.maxCycles}`)
-
-        const cycleResult = yield* runCycle({
-          containerId: context.containerId,
-          playerName: context.char.name,
-          brainSystemPrompt,
-          bodySystemPrompt,
-          brainModel: "opus",
-          bodyModel: "sonnet",
-          brainTimeoutMs: BRAIN_TIMEOUT_MS,
-          bodyTimeoutMs: BODY_TIMEOUT_MS,
-          env: containerEnv,
-          char: context.char,
-          buildBrainPrompt,
-          brainDisallowedTools: [
-            "ToolSearch", "MCPSearch",
-            "WebFetch", "WebSearch",
-            "NotebookEdit",
-            "Edit",
-          ],
-        })
-
-        yield* logToConsole(
-          context.char.name,
-          "orchestrator",
-          `Cycle ${cycle + 1} complete — brain: ${Math.round(cycleResult.brainResult.durationMs / 1000)}s, body: ${Math.round(cycleResult.bodyResult.durationMs / 1000)}s`,
-        )
+      const updatedConnection = { ...conn, initialState: result.finalState }
+      if (result._tag === "Interrupted") {
+        return { _tag: "Continue", next: "active", connection: updatedConnection } as PhaseResult
       }
-
-      // Thread updated state into the connection for the next phase
-      const updatedConnection: GHConnection = { ...conn, initialState: currentState }
       return { _tag: "Continue", next: "break", connection: updatedConnection } as PhaseResult
     }),
 }
@@ -369,70 +300,17 @@ const breakPhase = {
 
       const conn = context.connection as GHConnection
 
-      yield* logToConsole(context.char.name, "orchestrator", `Break phase — resting for ${tempo.breakDurationMs / 60_000} minutes (monitoring for critical interrupts)`)
+      const result = yield* runBreak({
+        char: context.char,
+        events: conn.events as Queue.Queue<unknown>,
+        initialState: conn.initialState as unknown,
+        tempo,
+      }).pipe(Effect.provide(context.domainBundle!))
 
-      const startTime = Date.now()
-      // Track state locally so we can detect critical interrupts
-      let currentState = conn.initialState
-
-      // Poll loop: drain events, check for critical interrupts
-      let interrupted = false
-      while (Date.now() - startTime < tempo.breakDurationMs) {
-        // Drain all pending events without blocking
-        let drained = false
-        while (!drained) {
-          const maybeEvent = yield* Queue.poll(conn.events)
-          if (maybeEvent._tag === "None") {
-            drained = true
-          } else {
-            const event = maybeEvent.value
-
-            // Process through domain event processor to get state update
-            yield* Effect.gen(function* () {
-              const eventProcessor = yield* EventProcessorTag
-              const classifier = yield* SituationClassifierTag
-              const interruptRegistry = yield* InterruptRegistryTag
-
-              const result = eventProcessor.processEvent(event, currentState)
-
-              if (result.stateUpdate) {
-                currentState = result.stateUpdate(currentState) as GitHubState
-              }
-
-              // Only check for critical interrupts on state updates
-              if (result.category?._tag === "StateChange") {
-                const summary = classifier.summarize(currentState)
-                const criticals = interruptRegistry.criticals(currentState, summary.situation)
-
-                if (criticals.length > 0) {
-                  yield* logToConsole(
-                    context.char.name,
-                    "orchestrator",
-                    `Critical interrupt during break: ${criticals.map(a => a.message).join("; ")} — waking up`,
-                  )
-                  interrupted = true
-                }
-              }
-            }).pipe(Effect.provide(context.domainBundle))
-
-            if (interrupted) break
-          }
-        }
-
-        if (interrupted) break
-
-        yield* Effect.sleep(`${tempo.breakPollIntervalSec} seconds`)
-      }
-
-      // Thread updated state into the connection for the next active phase
-      const updatedConnection: GHConnection = { ...conn, initialState: currentState }
-
-      if (interrupted) {
+      const updatedConnection = { ...conn, initialState: result.finalState }
+      if (result._tag === "Interrupted") {
         return { _tag: "Continue", next: "active", connection: updatedConnection } as PhaseResult
       }
-
-      const elapsedMin = Math.round((Date.now() - startTime) / 60_000)
-      yield* logToConsole(context.char.name, "orchestrator", `Break complete (${elapsedMin} min) — proceeding to reflection`)
       return { _tag: "Continue", next: "reflection", connection: updatedConnection } as PhaseResult
     }),
 }
@@ -444,19 +322,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      const charFs = yield* CharacterFs
-
-      const diary = yield* charFs.readDiary(context.char)
-      const diaryLines = diary.split("\n").length
-      if (diaryLines > tempo.dreamThreshold) {
-        yield* logToConsole(context.char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-        yield* dream.execute({ char: context.char }).pipe(
-          Effect.catchAll((e) =>
-            logToConsole(context.char.name, "orchestrator", `Dream failed: ${e}`),
-          ),
-        )
-      }
-
+      yield* runReflection(context.char, tempo.dreamThreshold)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }
