@@ -1,5 +1,5 @@
 import { Context } from "effect"
-import type { DomainState, DomainSituation } from "./domain-types.js"
+import type { DomainState } from "./domain-types.js"
 
 /**
  * All state-to-human-readable transformations.
@@ -13,8 +13,6 @@ export interface StateRenderer {
   richSnapshot(state: DomainState): Record<string, unknown>
   /** Human-readable diff between two rich snapshots. */
   stateDiff(before: Record<string, unknown> | null, after: Record<string, unknown>): string
-  /** Render domain state for planning context. */
-  renderForPlanning(state: DomainState, situation: DomainSituation): string
   /** Compact console output line per tick. */
   logStateBar(name: string, metrics: Record<string, string | number | boolean>): void
 }

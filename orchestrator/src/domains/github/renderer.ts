@@ -1,7 +1,7 @@
 import { Layer } from "effect"
 import type { StateRenderer } from "../../core/state-renderer.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
-import type { GitHubState, GitHubSituation } from "./types.js"
+import type { GitHubState } from "./types.js"
 
 function snapshot(state: GitHubState): Record<string, unknown> {
   return {
@@ -133,51 +133,6 @@ function stateDiff(
   return changes.length > 0 ? changes.join("; ") : "(no changes detected)"
 }
 
-function renderForPlanning(state: GitHubState, situation: GitHubSituation): string {
-  const sections: string[] = []
-
-  for (let i = 0; i < state.repos.length; i++) {
-    const repo = state.repos[i]
-    const sit = situation.repos[i]
-    const lines: string[] = [
-      `## ${repo.owner}/${repo.repo}`,
-      `CI: ${repo.ciStatus} | Situation: ${sit?.type ?? "unknown"}`,
-    ]
-
-    lines.push(`Shared clone: \`${repo.clonePath}\``)
-    if (repo.worktreePath) {
-      lines.push(`Worktree: \`${repo.worktreePath}\` (branch: ${repo.currentBranch ?? "unknown"})`)
-    }
-    lines.push("")
-
-    if (repo.openIssues.length > 0) {
-      lines.push("### Open Issues")
-      for (const issue of repo.openIssues) {
-        const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : ""
-        const claimed = state.authenticatedUser && issue.assignees.includes(state.authenticatedUser)
-          ? " **(assigned to you)**" : ""
-        lines.push(`- #${issue.number}: ${issue.title}${labels} (by ${issue.author})${claimed}`)
-      }
-      lines.push("")
-    }
-
-    if (repo.openPRs.length > 0) {
-      lines.push("### Open PRs")
-      for (const pr of repo.openPRs) {
-        const status = pr.draft ? "draft" : `checks:${pr.checks} review:${pr.reviewStatus}`
-        const reviewReq = state.authenticatedUser && pr.requestedReviewers.includes(state.authenticatedUser)
-          ? " **(your review requested)**" : ""
-        lines.push(`- #${pr.number}: ${pr.title} (${status}, by ${pr.author})${reviewReq}`)
-      }
-      lines.push("")
-    }
-
-    sections.push(lines.join("\n"))
-  }
-
-  return sections.join("\n---\n\n")
-}
-
 function logStateBar(name: string, metrics: Record<string, string | number | boolean>): void {
   const parts: string[] = []
   if (metrics.totalRepos !== undefined) parts.push(`repos:${metrics.totalRepos}`)
@@ -197,9 +152,6 @@ const gitHubStateRenderer: StateRenderer = {
   },
   stateDiff(before, after) {
     return stateDiff(before, after)
-  },
-  renderForPlanning(state, situation) {
-    return renderForPlanning(state as GitHubState, situation as GitHubSituation)
   },
   logStateBar(name, metrics) {
     logStateBar(name, metrics)

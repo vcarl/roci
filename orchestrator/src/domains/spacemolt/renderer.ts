@@ -1,8 +1,7 @@
 import { Layer } from "effect"
 import type { StateRenderer } from "../../core/state-renderer.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
-import type { GameState, Situation } from "./types.js"
-import { generateBriefing } from "./briefing.js"
+import type { GameState } from "./types.js"
 import {
   snapshot,
   richSnapshot,
@@ -20,10 +19,6 @@ const spaceMoltStateRenderer: StateRenderer = {
 
   stateDiff(before, after) {
     return stateDiff(before, after)
-  },
-
-  renderForPlanning(state, situation) {
-    return generateBriefing(state as GameState, situation as Situation)
   },
 
   logStateBar(name, metrics) {
