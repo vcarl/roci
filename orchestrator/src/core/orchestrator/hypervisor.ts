@@ -100,13 +100,17 @@ export const runBreak = (config: BreakConfig) =>
           ).pipe(
             Effect.catchAll((e) =>
               logToConsole(config.char.name, "error", `Event processing error during break: ${e}`).pipe(
-                Effect.map(() => ({ category: undefined, stateUpdate: undefined })),
+                Effect.map(() => ({ category: undefined, stateUpdate: undefined, log: undefined })),
               ),
             ),
           )
 
           if (result.stateUpdate) {
             currentState = result.stateUpdate(currentState)
+          }
+
+          if (result.log) {
+            result.log()
           }
 
           // Only check for critical interrupts on state changes
