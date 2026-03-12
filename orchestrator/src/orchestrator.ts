@@ -132,14 +132,19 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       if (builtImages.has(rd.config.imageName)) continue
       builtImages.add(rd.config.imageName)
 
-      const dockerfilePath = rd.config.dockerfilePath ?? ".devcontainer/Dockerfile"
-      const dockerContext = rd.config.dockerContext ?? ".devcontainer"
+      const dockerfilePath = rd.config.dockerfilePath
+      const dockerContext = rd.config.dockerContext
+
+      if (!dockerfilePath || !dockerContext) {
+        yield* Effect.logError(`Domain ${rd.name} has no dockerfilePath/dockerContext configured`)
+        continue
+      }
 
       yield* logToConsole("orchestrator", "main", `Building Docker image ${rd.config.imageName}...`)
       yield* docker.build(
         rd.config.imageName,
-        path.resolve(projectRoot, dockerfilePath),
-        path.resolve(projectRoot, dockerContext),
+        dockerfilePath,
+        dockerContext,
       )
     }
 
