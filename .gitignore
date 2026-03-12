@@ -12,4 +12,5 @@ players/*/me/session
 players/*/me/github.json
 players/*/state.md
 players/*/worktrees/
+orchestrator/dist/
 .claude/
