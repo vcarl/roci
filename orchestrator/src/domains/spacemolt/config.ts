@@ -4,8 +4,7 @@ import { Effect } from "effect"
 import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "../../core/domain-bundle.js"
 import { spaceMoltDomainBundle, spaceMoltServiceLayer } from "./index.js"
 import { spaceMoltPhaseRegistry } from "./phases.js"
-import { readFileSync, existsSync, writeFileSync } from "node:fs"
-import { askUser } from "../../util/prompt.js"
+import { readFileSync, existsSync } from "node:fs"
 
 const IMAGE_NAME = "spacemolt-player"
 
@@ -66,7 +65,7 @@ const spaceMoltInitProcedure: DomainProcedure<InitContext> = {
       const credsPath = path.resolve(ctx.characterDir, "credentials.txt")
 
       if (!existsSync(credsPath)) {
-        messages.push({ level: "error", text: `${ctx.characterName} — missing credentials.txt` })
+        messages.push({ level: "warning", text: `${ctx.characterName} — no credentials.txt yet (will be created during first in-game registration)` })
         return messages
       }
 
@@ -84,33 +83,19 @@ const spaceMoltInitProcedure: DomainProcedure<InitContext> = {
     }),
 }
 
-/** Per-character setup procedure — creates credentials.txt interactively. */
+/** Per-character setup procedure for SpaceMolt. No user input needed — credentials are created by the agent during in-game registration. */
 const spaceMoltSetupCharacter: DomainProcedure<InitContext> = {
   name: "spacemolt-setup",
   run: (ctx) =>
-    Effect.gen(function* () {
+    Effect.sync(() => {
       const messages: ProcedureMessage[] = []
       const credsPath = path.resolve(ctx.characterDir, "credentials.txt")
 
       if (existsSync(credsPath)) {
-        messages.push({ level: "ok", text: `${ctx.characterName} — credentials.txt already exists, skipping setup` })
-        return messages
+        messages.push({ level: "ok", text: `${ctx.characterName} — credentials.txt already exists` })
+      } else {
+        messages.push({ level: "ok", text: `${ctx.characterName} — ready (credentials.txt will be created during first in-game registration)` })
       }
-
-      const username = yield* askUser(`  Enter SpaceMolt username for ${ctx.characterName}: `)
-      if (!username) {
-        messages.push({ level: "error", text: `${ctx.characterName} — no username provided, skipping` })
-        return messages
-      }
-
-      const password = yield* askUser(`  Enter SpaceMolt password for ${ctx.characterName}: `)
-      if (!password) {
-        messages.push({ level: "error", text: `${ctx.characterName} — no password provided, skipping` })
-        return messages
-      }
-
-      writeFileSync(credsPath, `Username: ${username}\nPassword: ${password}\n`)
-      messages.push({ level: "ok", text: `${ctx.characterName} — wrote credentials.txt` })
 
       return messages
     }),
@@ -119,11 +104,12 @@ const spaceMoltSetupCharacter: DomainProcedure<InitContext> = {
 /** Instructions shown when no SpaceMolt characters are configured. */
 const spaceMoltCharacterSetupGuide = [
   `Each character needs:`,
-  `  players/<name>/me/credentials.txt — Username: <user>\\nPassword: <pass>`,
   `  players/<name>/me/background.md   — personality and identity`,
   `  players/<name>/me/VALUES.md       — working values`,
   `  players/<name>/me/DIARY.md        — empty diary template`,
   `  players/<name>/me/SECRETS.md      — empty`,
+  ``,
+  `credentials.txt is created automatically by the agent during in-game registration.`,
 ]
 
 /** Build the SpaceMolt domain config for a given project root. */

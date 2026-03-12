@@ -123,7 +123,7 @@ Stub implementation. Returns an empty skill list. `isStepComplete` always return
 
 ## Configuration
 
-**`credentials.txt`** -- Per-character file in the `me/` directory containing game server login credentials (username and password).
+**`credentials.txt`** -- Per-character file in the `me/` directory containing game server login credentials (username and password). Created automatically by the agent during its first in-game registration -- not provided by the operator.
 
 **Tempo constants** (in `phases.ts`):
 - Active session turns: 100 (approximately 50 minutes at 30s/tick)
