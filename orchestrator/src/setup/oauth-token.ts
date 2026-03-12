@@ -5,6 +5,54 @@ import { execFileSync, spawnSync } from "node:child_process"
 import * as path from "node:path"
 import { logToConsole } from "../logging/console-renderer.js"
 
+/**
+ * Validate an OAuth token by making a lightweight API call.
+ * Returns true if the token is accepted, false if it gets a 401.
+ */
+function validateTokenWithApi(token: string): boolean {
+  try {
+    const result = spawnSync("claude", ["-p", "--output-format", "text", "--max-turns", "1", "--model", "haiku", "respond with ok"], {
+      encoding: "utf-8",
+      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token },
+      timeout: 30_000,
+    })
+    // 401 auth errors cause a non-zero exit with "Failed to authenticate" in output
+    if (result.status !== 0) {
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`
+      if (output.includes("401") || output.includes("authentication_error") || output.includes("Failed to authenticate")) {
+        return false
+      }
+    }
+    return result.status === 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Run `claude setup-token` to acquire a fresh OAuth token.
+ * Returns the new token string, or undefined if it fails.
+ */
+function runSetupToken(): string | undefined {
+  const result = spawnSync("claude", ["setup-token"], {
+    stdio: ["inherit", "pipe", "inherit"],
+    encoding: "utf-8",
+  })
+  if (result.status !== 0) return undefined
+
+  const lines = result.stdout.trim().split("\n")
+  for (const line of [...lines].reverse()) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith("sk-ant-")) return trimmed
+  }
+  // Fallback: last non-empty line with no spaces
+  for (const line of [...lines].reverse()) {
+    const trimmed = line.trim()
+    if (trimmed && !trimmed.includes(" ")) return trimmed
+  }
+  return undefined
+}
+
 /** Read a specific key from a .env file at projectRoot. */
 function readDotenvKey(projectRoot: string, key: string): string | undefined {
   const envPath = path.resolve(projectRoot, ".env")
@@ -120,44 +168,7 @@ export const ensureOAuthToken = (projectRoot: string) =>
     yield* logToConsole("setup", "cli", "Running 'claude setup-token'... Follow the prompts to authenticate.")
     yield* logToConsole("setup", "cli", "")
 
-    // Run claude setup-token interactively — it needs terminal access for the OAuth flow.
-    // The token is printed to stdout on success.
-    const result = yield* Effect.try({
-      try: () => {
-        const res = spawnSync("claude", ["setup-token"], {
-          stdio: ["inherit", "pipe", "inherit"],
-          encoding: "utf-8",
-        })
-        if (res.status !== 0) {
-          throw new Error(`claude setup-token exited with code ${res.status}`)
-        }
-        return res.stdout
-      },
-      catch: (e) => new Error(`Failed to run 'claude setup-token': ${e}`),
-    })
-
-    // Extract the token from output — look for a line that looks like a token
-    const lines = result.trim().split("\n")
-    // The token should be the last non-empty line of output, or a line starting with sk-ant-
-    let token: string | undefined
-    for (const line of [...lines].reverse()) {
-      const trimmed = line.trim()
-      if (trimmed.startsWith("sk-ant-")) {
-        token = trimmed
-        break
-      }
-    }
-    // If no sk-ant- prefix found, try the last non-empty line that has no spaces (likely a token)
-    if (!token) {
-      for (const line of [...lines].reverse()) {
-        const trimmed = line.trim()
-        if (trimmed && !trimmed.includes(" ")) {
-          token = trimmed
-          break
-        }
-      }
-    }
-
+    const token = runSetupToken()
     if (!token) {
       yield* logToConsole("setup", "cli", "")
       yield* logToConsole("setup", "cli", "WARNING: Could not extract token from 'claude setup-token' output.")
@@ -171,16 +182,34 @@ export const ensureOAuthToken = (projectRoot: string) =>
   })
 
 /**
- * Validation check for validate-and-start: verify the token exists.
- * Returns true if token is available, false otherwise.
+ * Validation check for validate-and-start: verify the token exists and is valid.
+ * If the token is expired/invalid, attempts to refresh via `claude setup-token`.
+ * Returns true if a valid token is available, false otherwise.
  */
 export const checkOAuthToken = (projectRoot: string) =>
   Effect.gen(function* () {
-    const token = getOAuthToken(projectRoot)
+    let token = getOAuthToken(projectRoot)
     if (!token) {
       yield* logToConsole("roci", "cli", "ERROR: CLAUDE_CODE_OAUTH_TOKEN not found in .env or environment.")
       yield* logToConsole("roci", "cli", "Run 'roci setup' to acquire a token, or set it manually in .env")
       return false
     }
+
+    yield* logToConsole("roci", "cli", "Validating OAuth token...")
+    if (validateTokenWithApi(token)) {
+      yield* logToConsole("roci", "cli", "OAuth token is valid.")
+      return true
+    }
+
+    yield* logToConsole("roci", "cli", "OAuth token is expired or invalid. Running 'claude setup-token' to refresh...")
+    const newToken = runSetupToken()
+    if (!newToken) {
+      yield* logToConsole("roci", "cli", "ERROR: Failed to acquire a new token via 'claude setup-token'.")
+      yield* logToConsole("roci", "cli", "Set CLAUDE_CODE_OAUTH_TOKEN manually in .env and retry.")
+      return false
+    }
+
+    writeDotenvKey(projectRoot, "CLAUDE_CODE_OAUTH_TOKEN", newToken)
+    yield* logToConsole("roci", "cli", "New OAuth token saved to .env")
     return true
   })

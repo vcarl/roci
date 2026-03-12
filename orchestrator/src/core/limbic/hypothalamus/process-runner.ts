@@ -114,7 +114,7 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
 
       // Diagnostic: log the full docker exec command (redact token values)
       const redactedArgs = execArgs.map(a =>
-        a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "-e CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a
+        a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a
       )
       yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
 
