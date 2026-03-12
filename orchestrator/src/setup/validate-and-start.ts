@@ -66,7 +66,7 @@ export const validateAndStart = (
             characterDir: charDir,
           })
           for (const msg of msgs) {
-            if (msg.level !== "ok") allGood = false
+            if (msg.level === "error") allGood = false
             yield* logProcMsg(msg)
           }
         }
