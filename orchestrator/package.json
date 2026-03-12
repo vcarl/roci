@@ -1,9 +1,20 @@
 {
-  "name": "roci-orchestrator",
+  "name": "roci",
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "roci": "./bin/roci.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.js",
+    "prepublishOnly": "npm run build",
     "check": "tsc --noEmit",
     "lint": "eslint src/",
     "start": "tsx src/main.ts",
