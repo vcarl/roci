@@ -169,6 +169,16 @@ export const ClaudeLive = Layer.effect(
 
       execInContainer: (opts) =>
         Effect.gen(function* () {
+          // Diagnostic: log env var details for auth debugging
+          const envKeys = opts.env ? Object.keys(opts.env) : []
+          const hasOAuthToken = envKeys.includes("CLAUDE_CODE_OAUTH_TOKEN")
+          const tokenPreview = hasOAuthToken && opts.env?.CLAUDE_CODE_OAUTH_TOKEN
+            ? `${opts.env.CLAUDE_CODE_OAUTH_TOKEN.slice(0, 10)}...`
+            : "(not set)"
+          console.log(
+            `[claude:execInContainer] player=${opts.playerName} envVars=${envKeys.length} keys=[${envKeys.join(",")}] CLAUDE_CODE_OAUTH_TOKEN=${hasOAuthToken ? "present" : "MISSING"} preview=${tokenPreview}`,
+          )
+
           const outputFormat = opts.outputFormat ?? "stream-json"
 
           // Build the full claude command directly
@@ -204,6 +214,12 @@ export const ClaudeLive = Layer.effect(
             }
           }
           execArgs.push(opts.containerId, "bash", "-c", innerCmd)
+
+          // Diagnostic: log the full docker exec command (redact token values)
+          const redactedArgs = execArgs.map(a =>
+            a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "-e CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a
+          )
+          console.log(`[claude:execInContainer] docker ${redactedArgs.join(" ")}`)
 
           const cmd = Command.make("docker", ...execArgs).pipe(
             Command.stdin(promptStream),
