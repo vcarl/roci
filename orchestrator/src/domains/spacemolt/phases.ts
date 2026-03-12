@@ -1,4 +1,6 @@
 import { Effect, Deferred, Queue } from "effect"
+import { FileSystem } from "@effect/platform"
+import * as path from "node:path"
 import type { GameState } from "./types.js"
 import type { GameEvent } from "./ws-types.js"
 import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "../../core/phase.js"
@@ -11,6 +13,7 @@ import { dinner } from "./dinner.js"
 import { runStateMachine } from "../../core/orchestrator/state-machine.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import { CharacterLog } from "../../logging/log-writer.js"
+import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
 
 /** Ticks in the active game loop before transitioning to social phase. At 30s/tick, 100 ticks ~ 50 min. */
 const ACTIVE_SESSION_TURNS = 100
@@ -38,14 +41,103 @@ const startupPhase = {
       )
 
       if (credsResult._tag === "missing") {
+        // Try to auto-register using a registration code
+        const fs = yield* FileSystem.FileSystem
+        const regCodePath = path.join(context.char.dir, "registration-code.txt")
+        const regCodeExists = yield* fs.exists(regCodePath).pipe(
+          Effect.catchAll(() => Effect.succeed(false)),
+        )
+
+        if (!regCodeExists) {
+          yield* logToConsole(
+            context.char.name,
+            "orchestrator",
+            "No credentials.txt or registration-code.txt found. Run 'roci setup --domain spacemolt' to configure this character.",
+          )
+          return { _tag: "Shutdown" } as PhaseResult
+        }
+
+        // Read the registration code
+        const registrationCode = yield* fs.readFileString(regCodePath).pipe(
+          Effect.map((s) => s.trim()),
+          Effect.catchAll((e) => {
+            return logToConsole(
+              context.char.name,
+              "orchestrator",
+              `Failed to read registration-code.txt: ${e}`,
+            ).pipe(Effect.flatMap(() => Effect.fail(e)))
+          }),
+        )
+
+        if (!registrationCode) {
+          yield* logToConsole(
+            context.char.name,
+            "orchestrator",
+            "registration-code.txt is empty. Get a code from spacemolt.com/dashboard.",
+          )
+          return { _tag: "Shutdown" } as PhaseResult
+        }
+
+        const username = deriveUsername(context.char.name)
+        const empire = pickEmpire(context.char.name)
+
         yield* logToConsole(
           context.char.name,
           "orchestrator",
-          "No credentials.txt found — character will need to register in-game during first session",
+          `No credentials found — registering as "${username}" in ${empire} empire...`,
         )
-        // Dream if diary is long, then proceed to active without a connection
+
+        const regResult = yield* registerCharacter(username, empire, registrationCode).pipe(
+          Effect.catchAll((e) => {
+            return logToConsole(
+              context.char.name,
+              "orchestrator",
+              `Registration failed: ${e.message}`,
+            ).pipe(Effect.flatMap(() => Effect.fail(e)))
+          }),
+        )
+
+        yield* logToConsole(
+          context.char.name,
+          "orchestrator",
+          `Registered successfully as ${regResult.username} (player_id: ${regResult.playerId})`,
+        )
+
+        // Write credentials.txt
+        const credsContent = `Username: ${regResult.username}\nPassword: ${regResult.password}\n`
+        const credsPath = path.join(context.char.dir, "credentials.txt")
+        yield* fs.writeFileString(credsPath, credsContent).pipe(
+          Effect.catchAll((e) => {
+            return logToConsole(
+              context.char.name,
+              "orchestrator",
+              `Failed to write credentials.txt: ${e}`,
+            ).pipe(Effect.flatMap(() => Effect.fail(e)))
+          }),
+        )
+
+        yield* logToConsole(
+          context.char.name,
+          "orchestrator",
+          "Saved credentials.txt — proceeding with normal login",
+        )
+
+        // Now read credentials and continue with normal login flow
+        const creds = yield* charFs.readCredentials(context.char)
+
+        const { events, initialState, tickIntervalSec, initialTick } =
+          yield* gameSocket.connect(creds, context.char.name)
+
+        yield* logToConsole(
+          context.char.name,
+          "orchestrator",
+          `Connected via WebSocket as ${initialState.player.username}`,
+        )
+
         yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
-        return { _tag: "Continue", next: "active" } as PhaseResult
+
+        const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
+        return { _tag: "Continue", next: "active", connection } as PhaseResult
       }
 
       // Connect to the game
