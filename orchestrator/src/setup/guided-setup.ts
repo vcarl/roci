@@ -89,6 +89,11 @@ export const runGuidedSetup = (projectRoot: string) =>
         const name = charName.trim()
         const charDir = path.resolve(projectRoot, "players", name, "me")
 
+        const charDescription: string = yield* Prompt.text({
+          message: "Describe this character in a sentence or two (or press Enter to skip)",
+          default: "",
+        })
+
         yield* logToConsole("setup", "cli", `\nScaffolding ${name}...`)
 
         // Scaffold generic identity files
@@ -96,6 +101,7 @@ export const runGuidedSetup = (projectRoot: string) =>
           projectRoot,
           characterName: name,
           identityTemplate: domainConfig.identityTemplate,
+          characterDescription: charDescription.trim() || undefined,
         })
         for (const line of scaffoldResults) {
           yield* logToConsole("setup", "cli", line)
