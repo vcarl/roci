@@ -339,7 +339,7 @@ All events printed type-tagged with timestamp and character name:
 | `core/limbic/amygdala/interrupt.ts` | InterruptRule, InterruptRegistry, createInterruptRegistry() |
 | `core/limbic/hypothalamus/tempo.ts` | TempoConfig (StateMachineTempo, PlannedActionTempo) |
 | `core/limbic/hypothalamus/cycle-runner.ts` | runCycle -- single brain/body turn pair |
-| `core/limbic/hypothalamus/process-runner.ts` | runTurn -- claude -p in container, exit code detection |
+| `core/limbic/hypothalamus/process-runner.ts` | `runTurn` -- primary domain execution path: claude -p in container with tool access |
 | `core/limbic/hippocampus/dream.ts` | Dream compression (diary + secrets) |
 | `core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
 | `core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
@@ -381,7 +381,7 @@ All events printed type-tagged with timestamp and character name:
 | `cli.ts` | CLI commands and service wiring |
 | `pipeline/orchestrator.ts` | Container lifecycle, fork character fibers |
 | `pipeline/character-loop.ts` | Per-character: delegates to phase runner |
-| `services/Claude.ts` | Host invoke + container exec with stream/exit |
+| `services/Claude.ts` | Host-only `invoke` for orchestrator-internal tasks (memory, summarization) |
 | `services/ProjectRoot.ts` | Project root path service |
 | `services/CharacterFs.ts` | Character file system operations |
 | `services/Docker.ts` | Docker container management |

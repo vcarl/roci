@@ -1,10 +1,23 @@
 import { Effect } from "effect"
-import { Claude, ClaudeError } from "../../../services/Claude.js"
+import { CommandExecutor } from "@effect/platform"
+import { ClaudeError } from "../../../services/Claude.js"
+import { CharacterLog } from "../../../logging/log-writer.js"
 import type { AiFunction } from "../../AiFunction.js"
 import { PromptBuilderTag } from "../../prompt-builder.js"
 import type { PlanPromptContext, InterruptPromptContext, EvaluatePromptContext } from "../../prompt-builder.js"
 import { StateRendererTag } from "../../state-renderer.js"
 import type { Plan, StepCompletionResult } from "../../types.js"
+import { runTurn } from "../../limbic/hypothalamus/process-runner.js"
+import type { CharacterConfig } from "../../../services/CharacterFs.js"
+
+/** Container context needed by brain functions to run in-container via runTurn. */
+export interface BrainContainerContext {
+  containerId: string
+  playerName: string
+  char: CharacterConfig
+  containerEnv?: Record<string, string>
+  addDirs?: string[]
+}
 
 // ── Plan parsing ────────────────────────────────────────────
 
@@ -40,76 +53,109 @@ function parsePlan(output: string, validProcedures?: string[]): Plan {
 
 // ── Brain functions ─────────────────────────────────────────
 
-export const brainPlan: AiFunction<PlanPromptContext, Plan, Claude | PromptBuilderTag, ClaudeError> = {
+export const brainPlan: AiFunction<PlanPromptContext & BrainContainerContext, Plan, PromptBuilderTag | CommandExecutor.CommandExecutor | CharacterLog, ClaudeError> = {
   name: "brain.plan",
   execute: (input) =>
     Effect.gen(function* () {
-      const claude = yield* Claude
       const promptBuilder = yield* PromptBuilderTag
 
       const prompt = promptBuilder.planPrompt(input)
 
-      const output = yield* claude.invoke({
+      const result = yield* runTurn({
+        containerId: input.containerId,
+        playerName: input.playerName,
+        char: input.char,
+        systemPrompt: "",
         prompt,
         model: "opus",
-        outputFormat: "text",
-        maxTurns: 1,
+        timeoutMs: 180_000,
+        env: input.containerEnv,
+        addDirs: input.addDirs,
+        role: "brain",
       })
 
+      if (result.timedOut || !result.output.trim()) {
+        return yield* Effect.fail(
+          new ClaudeError("Brain plan timed out or returned empty output"),
+        )
+      }
+
       try {
-        return parsePlan(output)
+        return parsePlan(result.output)
       } catch (e) {
         return yield* Effect.fail(
-          new ClaudeError(`Failed to parse brain plan output: ${e}`, output),
+          new ClaudeError(`Failed to parse brain plan output: ${e}`, result.output),
         )
       }
     }),
 }
 
-export const brainInterrupt: AiFunction<InterruptPromptContext, Plan, Claude | PromptBuilderTag, ClaudeError> = {
+export const brainInterrupt: AiFunction<InterruptPromptContext & BrainContainerContext, Plan, PromptBuilderTag | CommandExecutor.CommandExecutor | CharacterLog, ClaudeError> = {
   name: "brain.interrupt",
   execute: (input) =>
     Effect.gen(function* () {
-      const claude = yield* Claude
       const promptBuilder = yield* PromptBuilderTag
 
       const prompt = promptBuilder.interruptPrompt(input)
 
-      const output = yield* claude.invoke({
+      const result = yield* runTurn({
+        containerId: input.containerId,
+        playerName: input.playerName,
+        char: input.char,
+        systemPrompt: "",
         prompt,
         model: "opus",
-        outputFormat: "text",
-        maxTurns: 1,
+        timeoutMs: 180_000,
+        env: input.containerEnv,
+        addDirs: input.addDirs,
+        role: "brain",
       })
 
+      if (result.timedOut || !result.output.trim()) {
+        return yield* Effect.fail(
+          new ClaudeError("Brain interrupt timed out or returned empty output"),
+        )
+      }
+
       try {
-        return parsePlan(output)
+        return parsePlan(result.output)
       } catch (e) {
         return yield* Effect.fail(
-          new ClaudeError(`Failed to parse brain interrupt output: ${e}`, output),
+          new ClaudeError(`Failed to parse brain interrupt output: ${e}`, result.output),
         )
       }
     }),
 }
 
-export const brainEvaluate: AiFunction<EvaluatePromptContext, StepCompletionResult, Claude | PromptBuilderTag | StateRendererTag, ClaudeError> = {
+export const brainEvaluate: AiFunction<EvaluatePromptContext & BrainContainerContext, StepCompletionResult, PromptBuilderTag | StateRendererTag | CommandExecutor.CommandExecutor | CharacterLog, ClaudeError> = {
   name: "brain.evaluate",
   execute: (input) =>
     Effect.gen(function* () {
-      const claude = yield* Claude
       const promptBuilder = yield* PromptBuilderTag
       const renderer = yield* StateRendererTag
 
       const prompt = promptBuilder.evaluatePrompt(input)
 
-      const output = yield* claude.invoke({
+      const result = yield* runTurn({
+        containerId: input.containerId,
+        playerName: input.playerName,
+        char: input.char,
+        systemPrompt: "",
         prompt,
         model: "opus",
-        outputFormat: "text",
-        maxTurns: 1,
+        timeoutMs: 120_000,
+        env: input.containerEnv,
+        addDirs: input.addDirs,
+        role: "brain",
       })
 
-      let json = output.trim()
+      if (result.timedOut || !result.output.trim()) {
+        return yield* Effect.fail(
+          new ClaudeError("Brain evaluate timed out or returned empty output"),
+        )
+      }
+
+      let json = result.output.trim()
       const fenceMatch = json.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
       if (fenceMatch) {
         json = fenceMatch[1]
@@ -127,7 +173,7 @@ export const brainEvaluate: AiFunction<EvaluatePromptContext, StepCompletionResu
         } satisfies StepCompletionResult
       } catch (e) {
         return yield* Effect.fail(
-          new ClaudeError(`Failed to parse brain evaluate output: ${e}`, output),
+          new ClaudeError(`Failed to parse brain evaluate output: ${e}`, result.output),
         )
       }
     }),

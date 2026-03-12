@@ -49,6 +49,10 @@ interface EvaluateServices {
   readonly hooks?: LifecycleHooks
   readonly tickIntervalSec: number
   readonly char: CharacterConfig
+  readonly containerId: string
+  readonly playerName: string
+  readonly containerEnv?: Record<string, string>
+  readonly addDirs?: string[]
   readonly modeRef?: Ref.Ref<BrainMode>
   readonly investigationReportRef?: Ref.Ref<string | null>
 }
@@ -133,6 +137,11 @@ export const evaluateCompletedSubagent = (
           ticksBudgeted: timing.ticksBudgeted,
           tickIntervalSec: services.tickIntervalSec,
           mode,
+          containerId: services.containerId,
+          playerName: services.playerName,
+          char: services.char,
+          containerEnv: services.containerEnv,
+          addDirs: services.addDirs,
         }).pipe(
           Effect.catchTag("ClaudeError", (e) =>
             Effect.succeed({

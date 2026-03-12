@@ -1,3 +1,15 @@
+/**
+ * Primary execution path for all domain-level Claude invocations.
+ *
+ * `runTurn` runs `claude -p` inside the Docker container with full tool access,
+ * streaming output (stream-json), and configurable timeouts. Both SpaceMolt and
+ * GitHub domains use this for their agent work (planning, evaluation, execution).
+ *
+ * For orchestrator-internal tasks that don't need tool access (memory
+ * consolidation, timeout summarization, reflection), use `Claude.invoke` from
+ * `services/Claude.ts` instead — that runs on the host.
+ */
+
 import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"

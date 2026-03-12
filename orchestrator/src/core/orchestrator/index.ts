@@ -22,6 +22,7 @@ export {
 } from "./planning/index.js"
 
 export type {
+  BrainContainerContext,
   PlanningRefs,
   SubagentRefs,
   PlanRefs,

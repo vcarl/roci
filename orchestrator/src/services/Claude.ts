@@ -16,7 +16,20 @@ export class ClaudeError {
 export class Claude extends Context.Tag("Claude")<
   Claude,
   {
-    /** Invoke claude -p on the host. Returns the full text output. */
+    /**
+     * Invoke `claude -p` on the **host** machine (not inside a Docker container).
+     *
+     * This is intended **only for orchestrator-internal tasks** that don't need
+     * tool access or container context — for example:
+     *   - Memory consolidation (dream/diary compression in hippocampus/dream.ts)
+     *   - Timeout summarization (hypothalamus/timeout-summarizer.ts)
+     *   - End-of-session reflection (spacemolt/dinner.ts)
+     *
+     * **Domain logic (planning, evaluation, execution) should NOT use this.**
+     * Use `runTurn` from `core/limbic/hypothalamus/process-runner.ts` instead,
+     * which runs inside the Docker container with full tool access, streaming
+     * output, and timeout handling.
+     */
     readonly invoke: (opts: {
       prompt: string
       model: ClaudeModel

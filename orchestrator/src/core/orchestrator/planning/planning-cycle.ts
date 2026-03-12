@@ -29,6 +29,10 @@ export interface PlanningRefs {
 
 interface PlanningServices {
   readonly char: CharacterConfig
+  readonly containerId: string
+  readonly playerName: string
+  readonly containerEnv?: Record<string, string>
+  readonly addDirs?: string[]
   readonly tickIntervalSec: number
   readonly hooks?: LifecycleHooks
   readonly renderer?: StateRenderer
@@ -117,6 +121,11 @@ export const maybeRequestPlan = (
         mode,
         investigationReport: investigationReport ?? undefined,
         procedureTargets: procedureTargets.length > 0 ? procedureTargets : undefined,
+        containerId: services.containerId,
+        playerName: services.playerName,
+        char: services.char,
+        containerEnv: services.containerEnv,
+        addDirs: services.addDirs,
       })
 
       yield* Ref.set(refs.previousFailure, null)

@@ -100,7 +100,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       procedureTargets: procedureTargetsRef,
       procedureStartState: procedureStartStateRef,
     }
-    const planningServices = { char: config.char, tickIntervalSec: config.tickIntervalSec, hooks, renderer }
+    const planningServices = { char: config.char, containerId: config.containerId, playerName: config.playerName, containerEnv: config.containerEnv, addDirs: config.addDirs, tickIntervalSec: config.tickIntervalSec, hooks, renderer }
     const evalServices = {
       renderer,
       classifier,
@@ -108,6 +108,10 @@ export const runStateMachine = (config: StateMachineConfig) =>
       hooks,
       tickIntervalSec: config.tickIntervalSec,
       char: config.char,
+      containerId: config.containerId,
+      playerName: config.playerName,
+      containerEnv: config.containerEnv,
+      addDirs: config.addDirs,
       modeRef,
       investigationReportRef,
     }
@@ -292,6 +296,11 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           background,
           mode,
           procedureTargets: procedureTargets.length > 0 ? procedureTargets : undefined,
+          containerId: config.containerId,
+          playerName: config.playerName,
+          char: config.char,
+          containerEnv: config.containerEnv,
+          addDirs: config.addDirs,
         })
 
         yield* log.thought(config.char, {
