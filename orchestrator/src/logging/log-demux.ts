@@ -1,4 +1,4 @@
-import { Effect, Ref, Stream } from "effect"
+import { Effect, Ref } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterLog, type LogEntry } from "./log-writer.js"
 import {
@@ -177,34 +177,3 @@ export const demuxEvent = (
     }
   })
 
-/**
- * Process a stream of stream-json lines, routing each event to the
- * appropriate JSONL log files.  Every raw line is also appended to stream.jsonl.
- */
-export const demuxStream = (
-  char: CharacterConfig,
-  lines: Stream.Stream<string, unknown>,
-  source: LogEntry["source"] = "subagent",
-  textAccumulator?: Ref.Ref<string[]>,
-) =>
-  lines.pipe(
-    Stream.filter((line) => line.trim().length > 0),
-    Stream.mapEffect((line) =>
-      Effect.gen(function* () {
-        const log = yield* CharacterLog
-
-        // Raw capture — every line goes to stream.jsonl verbatim
-        yield* log.raw(char, line)
-
-        // Try to parse as JSON
-        const event = parseStreamJson(line)
-        if (event) {
-          yield* demuxEvent(char, line, event, source, textAccumulator)
-        } else {
-          // Non-JSON line — print raw
-          printRaw(char.name, "raw", line)
-        }
-      }),
-    ),
-    Stream.runDrain,
-  )

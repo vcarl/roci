@@ -20,7 +20,7 @@ import type { LifecycleHooks } from "./lifecycle.js"
 import { brainInterrupt } from "./planning/brain.js"
 import { killSubagent, evaluateCompletedSubagent, checkMidRun, maybeSpawnSubagent } from "./planning/subagent-manager.js"
 import { maybeRequestPlan } from "./planning/planning-cycle.js"
-import { runGenericSubagent } from "./planning/subagent.js"
+import { runTurn } from "../limbic/hypothalamus/process-runner.js"
 import { PromptBuilderTag } from "../prompt-builder.js"
 
 export interface StateMachineConfig {
@@ -219,21 +219,32 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         const state = yield* Ref.get(gameStateRef)
         const procedureSummary = classifier.summarize(state)
 
-        yield* runGenericSubagent({
+        const diaryStep = { task: "diary" as const, goal: diaryPrompt, model: "haiku" as const, successCondition: "diary updated", timeoutTicks: 3 }
+        const diaryTurnPrompt = promptBuilder.subagentPrompt({
+          step: diaryStep,
+          state,
+          situation: procedureSummary.situation,
+          identity: {
+            personality,
+            values,
+            tickIntervalSec: config.tickIntervalSec,
+          },
+          mode,
+        })
+
+        yield* runTurn({
           char: config.char,
           containerId: config.containerId,
           playerName: config.playerName,
           systemPrompt: systemPromptText,
-          containerEnv: config.containerEnv,
+          prompt: diaryTurnPrompt,
+          model: "haiku",
+          timeoutMs: 60_000,
+          env: config.containerEnv,
           addDirs: config.addDirs,
-          step: { task: "diary", goal: diaryPrompt, model: "haiku", successCondition: "diary updated", timeoutTicks: 3 },
-          state,
-          situation: procedureSummary.situation,
-          personality,
-          values,
-          tickIntervalSec: config.tickIntervalSec,
+          role: "brain",
         }).pipe(
-          Effect.timeout("60 seconds"),
+          Effect.map((r) => r.output),
           Effect.catchAll((e) =>
             logToConsole(config.char.name, "error", `Diary subagent failed: ${e}`).pipe(Effect.as("")),
           ),

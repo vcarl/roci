@@ -8,8 +8,5 @@ export { maybeRequestPlan } from "./planning-cycle.js"
 export type { SubagentRefs, PlanRefs } from "./subagent-manager.js"
 export { killSubagent, evaluateCompletedSubagent, checkMidRun, maybeSpawnSubagent } from "./subagent-manager.js"
 
-export type { SubagentInput } from "./subagent.js"
-export { runGenericSubagent } from "./subagent.js"
-
 export type { TimingRefs } from "./step-tracker.js"
 export { recordStepTiming, recordStepOutcome } from "./step-tracker.js"

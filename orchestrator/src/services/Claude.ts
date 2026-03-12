@@ -1,4 +1,4 @@
-import { Context, Effect, Fiber, Layer, Scope, Stream, Chunk } from "effect"
+import { Context, Effect, Layer, Stream, Chunk } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import { writeFileSync, unlinkSync, mkdtempSync } from "node:fs"
 
@@ -24,26 +24,6 @@ export class Claude extends Context.Tag("Claude")<
       outputFormat?: "text" | "json" | "stream-json"
       maxTurns?: number
     }) => Effect.Effect<string, ClaudeError>
-
-    /** Run claude -p inside a Docker container, returning a stream + exit handle. */
-    readonly execInContainer: (opts: {
-      containerId: string
-      playerName: string
-      prompt: string
-      model: ClaudeModel
-      systemPrompt?: string
-      outputFormat?: "text" | "stream-json"
-      allowedTools?: string[]
-      addDirs?: string[]
-      env?: Record<string, string>
-    }) => Effect.Effect<
-      {
-        stream: Stream.Stream<string, ClaudeError>
-        waitForExit: Effect.Effect<{ exitCode: number; stderr: string }, ClaudeError>
-      },
-      ClaudeError,
-      Scope.Scope
-    >
   }
 >() {}
 
@@ -164,97 +144,6 @@ export const ClaudeLive = Layer.effect(
         ).pipe(
           Effect.mapError((e) =>
             e instanceof ClaudeError ? e : new ClaudeError("Claude invocation failed", e),
-          ),
-        ),
-
-      execInContainer: (opts) =>
-        Effect.gen(function* () {
-          // Diagnostic: log env var details for auth debugging
-          const envKeys = opts.env ? Object.keys(opts.env) : []
-          const hasOAuthToken = envKeys.includes("CLAUDE_CODE_OAUTH_TOKEN")
-          const tokenPreview = hasOAuthToken && opts.env?.CLAUDE_CODE_OAUTH_TOKEN
-            ? `${opts.env.CLAUDE_CODE_OAUTH_TOKEN.slice(0, 10)}...`
-            : "(not set)"
-          console.log(
-            `[claude:execInContainer] player=${opts.playerName} envVars=${envKeys.length} keys=[${envKeys.join(",")}] CLAUDE_CODE_OAUTH_TOKEN=${hasOAuthToken ? "present" : "MISSING"} preview=${tokenPreview}`,
-          )
-
-          const outputFormat = opts.outputFormat ?? "stream-json"
-
-          // Build the full claude command directly
-          const claudeArgs: string[] = [
-            "-p",
-            "--permission-mode", "bypassPermissions",
-            "--no-session-persistence",
-            "--model", opts.model,
-            "--output-format", outputFormat,
-            ...(outputFormat === "stream-json" ? ["--verbose"] : []),
-            // Disable thinking for non-opus models
-            ...(opts.model !== "opus" ? ["--effort", "low"] : []),
-          ]
-
-          if (opts.addDirs) {
-            for (const dir of opts.addDirs) {
-              claudeArgs.push("--add-dir", dir)
-            }
-          }
-
-          if (opts.systemPrompt) {
-            claudeArgs.push("--system-prompt", shellEscape(opts.systemPrompt))
-          }
-
-          const innerCmd = `claude ${claudeArgs.join(" ")}`
-          const promptStream = Stream.encodeText(Stream.make(opts.prompt))
-
-          // Build docker exec args, injecting env vars via -e flags
-          const execArgs: string[] = ["exec", "-i", "-w", `/work/players/${opts.playerName}`]
-          if (opts.env) {
-            for (const [key, val] of Object.entries(opts.env)) {
-              execArgs.push("-e", `${key}=${val}`)
-            }
-          }
-          execArgs.push(opts.containerId, "bash", "-c", innerCmd)
-
-          // Diagnostic: log the full docker exec command (redact token values)
-          const redactedArgs = execArgs.map(a =>
-            a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "-e CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a
-          )
-          console.log(`[claude:execInContainer] docker ${redactedArgs.join(" ")}`)
-
-          const cmd = Command.make("docker", ...execArgs).pipe(
-            Command.stdin(promptStream),
-          )
-
-          const process = yield* executor.start(cmd)
-
-          // Fork stderr drain immediately so it runs in parallel with stdout consumption
-          const stderrFiber = yield* process.stderr.pipe(
-            Stream.decodeText(),
-            Stream.runCollect,
-            Effect.map(Chunk.join("")),
-          ).pipe(Effect.fork)
-
-          const stream = process.stdout.pipe(
-            Stream.decodeText(),
-            Stream.splitLines,
-            Stream.filter((line) => line.trim().length > 0),
-            Stream.catchAll((e) => Stream.fail(new ClaudeError("Stream read error", e))),
-          )
-
-          const waitForExit = Effect.gen(function* () {
-            const stderr = yield* Fiber.join(stderrFiber)
-            const exitCode = yield* process.exitCode
-            return { exitCode: Number(exitCode), stderr }
-          }).pipe(
-            Effect.mapError((e) =>
-              e instanceof ClaudeError ? e : new ClaudeError("Wait for exit failed", e),
-            ),
-          )
-
-          return { stream, waitForExit }
-        }).pipe(
-          Effect.mapError((e) =>
-            e instanceof ClaudeError ? e : new ClaudeError("Container exec failed", e),
           ),
         ),
     })

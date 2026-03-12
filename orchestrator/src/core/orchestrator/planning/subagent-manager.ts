@@ -17,7 +17,7 @@ import type { LifecycleHooks } from "../lifecycle.js"
 import type { TimingRefs } from "./step-tracker.js"
 import { recordStepTiming, recordStepOutcome } from "./step-tracker.js"
 import { brainEvaluate } from "./brain.js"
-import { runGenericSubagent } from "./subagent.js"
+import { runTurn } from "../../limbic/hypothalamus/process-runner.js"
 import { PromptBuilderTag } from "../../prompt-builder.js"
 
 export interface SubagentRefs {
@@ -277,24 +277,65 @@ export const maybeSpawnSubagent = (
       const mode = smConfig.modeRef ? yield* Ref.get(smConfig.modeRef) : ("select" as BrainMode)
       const systemPrompt = promptBuilder.systemPrompt(mode, finalStep.task)
 
-      const fiber = yield* runGenericSubagent({
-        char: smConfig.char,
-        containerId: smConfig.containerId,
-        playerName: smConfig.playerName,
-        systemPrompt,
-        containerEnv: smConfig.containerEnv,
-        addDirs: smConfig.addDirs,
+      const prompt = promptBuilder.subagentPrompt({
         step: finalStep,
         state,
         situation,
-        personality,
-        values,
-        tickIntervalSec: smConfig.tickIntervalSec,
+        identity: {
+          personality,
+          values,
+          tickIntervalSec: smConfig.tickIntervalSec,
+        },
         mode,
+      })
+
+      const log = yield* CharacterLog
+
+      const fiber = yield* Effect.gen(function* () {
+        yield* log.action(smConfig.char, {
+          timestamp: new Date().toISOString(),
+          source: "orchestrator",
+          character: smConfig.char.name,
+          type: "subagent_spawn",
+          task: finalStep.task,
+          goal: finalStep.goal,
+          model: finalStep.model,
+        })
+
+        const result = yield* runTurn({
+          char: smConfig.char,
+          containerId: smConfig.containerId,
+          playerName: smConfig.playerName,
+          systemPrompt,
+          prompt,
+          model: finalStep.model,
+          timeoutMs: finalStep.timeoutTicks * smConfig.tickIntervalSec * 1000,
+          env: smConfig.containerEnv,
+          addDirs: smConfig.addDirs,
+          role: "brain",
+        })
+
+        yield* log.action(smConfig.char, {
+          timestamp: new Date().toISOString(),
+          source: "orchestrator",
+          character: smConfig.char.name,
+          type: "subagent_complete",
+          task: finalStep.task,
+        })
+
+        return result.output
       }).pipe(
         Effect.tap((report) => Ref.set(subagentRefs.report, report)),
         Effect.catchAll((e) =>
           Effect.gen(function* () {
+            yield* log.action(smConfig.char, {
+              timestamp: new Date().toISOString(),
+              source: "orchestrator",
+              character: smConfig.char.name,
+              type: "subagent_error",
+              task: finalStep.task,
+              error: formatError(e),
+            })
             const msg = formatError(e)
             yield* Ref.set(subagentRefs.report, `[SUBAGENT ERROR] ${msg}`)
             yield* logToConsole(smConfig.char.name, "error", msg)

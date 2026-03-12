@@ -17,7 +17,6 @@ export {
   evaluateCompletedSubagent,
   checkMidRun,
   maybeSpawnSubagent,
-  runGenericSubagent,
   recordStepTiming,
   recordStepOutcome,
 } from "./planning/index.js"
@@ -26,6 +25,5 @@ export type {
   PlanningRefs,
   SubagentRefs,
   PlanRefs,
-  SubagentInput,
   TimingRefs,
 } from "./planning/index.js"
