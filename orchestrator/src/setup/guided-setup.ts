@@ -7,7 +7,7 @@ import type { ProcedureMessage } from "../core/domain-bundle.js"
 import { scaffoldCharacter } from "../core/character-scaffold.js"
 import { logToConsole } from "../logging/console-renderer.js"
 import { validateAndStart } from "./validate-and-start.js"
-import { ensureOAuthToken } from "./oauth-token.js"
+import { ensureOAuthTokenInteractive } from "./oauth-token.js"
 
 /** Log a ProcedureMessage to console with appropriate prefix. */
 const logProcMsg = (msg: ProcedureMessage) => {
@@ -24,7 +24,7 @@ const logProcMsg = (msg: ProcedureMessage) => {
 export const runGuidedSetup = (projectRoot: string) =>
   Effect.gen(function* () {
     // Ensure OAuth token is available before anything else
-    yield* ensureOAuthToken(projectRoot)
+    yield* ensureOAuthTokenInteractive(projectRoot)
 
     yield* logToConsole("setup", "cli", "Welcome to Rocinante crew orchestrator setup!")
     yield* logToConsole("setup", "cli", "")

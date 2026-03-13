@@ -17,7 +17,7 @@ import type { ProcedureMessage } from "./core/domain-bundle.js"
 import { scaffoldCharacter } from "./core/character-scaffold.js"
 import { runGuidedSetup } from "./setup/guided-setup.js"
 import { validateAndStart } from "./setup/validate-and-start.js"
-import { ensureOAuthToken } from "./setup/oauth-token.js"
+import { OAuthTokenLive } from "./services/OAuthToken.js"
 
 const isDev = import.meta.url.endsWith(".ts")
 const PROJECT_ROOT = isDev
@@ -533,10 +533,7 @@ const runAutoDetect = (args: {
       return
     }
 
-    // 4. Ensure OAuth token is available before validating
-    yield* ensureOAuthToken(PROJECT_ROOT)
-
-    // 5. Validate and start
+    // 4. Validate and start
     yield* validateAndStart(PROJECT_ROOT, resolved, args.tickInterval, args.manualApproval)
   })
 
@@ -563,9 +560,12 @@ const rociCommand = Command.make(
 // --- provide services ---
 const projectRootLayer = Layer.succeed(ProjectRoot, PROJECT_ROOT)
 
+const oauthTokenLayer = OAuthTokenLive.pipe(Layer.provide(projectRootLayer))
+
 const serviceLayer = Layer.mergeAll(
   DockerLive,
-  ClaudeLive,
+  oauthTokenLayer,
+  ClaudeLive.pipe(Layer.provide(oauthTokenLayer)),
   CharacterFsLive,
   projectRootLayer,
   CharacterLogLive.pipe(Layer.provide(projectRootLayer)),

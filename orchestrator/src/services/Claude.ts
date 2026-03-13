@@ -4,6 +4,7 @@ import { writeFileSync, unlinkSync, mkdtempSync } from "node:fs"
 
 import { tmpdir } from "node:os"
 import * as path from "node:path"
+import { OAuthToken } from "./OAuthToken.js"
 
 export type ClaudeModel = "opus" | "sonnet" | "haiku"
 
@@ -83,12 +84,15 @@ export const ClaudeLive = Layer.effect(
   Claude,
   Effect.gen(function* () {
     const executor = yield* CommandExecutor.CommandExecutor
+    const oauthToken = yield* OAuthToken
 
     return Claude.of({
       invoke: (opts) =>
         Effect.scoped(
           Effect.gen(function* () {
             const promptFile = writeTempFile("prompt", opts.prompt)
+
+            const { token } = yield* oauthToken.getToken
 
             const args: string[] = [
               "--model", opts.model,
@@ -109,12 +113,13 @@ export const ClaudeLive = Layer.effect(
             // Build the shell command: pipe prompt via stdin
             // Unset CLAUDECODE to allow running from within a Claude Code session
             // System prompt goes via temp file too if present
+            const envPrefix = `CLAUDE_CODE_OAUTH_TOKEN=${shellEscape(token)} `
             let shellCmd: string
             if (opts.systemPrompt) {
               const sysFile = writeTempFile("system", opts.systemPrompt)
-              shellCmd = `unset CLAUDECODE; cat ${shellEscape(promptFile)} | claude -p ${args.join(" ")} --system-prompt "$(cat ${shellEscape(sysFile)})" ; r=$?; rm -rf ${shellEscape(path.dirname(sysFile))}; exit $r`
+              shellCmd = `unset CLAUDECODE; ${envPrefix}cat ${shellEscape(promptFile)} | claude -p ${args.join(" ")} --system-prompt "$(cat ${shellEscape(sysFile)})" ; r=$?; rm -rf ${shellEscape(path.dirname(sysFile))}; exit $r`
             } else {
-              shellCmd = `unset CLAUDECODE; cat ${shellEscape(promptFile)} | claude -p ${args.join(" ")}`
+              shellCmd = `unset CLAUDECODE; ${envPrefix}cat ${shellEscape(promptFile)} | claude -p ${args.join(" ")}`
             }
 
             const cmd = Command.make("bash", "-c", shellCmd)

@@ -4,34 +4,9 @@ import { runPhases } from "./core/phase-runner.js"
 import { logToConsole } from "./logging/console-renderer.js"
 import { ProjectRoot } from "./services/ProjectRoot.js"
 import { makeCharacterConfig } from "./services/CharacterFs.js"
-import { readFileSync } from "node:fs"
 import { execSync } from "node:child_process"
-import * as path from "node:path"
 import type { ResolvedDomain } from "./domains/registry.js"
-
-/** Read a key=value .env file, returning a Record. */
-function loadDotenv(projectRoot: string): Record<string, string> {
-  try {
-    const content = readFileSync(path.resolve(projectRoot, ".env"), "utf-8")
-    const env: Record<string, string> = {}
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith("#")) continue
-      const eq = trimmed.indexOf("=")
-      if (eq === -1) continue
-      const key = trimmed.slice(0, eq).trim()
-      let val = trimmed.slice(eq + 1).trim()
-      // Strip surrounding quotes
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1)
-      }
-      env[key] = val
-    }
-    return env
-  } catch {
-    return {}
-  }
-}
+import { OAuthToken } from "./services/OAuthToken.js"
 
 /**
  * Ensure a domain container exists and is running.
@@ -108,16 +83,10 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       `Starting ${totalChars} character(s) across ${resolvedDomains.length} domain(s)...`,
     )
 
-    // Load CLAUDE_CODE_OAUTH_TOKEN from .env
-    const dotenv = loadDotenv(projectRoot)
-    const oauthToken = dotenv.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.CLAUDE_CODE_OAUTH_TOKEN
-    if (!oauthToken) {
-      yield* logToConsole("orchestrator", "main", "ERROR: CLAUDE_CODE_OAUTH_TOKEN not found in .env or environment")
-      return yield* Effect.fail(
-        new DockerError("CLAUDE_CODE_OAUTH_TOKEN not found in .env or environment"),
-      )
-    }
-    const containerEnv = { CLAUDE_CODE_OAUTH_TOKEN: oauthToken }
+    // Token is managed by OAuthToken service — validated at layer startup
+    const oauthService = yield* OAuthToken
+    const { token: oauthToken } = yield* oauthService.getToken
+    yield* logToConsole("orchestrator", "main", `OAuth token: ${oauthToken.slice(0, 12)}...`)
 
     // Build images — deduplicated by imageName
     const builtImages = new Set<string>()
@@ -141,12 +110,21 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       )
     }
 
-    // Ensure per-domain containers and fork character fibers
-    const allFibers = []
-
+    // Ensure per-domain containers
+    const containerIds = new Map<string, string>()
     for (const rd of resolvedDomains) {
       const containerName = `roci-${rd.name}`
       const containerId = yield* ensureContainer(containerName, rd)
+      containerIds.set(rd.name, containerId)
+    }
+
+    const containerEnv: Record<string, string> = {}
+
+    // Fork character fibers
+    const allFibers = []
+
+    for (const rd of resolvedDomains) {
+      const containerId = containerIds.get(rd.name)!
 
       for (const charName of rd.characters) {
         const char = makeCharacterConfig(projectRoot, charName)

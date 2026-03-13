@@ -14,6 +14,7 @@ import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
@@ -47,21 +48,27 @@ function parseStreamJson(line: string): Record<string, unknown> | null {
   }
 }
 
+function isAuthError(text: string): boolean {
+  return /401|[Uu]nauthorized|[Aa]uthentication.*(error|fail)|[Ii]nvalid bearer token/i.test(text)
+}
+
 /**
  * Run `claude -p` inside a container with a timeout.
  * Streams output through the log demux for real-time console visibility.
  * Collects text blocks as the final output string.
  * On timeout, interrupts and returns whatever text was accumulated.
  */
-export const runTurn = (config: TurnConfig): Effect.Effect<
+export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
   TurnResult,
   ClaudeError,
-  CommandExecutor.CommandExecutor | CharacterLog
+  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
 > =>
   Effect.scoped(
     Effect.gen(function* () {
       const executor = yield* CommandExecutor.CommandExecutor
       const start = Date.now()
+      const oauthToken = yield* OAuthToken
+      const { token, version: tokenVersion } = yield* oauthToken.getToken
 
       // Accumulate text output from assistant messages
       const textAccumulator = yield* Ref.make<string[]>([])
@@ -107,12 +114,17 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
       const execArgs: string[] = ["exec", "-i", "-w", `/work/players/${config.playerName}`]
       if (config.env) {
         for (const [key, val] of Object.entries(config.env)) {
+          if (key === "CLAUDE_CODE_OAUTH_TOKEN") continue
           execArgs.push("-e", `${key}=${val}`)
         }
       }
+      execArgs.push("-e", `CLAUDE_CODE_OAUTH_TOKEN=${token}`)
       execArgs.push(config.containerId, "bash", "-c", innerCmd)
 
-      // Diagnostic: log the full docker exec command (redact token values)
+      // Diagnostic: log token prefix/suffix so we can verify it matches the saved file
+      yield* logToConsole(config.char.name, config.role, `token len=${token.length} prefix=${token.slice(0, 15)}... suffix=...${token.slice(-10)}`)
+
+      // Log the full docker exec command (redact token values)
       const redactedArgs = execArgs.map(a =>
         a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a
       )
@@ -190,6 +202,11 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
         const stderr = yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.succeed("")))
         if (stderr && stderr.trim()) {
           yield* logToConsole(config.char.name, config.role, `stderr: ${stderr.trim().slice(0, 500)}`)
+        }
+        if (!_retrying && exitCode !== 0 && isAuthError(stderr)) {
+          yield* logToConsole(config.char.name, config.role, "Auth error detected — refreshing token and retrying...")
+          yield* oauthToken.refreshToken(tokenVersion)
+          return yield* runTurn(config, true)
         }
       }
 

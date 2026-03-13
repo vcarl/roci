@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import { ClaudeError } from "../../../services/Claude.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import type { AiFunction } from "../../AiFunction.js"
 import { PromptBuilderTag } from "../../prompt-builder.js"
@@ -53,7 +54,7 @@ function parsePlan(output: string, validProcedures?: string[]): Plan {
 
 // ── Brain functions ─────────────────────────────────────────
 
-export const brainPlan: AiFunction<PlanPromptContext & BrainContainerContext, Plan, PromptBuilderTag | CommandExecutor.CommandExecutor | CharacterLog, ClaudeError> = {
+export const brainPlan: AiFunction<PlanPromptContext & BrainContainerContext, Plan, PromptBuilderTag | CommandExecutor.CommandExecutor | CharacterLog | OAuthToken, ClaudeError> = {
   name: "brain.plan",
   execute: (input) =>
     Effect.gen(function* () {
@@ -90,7 +91,7 @@ export const brainPlan: AiFunction<PlanPromptContext & BrainContainerContext, Pl
     }),
 }
 
-export const brainInterrupt: AiFunction<InterruptPromptContext & BrainContainerContext, Plan, PromptBuilderTag | CommandExecutor.CommandExecutor | CharacterLog, ClaudeError> = {
+export const brainInterrupt: AiFunction<InterruptPromptContext & BrainContainerContext, Plan, PromptBuilderTag | CommandExecutor.CommandExecutor | CharacterLog | OAuthToken, ClaudeError> = {
   name: "brain.interrupt",
   execute: (input) =>
     Effect.gen(function* () {
@@ -127,7 +128,7 @@ export const brainInterrupt: AiFunction<InterruptPromptContext & BrainContainerC
     }),
 }
 
-export const brainEvaluate: AiFunction<EvaluatePromptContext & BrainContainerContext, StepCompletionResult, PromptBuilderTag | StateRendererTag | CommandExecutor.CommandExecutor | CharacterLog, ClaudeError> = {
+export const brainEvaluate: AiFunction<EvaluatePromptContext & BrainContainerContext, StepCompletionResult, PromptBuilderTag | StateRendererTag | CommandExecutor.CommandExecutor | CharacterLog | OAuthToken, ClaudeError> = {
   name: "brain.evaluate",
   execute: (input) =>
     Effect.gen(function* () {

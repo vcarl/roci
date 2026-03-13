@@ -4,6 +4,7 @@ import type { CycleConfig, CycleResult } from "./types.js"
 import { runTurn } from "./process-runner.js"
 import { summarizeTimeout } from "./timeout-summarizer.js"
 import { Claude, ClaudeError } from "../../../services/Claude.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
 
@@ -18,7 +19,7 @@ import { logToConsole } from "../../../logging/console-renderer.js"
  */
 export const runCycle = (
   config: CycleConfig,
-): Effect.Effect<CycleResult, ClaudeError | Error, Claude | CommandExecutor.CommandExecutor | CharacterLog> =>
+): Effect.Effect<CycleResult, ClaudeError | Error, Claude | CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
   Effect.gen(function* () {
     const playerName = config.playerName
 
