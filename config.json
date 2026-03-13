@@ -1,0 +1,15 @@
+{
+  "spacemolt": {
+    "characters": [
+      "test-pilot",
+      "test-copilot"
+    ]
+  },
+  "github": {
+    "characters": [
+      "github-test",
+      "swe-dike",
+      "swe-eunomia"
+    ]
+  }
+}

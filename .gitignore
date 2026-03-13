@@ -3,3 +3,10 @@ dist/
 .nx/
 coverage/
 *.tsbuildinfo
+.ds_store
+__pycache__/
+.env
+.oauth-token
+.claude-credentials.json
+.claude/
+repos/
