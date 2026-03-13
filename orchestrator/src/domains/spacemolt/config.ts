@@ -1,13 +1,14 @@
 import * as path from "node:path"
-import { execSync } from "node:child_process"
+import { execSync, execFileSync } from "node:child_process"
 import { Effect } from "effect"
 import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "../../core/domain-bundle.js"
 import { spaceMoltDomainBundle, spaceMoltServiceLayer } from "./index.js"
 import { spaceMoltPhaseRegistry } from "./phases.js"
-import { readFileSync, existsSync, writeFileSync } from "node:fs"
+import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs"
 import { askUser } from "../../util/prompt.js"
 
 const IMAGE_NAME = "spacemolt-player"
+const SM_CLI_REPO = "git@github.com:vcarl/sm-cli.git"
 
 /** Container volume mounts for SpaceMolt. */
 const containerMounts = (projectRoot: string): ContainerMount[] => [
@@ -131,6 +132,37 @@ const spaceMoltCharacterSetupGuide = [
   `credentials.txt is created automatically during the first run.`,
 ]
 
+/** Project-level init for SpaceMolt — ensures sm-cli is cloned into shared-resources. */
+const spaceMoltInitProject = (projectRoot: string): Effect.Effect<ProcedureMessage[]> =>
+  Effect.sync(() => {
+    const messages: ProcedureMessage[] = []
+    const smCliDir = path.resolve(projectRoot, "shared-resources/sm-cli")
+
+    // Check if directory exists and has content (not just an empty dir)
+    const needsClone = !existsSync(smCliDir)
+      || readdirSync(smCliDir).filter(f => !f.startsWith(".")).length === 0
+
+    if (!needsClone) {
+      messages.push({ level: "ok", text: `sm-cli already present at ${smCliDir}` })
+      return messages
+    }
+
+    // Ensure parent directory exists
+    const sharedDir = path.resolve(projectRoot, "shared-resources")
+    if (!existsSync(sharedDir)) {
+      mkdirSync(sharedDir, { recursive: true })
+    }
+
+    try {
+      execFileSync("git", ["clone", SM_CLI_REPO, smCliDir], { stdio: "pipe" })
+      messages.push({ level: "ok", text: `Cloned sm-cli into ${smCliDir}` })
+    } catch (e) {
+      messages.push({ level: "error", text: `Failed to clone sm-cli: ${e}` })
+    }
+
+    return messages
+  })
+
 /** Build the SpaceMolt domain config for a given project root. */
 export const spaceMoltDomainConfig = (projectRoot: string): DomainConfig => ({
   bundle: spaceMoltDomainBundle,
@@ -143,6 +175,7 @@ export const spaceMoltDomainConfig = (projectRoot: string): DomainConfig => ({
   dockerContext: path.resolve(import.meta.dirname, "docker"),
   containerAddDirs: ["/work/shared", "/work/sm-cli"],
   initProcedure: spaceMoltInitProcedure,
+  initProject: spaceMoltInitProject,
   setupCharacter: spaceMoltSetupCharacter,
   characterSetupGuide: spaceMoltCharacterSetupGuide,
   identityTemplate: {
