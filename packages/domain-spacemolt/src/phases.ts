@@ -19,8 +19,8 @@ import { reportStatus } from "@signal/core/server/status-reporter.js"
 import { readTodo } from "@signal/core/operator/todo-reader.js"
 import { readWindDown } from "@signal/core/operator/wind-down-file.js"
 
-/** Ticks in the active game loop before transitioning to social phase. At 30s/tick, 100 ticks ~ 50 min. */
-const ACTIVE_SESSION_TURNS = 100
+/** Active session wall-clock duration before transitioning to social phase. */
+const ACTIVE_SESSION_DURATION_MS = 50 * 60 * 1000 // 50 minutes
 
 /** Diary lines above this threshold trigger dream compression. */
 const DIARY_COMPRESSION_THRESHOLD = 200
@@ -209,10 +209,11 @@ const activePhase = {
         containerId: context.containerId,
       })
 
+      const sessionStartMs = Date.now()
       const exitSignal = yield* Deferred.make<ExitReason, never>()
 
       const hooks: LifecycleHooks = {
-        shouldExit: (turnCount: number) => Effect.succeed(turnCount >= ACTIVE_SESSION_TURNS),
+        shouldExit: (_turnCount: number) => Effect.succeed(Date.now() - sessionStartMs >= ACTIVE_SESSION_DURATION_MS),
       }
 
       if (!context.domainBundle) {
