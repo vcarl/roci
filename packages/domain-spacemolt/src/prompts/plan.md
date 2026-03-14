@@ -48,3 +48,8 @@ Based on the current state, create a strategic plan. Consider:
 3. What sequence of actions makes sense?
 
 Output ONLY the JSON plan.
+
+## Important: Non-Existent Commands
+- There is no sm refine command. ore_refinement is a skill level, not an action. Do not plan steps that instruct agents to refine ore directly. Refining happens via crafting recipes (sm craft steel_plate requires ore_refinement L1).
+- There is no sm process or sm smelt command. Same rule applies.
+- When planning ore processing, plan sm craft <item> steps with the correct recipe, not refining steps.
