@@ -1,0 +1,41 @@
+{
+  "name": "roci",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "roci": "./bin/roci.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "pack": "node scripts/pack.js",
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/main.ts",
+    "roci": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@roci/core": "workspace:*",
+    "@roci/domain-spacemolt": "workspace:*",
+    "@roci/domain-github": "workspace:*",
+    "@effect/cli": "^0.73.2",
+    "@effect/platform": "^0.94.5",
+    "@effect/platform-node": "^0.104.1",
+    "@effect/printer": "^0.47.0",
+    "@effect/printer-ansi": "^0.47.0",
+    "effect": "^3.19.19",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@effect/language-service": "^0.77.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  }
+}

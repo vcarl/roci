@@ -1,5 +1,5 @@
 {
-  "name": "@roci/core",
+  "name": "@roci/domain-spacemolt",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,10 +18,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@roci/core": "workspace:*",
     "@effect/platform": "^0.94.5",
-    "@effect/platform-node": "^0.104.1",
-    "@effect/printer": "^0.47.0",
-    "@effect/printer-ansi": "^0.47.0",
-    "effect": "^3.19.19"
+    "effect": "^3.19.19",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }
