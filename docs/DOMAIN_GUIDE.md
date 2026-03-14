@@ -1,6 +1,6 @@
 # Domain Guide
 
-How to build a new domain for the Rocinante orchestrator.
+How to build a new domain for the Rocinante orchestrator. New domains should be created as workspace packages under `packages/domain-<name>/` (e.g. `packages/domain-mydomain/`), with the package name `@roci/domain-<name>`. Domain code imports from `@roci/core` instead of relative paths.
 
 ## What is a Domain?
 
@@ -67,7 +67,7 @@ Both types extend `TempoBase` (`tickIntervalSec`, `dreamThreshold`). The discrim
 Create types for your domain's state, situation, and events. The core uses opaque `DomainState`, `DomainSituation`, and `DomainEvent` type aliases (all `unknown`), so your implementations cast internally.
 
 ```ts
-// domains/mydomain/types.ts
+// packages/domain-mydomain/src/types.ts
 
 /** The full state snapshot for your domain. */
 export interface MyState {
@@ -107,9 +107,9 @@ export type MyEvent =
 Maps raw domain events into `EventResult` objects that tell the engine how to react.
 
 ```ts
-// domains/mydomain/event-processor.ts
+// packages/domain-mydomain/src/event-processor.ts
 import { Layer } from "effect"
-import { EventProcessorTag, type EventResult } from "../../core/limbic/thalamus/event-processor.js"
+import { EventProcessorTag, type EventResult } from "@roci/core/core/limbic/thalamus/event-processor.js"
 import type { MyEvent } from "./types.js"
 
 const myEventProcessor = {
@@ -162,8 +162,8 @@ Derives a structured `SituationSummary` from raw state. Called on every state ch
 
 ```ts
 import { Layer } from "effect"
-import { SituationClassifierTag } from "../../core/limbic/thalamus/situation-classifier.js"
-import type { SituationSummary } from "../../core/limbic/thalamus/situation-classifier.js"
+import { SituationClassifierTag } from "@roci/core/core/limbic/thalamus/situation-classifier.js"
+import type { SituationSummary } from "@roci/core/core/limbic/thalamus/situation-classifier.js"
 import type { MyState, MySituation } from "./types.js"
 
 const myClassifier = {
@@ -211,7 +211,7 @@ Renders state into human-readable forms for diff tracking and logging. Detailed 
 
 ```ts
 import { Layer } from "effect"
-import { StateRendererTag } from "../../core/state-renderer.js"
+import { StateRendererTag } from "@roci/core/core/state-renderer.js"
 
 const myRenderer = {
   snapshot(state: unknown): Record<string, unknown> {
@@ -248,8 +248,8 @@ Declarative rules that detect conditions warranting replanning. Use the `createI
 
 ```ts
 import { Layer } from "effect"
-import type { InterruptRule } from "../../core/interrupt.js"
-import { InterruptRegistryTag, createInterruptRegistry } from "../../core/interrupt.js"
+import type { InterruptRule } from "@roci/core/core/limbic/amygdala/interrupt.js"
+import { InterruptRegistryTag, createInterruptRegistry } from "@roci/core/core/limbic/amygdala/interrupt.js"
 import type { MyState, MySituation } from "./types.js"
 
 const rules: ReadonlyArray<InterruptRule> = [
@@ -305,7 +305,7 @@ State machine domains can stub `brainPrompt` with a throw (it will never be call
 
 See `core/prompt-builder.ts` for the exact context types (`PlanPromptContext`, `InterruptPromptContext`, `EvaluatePromptContext`, `SubagentPromptContext`, `PlannedActionBrainPromptContext`).
 
-The SpaceMolt implementation (`domains/spacemolt/prompt-builder.ts`) is the best reference for state machine prompts. The GitHub implementation (`domains/github/prompt-builder.ts`) is the reference for planned-action prompts.
+The SpaceMolt implementation (`packages/domain-spacemolt/src/prompt-builder.ts`) is the best reference for state machine prompts. The GitHub implementation (`packages/domain-github/src/prompt-builder.ts`) is the reference for planned-action prompts.
 
 ### 7. `SkillRegistry` — Stub or Implement
 
@@ -313,7 +313,7 @@ A stub is valid for getting started:
 
 ```ts
 import { Layer } from "effect"
-import { SkillRegistryTag } from "../../core/skill.js"
+import { SkillRegistryTag } from "@roci/core/core/skill.js"
 
 export const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
   skills: [],
@@ -340,7 +340,7 @@ Phases are the top-level session structure. A minimal registry needs at least a 
 
 ```ts
 import { Effect, Deferred, Queue } from "effect"
-import { runStateMachine } from "../../core/orchestrator/state-machine.js"
+import { runStateMachine } from "@roci/core/core/orchestrator/state-machine.js"
 
 const activePhase = {
   name: "active",
@@ -373,8 +373,8 @@ const activePhase = {
 #### Planned-Action Pattern (GitHub-style)
 
 ```ts
-import { runPlannedAction } from "../../core/orchestrator/planned-action.js"
-import type { PlannedActionTempo } from "../../core/limbic/hypothalamus/tempo.js"
+import { runPlannedAction } from "@roci/core/core/orchestrator/planned-action.js"
+import type { PlannedActionTempo } from "@roci/core/core/limbic/hypothalamus/tempo.js"
 
 const tempo: PlannedActionTempo = {
   _tag: "PlannedAction",
@@ -426,7 +426,7 @@ Planned-action domains typically add `break` and `reflection` phases alongside `
 
 ```ts
 import { Layer } from "effect"
-import type { DomainConfig, DomainBundle } from "../../core/domain-bundle.js"
+import type { DomainConfig, DomainBundle } from "@roci/core/core/domain-bundle.js"
 import { myPhaseRegistry } from "./phases.js"
 // ... import all your Layer exports
 
@@ -450,7 +450,7 @@ export const myDomainConfig = (projectRoot: string): DomainConfig => ({
 })
 ```
 
-Register your domain in `domains/registry.ts` — one line in `DOMAIN_REGISTRY`:
+Register your domain in `apps/roci/src/domains/registry.ts` — one line in `DOMAIN_REGISTRY`:
 
 ```ts
 export const DOMAIN_REGISTRY: Record<string, DomainConfigFactory> = {
@@ -613,17 +613,17 @@ const activePhase = {
 
 | Service | File |
 |---------|------|
-| `EventProcessor` | `domains/spacemolt/event-processor.ts` |
-| `SituationClassifier` | `domains/spacemolt/situation.ts` → `situation-classifier.ts` |
-| `StateRenderer` | `domains/spacemolt/renderer.ts` → `state-renderer.ts` |
-| `InterruptRegistry` | `domains/spacemolt/interrupts.ts` |
-| `PromptBuilder` | `domains/spacemolt/prompt-builder.ts` |
-| `SkillRegistry` | Stub in `domains/spacemolt/index.ts` |
-| `PhaseRegistry` | `domains/spacemolt/phases.ts` |
-| `DomainConfig` | `domains/spacemolt/config.ts` |
-| Domain bundle | `domains/spacemolt/index.ts` |
-| Domain types | `domains/spacemolt/types.ts` + `ws-types.ts` |
-| Event source (WebSocket) | `domains/spacemolt/game-socket-impl.ts` |
+| `EventProcessor` | `packages/domain-spacemolt/src/event-processor.ts` |
+| `SituationClassifier` | `packages/domain-spacemolt/src/situation.ts` → `situation-classifier.ts` |
+| `StateRenderer` | `packages/domain-spacemolt/src/renderer.ts` → `state-renderer.ts` |
+| `InterruptRegistry` | `packages/domain-spacemolt/src/interrupts.ts` |
+| `PromptBuilder` | `packages/domain-spacemolt/src/prompt-builder.ts` |
+| `SkillRegistry` | Stub in `packages/domain-spacemolt/src/index.ts` |
+| `PhaseRegistry` | `packages/domain-spacemolt/src/phases.ts` |
+| `DomainConfig` | `packages/domain-spacemolt/src/config.ts` |
+| Domain bundle | `packages/domain-spacemolt/src/index.ts` |
+| Domain types | `packages/domain-spacemolt/src/types.ts` + `ws-types.ts` |
+| Event source (WebSocket) | `packages/domain-spacemolt/src/game-socket-impl.ts` |
 
 Note: SpaceMolt has a wrapper pattern where `situation.ts` wraps `situation-classifier.ts` and `renderer.ts` wraps `state-renderer.ts`. This is a SpaceMolt organizational choice, not a requirement.
 
@@ -631,17 +631,17 @@ Note: SpaceMolt has a wrapper pattern where `situation.ts` wraps `situation-clas
 
 | Service | File |
 |---------|------|
-| `EventProcessor` | `domains/github/event-processor.ts` |
-| `SituationClassifier` | `domains/github/situation-classifier.ts` |
-| `StateRenderer` | `domains/github/renderer.ts` |
-| `InterruptRegistry` | `domains/github/interrupts.ts` |
-| `PromptBuilder` | `domains/github/prompt-builder.ts` |
-| `SkillRegistry` | File-based loader in `domains/github/index.ts` |
-| `PhaseRegistry` | `domains/github/phases.ts` |
-| `DomainConfig` | `domains/github/config.ts` |
-| Domain bundle | `domains/github/index.ts` |
-| Domain types | `domains/github/types.ts` |
-| Event source (GraphQL polling) | `domains/github/github-client.ts` |
+| `EventProcessor` | `packages/domain-github/src/event-processor.ts` |
+| `SituationClassifier` | `packages/domain-github/src/situation-classifier.ts` |
+| `StateRenderer` | `packages/domain-github/src/renderer.ts` |
+| `InterruptRegistry` | `packages/domain-github/src/interrupts.ts` |
+| `PromptBuilder` | `packages/domain-github/src/prompt-builder.ts` |
+| `SkillRegistry` | File-based loader in `packages/domain-github/src/index.ts` |
+| `PhaseRegistry` | `packages/domain-github/src/phases.ts` |
+| `DomainConfig` | `packages/domain-github/src/config.ts` |
+| Domain bundle | `packages/domain-github/src/index.ts` |
+| Domain types | `packages/domain-github/src/types.ts` |
+| Event source (GraphQL polling) | `packages/domain-github/src/github-client.ts` |
 
 ## Container Architecture
 
@@ -672,7 +672,7 @@ SpaceMolt additionally mounts `/work/shared/*` and `/work/sm-cli`. GitHub curren
 
 ### Adding a New Domain's Docker Image
 
-1. Create `orchestrator/src/domains/<name>/docker/Dockerfile` and `init-firewall.sh`
+1. Create `packages/domain-<name>/src/docker/Dockerfile` and `init-firewall.sh`
 2. Set `dockerfilePath` and `dockerContext` in your `DomainConfig`
 3. The orchestrator builds images automatically, deduplicated by `imageName`
 
@@ -691,9 +691,9 @@ New domain author checklist:
 - [ ] `TempoConfig` — `StateMachineTempo` or `PlannedActionTempo` defined for your execution model
 - [ ] `DomainConfig` — bundle, phaseRegistry, containerMounts, imageName, serviceLayer, dockerfilePath, dockerContext, containerAddDirs
 - [ ] Domain bundle — `Layer.mergeAll(...)` of all 6 service layers
-- [ ] Domain registered in `orchestrator/src/domains/registry.ts`
+- [ ] Domain registered in `apps/roci/src/domains/registry.ts`
 - [ ] Domain entry added to `config.json` at project root
 - [ ] (State machine) `planPrompt` instructs LLM to return `{ reasoning, steps: [{ task, goal, model, successCondition, timeoutTicks }] }`
 - [ ] (State machine) `evaluatePrompt` instructs LLM to return `{ complete: boolean, reason: string }`
 - [ ] Event source connection/reconnection handled in startup phase
-- [ ] `npm run check && npm run lint` passes
+- [ ] `pnpm check && pnpm lint` passes

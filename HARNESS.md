@@ -2,24 +2,35 @@
 
 The harness runs autonomous character-driven sessions inside a shared Docker container, using Claude Code as the agent runtime. An orchestrator on the host manages the session lifecycle: connect to a domain, run brain/body or plan/act/evaluate cycles, and capture all output.
 
+## Repository Structure
+
+This project is a pnpm monorepo with the following packages:
+
+```
+packages/core/          (@roci/core)              Core engine, services, logging, utilities
+packages/domain-spacemolt/ (@roci/domain-spacemolt) SpaceMolt domain implementation
+packages/domain-github/    (@roci/domain-github)    GitHub domain implementation
+apps/roci/              (roci)                     CLI, orchestrator runner, setup, domain registry
+```
+
 ## Architecture
 
 ```
-cli.ts
- +-- runOrchestrator(configs[], domain)              pipeline/orchestrator.ts
+apps/roci/src/cli.ts
+ +-- runOrchestrator(configs[], domain)              apps/roci/src/orchestrator.ts
      +-- ensureSharedContainer()                      Start/reuse Docker container
-     +-- for each character: fork characterLoop()     pipeline/character-loop.ts
-         +-- runPhases(context, phaseRegistry)         core/phase-runner.ts
+     +-- for each character: fork characterLoop()     apps/roci/src/orchestrator.ts
+         +-- runPhases(context, phaseRegistry)         packages/core/src/core/phase-runner.ts
              +-- Phase: startup, active, break/social, reflection
                  +-- runStateMachine() or runPlannedAction()
 ```
 
 ### Limbic System
 
-Domain-agnostic subsystems live under `core/limbic/`, organized by analogy to limbic brain regions:
+Domain-agnostic subsystems live under `packages/core/src/core/limbic/`, organized by analogy to limbic brain regions:
 
 ```
-core/limbic/
+packages/core/src/core/limbic/
  +-- thalamus/         Sensory relay: event processing, situation classification
  |   +-- event-processor.ts    EventProcessor, EventResult, EventCategory
  |   +-- situation-classifier.ts   SituationClassifier, SituationSummary
@@ -85,7 +96,7 @@ interface PlannedActionTempo extends TempoBase {
 
 ### Domain Services
 
-All domain knowledge is injected via 6 Effect service layers, provided as a `DomainBundle`. See `domains/DOMAIN_GUIDE.md` for full documentation.
+All domain knowledge is injected via 6 Effect service layers, provided as a `DomainBundle`. See `docs/DOMAIN_GUIDE.md` for full documentation.
 
 | Service | Tag | Role |
 |---------|-----|------|
@@ -186,7 +197,7 @@ Checks diary line count against `dreamThreshold`. If exceeded, calls `dream.exec
 
 ## Adding an Interrupt Rule
 
-Add to the rules array in `domains/<domain>/interrupts.ts`:
+Add to the rules array in the domain's `interrupts.ts` (e.g. `packages/domain-spacemolt/src/interrupts.ts`):
 
 ```typescript
 { name: "fuel_emergency", priority: "critical",
@@ -325,69 +336,79 @@ All events printed type-tagged with timestamp and character name:
 
 ## Key Files
 
-### Core (domain-agnostic)
+### Core — `packages/core/` (@roci/core)
 
 | File | Role |
 |------|------|
-| `core/orchestrator/state-machine.ts` | Plan/act/evaluate event loop |
-| `core/orchestrator/planned-action.ts` | Brain/body cycle engine, runBreak, runReflection |
-| `core/orchestrator/planning/brain.ts` | Brain functions: plan, interrupt, evaluate (Opus) |
-| `core/orchestrator/planning/subagent.ts` | Build prompt, run in container, handle exit |
-| `core/orchestrator/lifecycle.ts` | LifecycleHooks (shouldExit, onInterrupt, onReset) |
-| `core/limbic/thalamus/event-processor.ts` | EventProcessor, EventResult, EventCategory |
-| `core/limbic/thalamus/situation-classifier.ts` | SituationClassifier, SituationSummary |
-| `core/limbic/amygdala/interrupt.ts` | InterruptRule, InterruptRegistry, createInterruptRegistry() |
-| `core/limbic/hypothalamus/tempo.ts` | TempoConfig (StateMachineTempo, PlannedActionTempo) |
-| `core/limbic/hypothalamus/cycle-runner.ts` | runCycle -- single brain/body turn pair |
-| `core/limbic/hypothalamus/process-runner.ts` | `runTurn` -- primary domain execution path: claude -p in container with tool access |
-| `core/limbic/hippocampus/dream.ts` | Dream compression (diary + secrets) |
-| `core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
-| `core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
-| `core/domain-bundle.ts` | DomainBundle (6 service layers) + DomainConfig |
-| `core/prompt-builder.ts` | PromptBuilder interface (plan, interrupt, evaluate, subagent, brainPrompt) |
-| `core/state-renderer.ts` | StateRenderer interface |
-| `core/skill.ts` | Skill + SkillRegistry interface |
+| `packages/core/src/core/orchestrator/state-machine.ts` | Plan/act/evaluate event loop |
+| `packages/core/src/core/orchestrator/planned-action.ts` | Brain/body cycle engine, runBreak, runReflection |
+| `packages/core/src/core/orchestrator/planning/brain.ts` | Brain functions: plan, interrupt, evaluate (Opus) |
+| `packages/core/src/core/orchestrator/planning/subagent-manager.ts` | Build prompt, run in container, handle exit |
+| `packages/core/src/core/orchestrator/lifecycle.ts` | LifecycleHooks (shouldExit, onInterrupt, onReset) |
+| `packages/core/src/core/limbic/thalamus/event-processor.ts` | EventProcessor, EventResult, EventCategory |
+| `packages/core/src/core/limbic/thalamus/situation-classifier.ts` | SituationClassifier, SituationSummary |
+| `packages/core/src/core/limbic/amygdala/interrupt.ts` | InterruptRule, InterruptRegistry, createInterruptRegistry() |
+| `packages/core/src/core/limbic/hypothalamus/tempo.ts` | TempoConfig (StateMachineTempo, PlannedActionTempo) |
+| `packages/core/src/core/limbic/hypothalamus/cycle-runner.ts` | runCycle -- single brain/body turn pair |
+| `packages/core/src/core/limbic/hypothalamus/process-runner.ts` | `runTurn` -- primary domain execution path: claude -p in container with tool access |
+| `packages/core/src/core/limbic/hippocampus/dream.ts` | Dream compression (diary + secrets) |
+| `packages/core/src/core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
+| `packages/core/src/core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
+| `packages/core/src/core/domain-bundle.ts` | DomainBundle (6 service layers) + DomainConfig |
+| `packages/core/src/core/prompt-builder.ts` | PromptBuilder interface (plan, interrupt, evaluate, subagent, brainPrompt) |
+| `packages/core/src/core/state-renderer.ts` | StateRenderer interface |
+| `packages/core/src/core/skill.ts` | Skill + SkillRegistry interface |
 
-### GitHub domain
-
-| File | Role |
-|------|------|
-| `domains/github/phases.ts` | Phase registry: startup, active (runPlannedAction), break (runBreak), reflection |
-| `domains/github/interrupts.ts` | Declarative interrupt rules (CI failing, review requested, untriaged issues, stale PRs) |
-| `domains/github/github-client.ts` | GraphQL polling, single query per repo, token validation |
-| `domains/github/brain-system-prompt.md` | Brain (Opus) system prompt |
-| `domains/github/body-system-prompt.md` | Body (Sonnet) system prompt |
-| `domains/github/prompt-helpers.ts` | State summary renderer for brain prompt |
-
-### SpaceMolt domain
+### GitHub domain — `packages/domain-github/` (@roci/domain-github)
 
 | File | Role |
 |------|------|
-| `domains/spacemolt/config.ts` | DomainConfig factory (mounts, image, setup) |
-| `domains/spacemolt/index.ts` | Domain bundle (all 6 service layers) |
-| `domains/spacemolt/phases.ts` | Phase registry: startup, active (runStateMachine), social, reflection |
-| `domains/spacemolt/interrupts.ts` | Declarative interrupt rules via createInterruptRegistry() |
-| `domains/spacemolt/situation.ts` | SituationClassifier -- summarize() with structured SituationSummary |
-| `domains/spacemolt/renderer.ts` | State snapshots, diffs, console bar |
-| `domains/spacemolt/prompt-builder.ts` | All LLM prompt assembly |
-| `domains/spacemolt/event-processor.ts` | Maps WS GameEvents to EventResults |
-| `domains/spacemolt/game-socket-impl.ts` | WebSocket connection, reconnection, event queue |
-| `domains/DOMAIN_GUIDE.md` | Guide for building new domains |
+| `packages/domain-github/src/phases.ts` | Phase registry: startup, active (runPlannedAction), break (runBreak), reflection |
+| `packages/domain-github/src/interrupts.ts` | Declarative interrupt rules (CI failing, review requested, untriaged issues, stale PRs) |
+| `packages/domain-github/src/github-client.ts` | GraphQL polling, single query per repo, token validation |
+| `packages/domain-github/src/brain-system-prompt.md` | Brain (Opus) system prompt |
+| `packages/domain-github/src/body-system-prompt.md` | Body (Sonnet) system prompt |
+| `packages/domain-github/src/prompt-helpers.ts` | State summary renderer for brain prompt |
 
-### Pipeline and services
+### SpaceMolt domain — `packages/domain-spacemolt/` (@roci/domain-spacemolt)
 
 | File | Role |
 |------|------|
-| `cli.ts` | CLI commands and service wiring |
-| `pipeline/orchestrator.ts` | Container lifecycle, fork character fibers |
-| `pipeline/character-loop.ts` | Per-character: delegates to phase runner |
-| `services/Claude.ts` | Host-only `invoke` for orchestrator-internal tasks (memory, summarization) |
-| `services/ProjectRoot.ts` | Project root path service |
-| `services/CharacterFs.ts` | Character file system operations |
-| `services/Docker.ts` | Docker container management |
-| `logging/log-demux.ts` | Raw capture, parse, route to logs + console |
-| `logging/log-writer.ts` | CharacterLog service (JSONL append) |
-| `logging/console-renderer.ts` | Type-tagged + narrative console output |
+| `packages/domain-spacemolt/src/config.ts` | DomainConfig factory (mounts, image, setup) |
+| `packages/domain-spacemolt/src/index.ts` | Domain bundle (all 6 service layers) |
+| `packages/domain-spacemolt/src/phases.ts` | Phase registry: startup, active (runStateMachine), social, reflection |
+| `packages/domain-spacemolt/src/interrupts.ts` | Declarative interrupt rules via createInterruptRegistry() |
+| `packages/domain-spacemolt/src/situation.ts` | SituationClassifier -- summarize() with structured SituationSummary |
+| `packages/domain-spacemolt/src/renderer.ts` | State snapshots, diffs, console bar |
+| `packages/domain-spacemolt/src/prompt-builder.ts` | All LLM prompt assembly |
+| `packages/domain-spacemolt/src/event-processor.ts` | Maps WS GameEvents to EventResults |
+| `packages/domain-spacemolt/src/game-socket-impl.ts` | WebSocket connection, reconnection, event queue |
+| `docs/DOMAIN_GUIDE.md` | Guide for building new domains |
+
+### CLI and orchestrator — `apps/roci/` (roci)
+
+| File | Role |
+|------|------|
+| `apps/roci/src/cli.ts` | CLI commands and service wiring |
+| `apps/roci/src/orchestrator.ts` | Container lifecycle, fork character fibers |
+| `apps/roci/src/domains/registry.ts` | Domain registry |
+
+### Services and logging — `packages/core/` (@roci/core)
+
+| File | Role |
+|------|------|
+| `packages/core/src/services/Claude.ts` | Host-only `invoke` for orchestrator-internal tasks (memory, summarization) |
+| `packages/core/src/services/ProjectRoot.ts` | Project root path service |
+| `packages/core/src/services/CharacterFs.ts` | Character file system operations |
+| `packages/core/src/services/Docker.ts` | Docker container management |
+| `packages/core/src/logging/log-demux.ts` | Raw capture, parse, route to logs + console |
+| `packages/core/src/logging/log-writer.ts` | CharacterLog service (JSONL append) |
+| `packages/core/src/logging/console-renderer.ts` | Type-tagged + narrative console output |
+
+### Infrastructure
+
+| File | Role |
+|------|------|
 | `scripts/run-step.sh` | In-container: cd to player dir, exec claude -p |
 | `.devcontainer/Dockerfile` | Container image: node20, claude-code, firewall |
 | `.devcontainer/init-firewall.sh` | iptables whitelist for allowed domains |
