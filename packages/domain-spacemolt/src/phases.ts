@@ -3,18 +3,21 @@ import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import type { GameState } from "./types.js"
 import type { GameEvent } from "./ws-types.js"
-import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "@roci/core/core/phase.js"
-import type { ExitReason } from "@roci/core/core/types.js"
-import type { LifecycleHooks } from "@roci/core/core/orchestrator/lifecycle.js"
-import { CharacterFs } from "@roci/core/services/CharacterFs.js"
+import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "@signal/core/core/phase.js"
+import type { ExitReason } from "@signal/core/core/types.js"
+import type { LifecycleHooks } from "@signal/core/core/orchestrator/lifecycle.js"
+import { CharacterFs } from "@signal/core/services/CharacterFs.js"
 import { GameSocket } from "./game-socket.js"
-import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
+import { runReflection } from "@signal/core/core/orchestrator/planned-action.js"
 import { dinner } from "./dinner.js"
-import { runStateMachine } from "@roci/core/core/orchestrator/state-machine.js"
-import { logToConsole } from "@roci/core/logging/console-renderer.js"
-import { CharacterLog } from "@roci/core/logging/log-writer.js"
+import { runStateMachine } from "@signal/core/core/orchestrator/state-machine.js"
+import { logToConsole } from "@signal/core/logging/console-renderer.js"
+import { CharacterLog } from "@signal/core/logging/log-writer.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
-import { askUser } from "@roci/core/util/prompt.js"
+import { askUser } from "@signal/core/util/prompt.js"
+import { reportStatus } from "@signal/core/server/status-reporter.js"
+import { readTodo } from "@signal/core/operator/todo-reader.js"
+import { readWindDown } from "@signal/core/operator/wind-down-file.js"
 
 /** Ticks in the active game loop before transitioning to social phase. At 30s/tick, 100 ticks ~ 50 min. */
 const ACTIVE_SESSION_TURNS = 100
@@ -187,6 +190,15 @@ const activePhase = {
       const conn = context.connection as SMConnection
       const { events, initialState, tickIntervalSec, initialTick } = conn
 
+      // If a wind-down signal is still active (from a previous session), exit cleanly.
+      // Nonstop mode in orchestrator.ts will clear it and restart after the session resets.
+      const playersDir = path.resolve(context.char.dir, "..", "..")
+      const existingWindDown = yield* Effect.sync(() => readWindDown(playersDir))
+      if (existingWindDown) {
+        yield* logToConsole(context.char.name, "orchestrator", `Wind-down still active (${existingWindDown.reason}) — returning Shutdown for nonstop wait`)
+        return { _tag: "Shutdown" } as PhaseResult
+      }
+
       yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
 
       yield* log.action(context.char, {
@@ -210,6 +222,23 @@ const activePhase = {
 
       const manualApproval = context.phaseData?.manualApproval as boolean | undefined
 
+      // Status reporter: write players/{name}/status.json on each tick for Overlord monitoring
+      const playerDir = path.resolve(context.char.dir, "..")
+      // playersDir already declared above (used for wind-down check)
+
+      // TODO.md directive injection: read before each brain plan
+      const hooksWithTodo: LifecycleHooks = {
+        ...hooks,
+        beforePlan: (_ctx) =>
+          Effect.sync(() => {
+            const todo = readTodo(playerDir)
+            if (!todo) return {}
+            return {
+              additionalContext: `## Operator Directives (${todo.filePath})\n${todo.content}\n\nYou may self-update this file using the Edit tool when directives are complete.`,
+            }
+          }),
+      }
+
       yield* runStateMachine({
         char: context.char,
         containerId: context.containerId,
@@ -221,8 +250,10 @@ const activePhase = {
         tickIntervalSec,
         initialTick,
         exitSignal,
-        hooks,
+        hooks: hooksWithTodo,
         manualApproval,
+        onStatusUpdate: (snapshot) => reportStatus(playersDir, context.char.name.toLowerCase(), snapshot),
+        prayerBaseUrl: process.env.PRAYER_BASE_URL,
       }).pipe(Effect.provide(context.domainBundle))
 
       // When the state machine exits, transition to social phase

@@ -12,6 +12,40 @@
 
 ---
 
+## Memory Protocol
+
+You have access to a shared cross-agent Memory MCP (`mcp__memory__*` tools). Use it to persist and retrieve facts across sessions.
+
+**On session start (first action every session):**
+```
+mcp__memory__get_session_briefing()
+```
+This returns pinned memories, recent high-importance entries, and context relevant to your current situation. Read it before taking any game actions.
+
+**During the session — store when you discover:**
+- Market prices and anomalies (tags: `market`, `economics`)
+- Alliance intel, player relationships (tags: `alliance`, `intel`, `social`)
+- ARG chain findings, lore (tags: `arq`, `lore`, `discovery`)
+- Mission patterns, hidden content (tags: `mission`, `intel`)
+- Game mechanics confirmed by experimentation (tags: `mechanics`)
+
+```
+mcp__memory__store_memory(content, title, type, importance, tags)
+```
+Use `importance: 0.8+` for cross-agent strategic intel. Use `importance: 0.4-0.6` for session-specific notes.
+
+**Retrieve specific intel:**
+```
+mcp__memory__recall_memories(query)   # semantic search
+mcp__memory__search_memories(query)   # keyword search
+```
+
+**Memory is shared across all CULT agents.** What you store, your faction members can retrieve. What they store, you can retrieve. This is the fleet's shared intelligence layer.
+
+Do not store individual transaction records, routine mining yields, or information that's already in your DIARY.md. Store strategic facts, discovered patterns, and intel that would help other agents.
+
+---
+
 ## Getting Started
 
 If this is your first session, read `./docs/onboarding.md`.

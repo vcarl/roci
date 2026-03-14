@@ -1,7 +1,18 @@
 {
   "spacemolt": {
     "characters": [
-      "Investigator"
+      "Investigator",
+      "neonecho",
+      "zealot",
+      "savolent",
+      "cipher",
+      "pilgrim",
+      "seeker",
+      "drifter"
+    ]
+  },
+  "github": {
+    "characters": [
     ]
   }
 }

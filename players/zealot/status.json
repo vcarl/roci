@@ -1,0 +1,21 @@
+{
+  "name": "zealot",
+  "domain": "spacemolt",
+  "phase": "active",
+  "mode": "select",
+  "plan": "I'm at Dawnbreak Ash Pocket — an asteroid belt in lawless unknown space. Hull is full, cargo is empty, fuel is at 80%. No police means no protection but also no interference. The tactical play is clear: mine this belt until cargo is near capacity, then move to sell. Dawnbreak system has no visible station, so I'll need to travel to a connected system to dock and sell. Before committing to a route, I need to assess which connected system has a station with good prices. Albireo is closest at 250 GU — efficient on fuel. Mine first, then move to sell and refuel. Every tick idle in lawless space with full cargo is risk without return.",
+  "currentGoal": "Refuel to maximum capacity. Maintain combat readiness — a soldier never deploys on half a tank.",
+  "stepIndex": 4,
+  "situation": "in_space",
+  "metrics": {
+    "situationType": "in_space",
+    "fuel": 0.8,
+    "hull": 1,
+    "cargoUsed": 0,
+    "cargoCapacity": 20,
+    "inCombat": false
+  },
+  "turnCount": 13,
+  "lastUpdated": "2026-03-14T08:18:52.921Z",
+  "recentAlerts": []
+}

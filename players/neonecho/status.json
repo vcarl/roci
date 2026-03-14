@@ -1,0 +1,21 @@
+{
+  "name": "neonecho",
+  "domain": "spacemolt",
+  "phase": "active",
+  "mode": "select",
+  "plan": "At War Materials with 22/180 cargo — nearly empty hold at a mining site. Priority one from the todo list: ore_refinement is 596/600 to L3, meaning just 4 more refinements unlock gas_processing. But wasting a dock cycle on 22 units is inefficient. Fill cargo first, then dock at War Citadel to refine (hitting L3 in the process) and sell. Darksteel ore is high-value — keep mining for more if the belt yields it. No threats detected, hull and fuel are full. Clean extraction loop.",
+  "currentGoal": "Mine at War Materials until cargo is at least 80% full (~144 units). Prioritize darksteel, titanium, and iron ore. Keep the basic_tow_rig in cargo.",
+  "stepIndex": 0,
+  "situation": "in_space",
+  "metrics": {
+    "situationType": "in_space",
+    "fuel": 0.97,
+    "hull": 1,
+    "cargoUsed": 22,
+    "cargoCapacity": 180,
+    "inCombat": false
+  },
+  "turnCount": 16,
+  "lastUpdated": "2026-03-14T08:17:25.148Z",
+  "recentAlerts": []
+}
