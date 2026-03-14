@@ -90,10 +90,18 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
 
+USER root
+# Use iptables-legacy for WSL2 compatibility
+RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \
+    update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+
+USER node
+
 # Copy firewall script (must be in image for sudoers trust)
 COPY init-firewall.sh /usr/local/bin/
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh && \
+RUN sed -i 's/\r$//' /usr/local/bin/init-firewall.sh && \
+    chmod +x /usr/local/bin/init-firewall.sh && \
     echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
     chmod 0440 /etc/sudoers.d/node-firewall
 USER node
