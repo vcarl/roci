@@ -44,8 +44,10 @@ const ensureContainer = (containerName: string, rd: ResolvedDomain) =>
         container: m.container,
         readonly: m.readonly,
       })),
-      env: {},
-      cmd: ["bash", "-c", "sudo /usr/local/bin/init-firewall.sh && sleep infinity"],
+      env: {
+        ...(process.env.SKIP_FIREWALL ? { SKIP_FIREWALL: "1" } : {}),
+      },
+      cmd: ["bash", "-c", "if [ -z \"\$SKIP_FIREWALL\" ]; then sudo /usr/local/bin/init-firewall.sh; fi && sleep infinity"],
       capAdd: ["NET_ADMIN", "NET_RAW"],
     })
 
