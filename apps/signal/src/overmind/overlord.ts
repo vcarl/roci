@@ -177,7 +177,7 @@ Your job: provide a focused, actionable response as a high-priority edict. Be di
 Respond with only the edict text — no preamble, no meta-commentary.`
 
   try {
-    // Use Opus for help requests (strategic judgment)
+    // Use Haiku for help response edicts (fast, cheap)
     const response = execSync(
       `claude -p ${JSON.stringify(prompt)} --model claude-haiku-4-5-20251001 --output-format text`,
       { encoding: "utf-8", timeout: 60_000 },
@@ -189,12 +189,12 @@ Respond with only the edict text — no preamble, no meta-commentary.`
         priority: "high",
         content: `[OVERLORD RESPONSE TO YOUR HELP REQUEST]\n${response}`,
         issuedAt: new Date().toISOString(),
-        source: "overlord-opus",
+        source: "overlord",
       })
-      console.log(`[Overlord] Sent Opus response to ${req.agentName}: ${response.slice(0, 100)}...`)
+      console.log(`[Overlord] Sent Haiku response to ${req.agentName}: ${response.slice(0, 100)}...`)
     }
   } catch (err) {
-    console.error(`[Overlord] Opus help response failed: ${err}`)
+    console.error(`[Overlord] Help response failed: ${err}`)
   }
 }
 
