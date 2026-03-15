@@ -83,9 +83,9 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
         "--verbose",
       ]
 
-      // Brain (opus) uses full effort; body needs normal effort for multi-step
-      // workflows; only apply low effort to non-body, non-opus roles (old subagents)
-      if (config.model !== "opus" && config.role !== "body") {
+      // Body agents run at normal effort (multi-step game workflows need headroom).
+      // Brain, evaluate, and other roles use low effort to control token spend.
+      if (config.role !== "body") {
         claudeArgs.push("--effort", "low")
       }
 
