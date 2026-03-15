@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# STANDALONE TERMINAL ONLY — do not run from inside Claude Code.
+# Claude Code API contention starves subprocess claude -p calls indefinitely.
 # WSL2 wrapper — firewall setup fails in WSL2 Docker, skip it
 export SKIP_FIREWALL=1
 
