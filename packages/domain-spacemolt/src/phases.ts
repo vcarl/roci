@@ -1,6 +1,7 @@
 import { Effect, Deferred, Queue } from "effect"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
+import * as fs from "node:fs"
 import type { GameState } from "./types.js"
 import type { GameEvent } from "./ws-types.js"
 import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "@signal/core/core/phase.js"
@@ -227,19 +228,41 @@ const activePhase = {
       const playerDir = path.resolve(context.char.dir, "..")
       // playersDir already declared above (used for wind-down check)
 
-      // TODO.md directive injection: read before each brain plan
+      // TODO.md directive injection + officer deep context: read before each brain plan
+      const OFFICER_NAMES = new Set(["neonecho", "zealot", "savolent"])
+      const overlordDir = path.resolve(context.char.dir, "..", "..", "..", "..", "overlord")
+
       const hooksWithTodo: LifecycleHooks = {
         ...hooks,
         beforePlan: (_ctx) =>
           Effect.sync(() => {
+            const parts: string[] = []
+
+            // Operator directives
             const todo = readTodo(playerDir)
-            if (!todo) return {}
-            return {
-              additionalContext: `## Operator Directives (${todo.filePath})\n${todo.content}\n\nYou may self-update this file using the Edit tool when directives are complete.`,
+            if (todo) {
+              parts.push(
+                `## Operator Directives (${todo.filePath})\n${todo.content}\n\nYou may self-update this file using the Edit tool when directives are complete.`
+              )
             }
+
+            // Deep context for officers only (NeonEcho, Zealot, Savolent)
+            if (OFFICER_NAMES.has(context.char.name.toLowerCase())) {
+              const sections: string[] = ["## CULT Command Context (Officer Only)"]
+              try {
+                const directive = fs.readFileSync(path.join(overlordDir, "GLOBAL_DIRECTIVE.md"), "utf-8")
+                sections.push("### Global Directive\n" + directive.trim())
+              } catch { /* not required */ }
+              try {
+                const roster = fs.readFileSync(path.join(overlordDir, "memory", "ROSTER.md"), "utf-8").slice(0, 3000)
+                sections.push("### Fleet Roster\n" + roster.trim())
+              } catch { /* not required */ }
+              if (sections.length > 1) parts.push(sections.join("\n\n"))
+            }
+
+            return parts.length > 0 ? { additionalContext: parts.join("\n\n---\n\n") } : {}
           }),
       }
-
       yield* runStateMachine({
         char: context.char,
         containerId: context.containerId,
