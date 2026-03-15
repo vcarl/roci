@@ -179,7 +179,7 @@ Respond with only the edict text — no preamble, no meta-commentary.`
   try {
     // Use Opus for help requests (strategic judgment)
     const response = execSync(
-      `claude -p ${JSON.stringify(prompt)} --model claude-opus-4-6 --output-format text`,
+      `claude -p ${JSON.stringify(prompt)} --model claude-haiku-4-5-20251001 --output-format text`,
       { encoding: "utf-8", timeout: 60_000 },
     ).trim()
 

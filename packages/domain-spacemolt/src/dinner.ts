@@ -1,11 +1,11 @@
 import * as path from "node:path"
 import { Effect } from "effect"
 import { FileSystem } from "@effect/platform"
-import { Claude } from "@roci/core/services/Claude.js"
-import { CharacterFs, type CharacterConfig } from "@roci/core/services/CharacterFs.js"
-import { CharacterLog } from "@roci/core/logging/log-writer.js"
-import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
-import { renderTemplate, loadTemplate } from "@roci/core/core/template.js"
+import { Claude } from "@signal/core/services/Claude.js"
+import { CharacterFs, type CharacterConfig } from "@signal/core/services/CharacterFs.js"
+import { CharacterLog } from "@signal/core/logging/log-writer.js"
+import { ProjectRoot } from "@signal/core/services/ProjectRoot.js"
+import { renderTemplate, loadTemplate } from "@signal/core/core/template.js"
 
 export interface DinnerInput {
   char: CharacterConfig
@@ -62,7 +62,7 @@ export const dinner = {
 
       const updatedDiary = yield* claude.invoke({
         prompt,
-        model: "opus",
+        model: "haiku",
         outputFormat: "text",
         maxTurns: 1,
       })

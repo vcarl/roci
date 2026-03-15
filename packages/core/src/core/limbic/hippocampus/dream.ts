@@ -92,7 +92,7 @@ export const dream = {
 
       const compressedDiary = yield* claude.invoke({
         prompt: diaryInput,
-        model: "opus",
+        model: "haiku",
         outputFormat: "text",
         maxTurns: 1,
       })
@@ -116,7 +116,7 @@ export const dream = {
 
       const compressedSecrets = yield* claude.invoke({
         prompt: secretsInput,
-        model: "opus",
+        model: "haiku",
         outputFormat: "text",
         maxTurns: 1,
       })
