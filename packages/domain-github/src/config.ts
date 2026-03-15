@@ -1,11 +1,11 @@
 import * as path from "node:path"
 import { Effect } from "effect"
-import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "@roci/core/core/domain-bundle.js"
+import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "@signal/core/core/domain-bundle.js"
 import { gitHubPhaseRegistry } from "./phases.js"
 import { gitHubDomainBundle, GitHubClientLive } from "./index.js"
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { execSync } from "node:child_process"
-import { askUser } from "@roci/core/util/prompt.js"
+import { askUser } from "@signal/core/util/prompt.js"
 
 const IMAGE_NAME = "github-agent"
 

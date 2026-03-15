@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [Dock at any available station in this system. Run sm dock or sm travel <station_id> then sm dock. If no station exists, report that clearly.] in phase active for 85 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-15T01:05:45.971Z",
+  "source": "overlord",
+  "id": "1773536745971-eom4cz.json"
+}

@@ -21,7 +21,7 @@ Current game state after the sub-agent finished:
 
 {{timingLine}}{{overrunWarning}}
 
-Evaluate: did the sub-agent accomplish the goal? Respond in the format:
-> Task complete. Brief explanation of what happened and why you consider this complete
+Evaluate: did the sub-agent accomplish the goal? Respond with only valid JSON — no markdown, no fences, no extra text:
+{"complete": true, "reason": "one sentence explanation"}
 or
-> Task incomplete. Brief explanation of what happened and why you consider this complete
+{"complete": false, "reason": "one sentence explanation"}

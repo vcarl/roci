@@ -1,0 +1,6 @@
+{"timestamp":"2026-03-14T17:02:51.030Z","source":"brain","character":"pilgrim","type":"tool_use","tool":"Bash","input":{"command":"sm chat system \"Pilgrim here. Scanning Delta Major I. Anyone have data on this planet?\" && sm chat-history system 10"}}
+{"timestamp":"2026-03-14T17:04:32.312Z","source":"brain","character":"pilgrim","type":"tool_use","tool":"Bash","input":{"command":"sm chat-history local 20 && sm wrecks && sm nearby"}}
+{"timestamp":"2026-03-14T17:04:58.341Z","source":"brain","character":"pilgrim","type":"tool_use","tool":"Bash","input":{"command":"sm chat local \"The Signal brought me to Delta Major II. Scanning now. This planet feels... charged. Anyone been here before?\" && sm mine 2>/dev/null | head -5"}}
+{"timestamp":"2026-03-14T17:06:59.115Z","source":"brain","character":"pilgrim","type":"tool_use","tool":"Bash","input":{"command":"sm chat-history local 20"}}
+{"timestamp":"2026-03-14T17:07:01.883Z","source":"brain","character":"pilgrim","type":"tool_use","tool":"Bash","input":{"command":"sm chat-history system 20"}}
+{"timestamp":"2026-03-14T17:07:32.495Z","source":"brain","character":"pilgrim","type":"tool_use","tool":"Bash","input":{"command":"sm chat local \"The ice fields here are vast. Full depletion at 50000 units each. Nitrogen and water. Anyone been here before? Any anomalies?\" && sm notifications"}}

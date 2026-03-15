@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [Use find_route to get route to Procyon first. Then use the jump command with the exact system ID 'procyon'. Do NOT use scan, explore, or any other command before jumping. Just: find_route to procyon, then jump to procyon. You should end up in the Procyon system. If the jump succeeds, navigate to Procyon Colonial Station using travel/navigate. Confirm you are in Procyon by checking your location.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T22:13:54.041Z",
+  "source": "overlord",
+  "id": "1773526434041-0hml2t.json"
+}

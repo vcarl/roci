@@ -1,4 +1,5 @@
 import * as readline from "node:readline"
+import * as path from "node:path"
 import { Effect, Ref, Fiber, Queue, Deferred } from "effect"
 import type { CharacterConfig } from "../../services/CharacterFs.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
@@ -22,6 +23,11 @@ import { killSubagent, evaluateCompletedSubagent, checkMidRun, maybeSpawnSubagen
 import { maybeRequestPlan } from "./planning/planning-cycle.js"
 import { runTurn } from "../limbic/hypothalamus/process-runner.js"
 import { PromptBuilderTag } from "../prompt-builder.js"
+import { parseHarnessState, applyHarnessState } from "./harness-state.js"
+import type { AgentStatusSnapshot } from "../../server/status-reporter.js"
+import { readWindDown } from "../../operator/wind-down-file.js"
+import { drainEdictInbox } from "../../operator/edict-inbox.js"
+import { PrayerManager, parsePrayerScript, buildPrayerSummary } from "../../prayer/prayer-manager.js"
 
 export interface StateMachineConfig {
   char: CharacterConfig
@@ -38,6 +44,20 @@ export interface StateMachineConfig {
   hooks?: LifecycleHooks
   /** Pause for manual approval before plan/subagent steps. */
   manualApproval?: boolean
+  /**
+   * Optional callback invoked after each state update and tick.
+   * Use to write status snapshots for Overlord monitoring.
+   * Fire-and-forget — errors are silently swallowed.
+   */
+  onStatusUpdate?: (snapshot: AgentStatusSnapshot) => void
+  /**
+   * Prayer DSL backend URL. If set, agents can emit PRAYER_SET/PRAYER_END blocks
+   * to offload grind loops to the Prayer HTTP service (zero Claude tokens).
+   * Omit to disable Prayer — body turns handle all game actions.
+   */
+  prayerBaseUrl?: string
+  /** Absolute path to Prayer.csproj for auto-start. Omit to skip auto-start. */
+  prayerCsprojPath?: string
 }
 
 /**
@@ -76,6 +96,21 @@ export const runStateMachine = (config: StateMachineConfig) =>
     const investigationReportRef = yield* Ref.make<string | null>(null)
     const procedureTargetsRef = yield* Ref.make<string[]>([])
     const procedureStartStateRef = yield* Ref.make<Record<string, unknown> | null>(null)
+
+    // --- Prayer state ---
+    // prayerManager is mutable — created lazily on first PRAYER_SET
+    let prayerManager: PrayerManager | null = null
+    const prayerRunningRef = yield* Ref.make(false)
+    const prayerSummaryRef = yield* Ref.make<string | null>(null)
+
+    // Read credentials once for Prayer session creation
+    let prayerCreds: { username: string; password: string } | null = null
+    if (config.prayerBaseUrl) {
+      prayerCreds = yield* charFs.readCredentials(config.char).pipe(
+        Effect.map((c) => ({ username: c.username, password: c.password })),
+        Effect.catchAll(() => Effect.succeed(null)),
+      )
+    }
 
     // --- Domain state ---
     const gameStateRef = yield* Ref.make<DomainState>(config.initialState)
@@ -168,6 +203,70 @@ export const runStateMachine = (config: StateMachineConfig) =>
         }
 
         yield* maybeSpawnSubagent(subagentRefs, planRefs, timingRefs, spawnConfig, spawnServices, state, summary.situation)
+      })
+
+    // --- Prayer helper ---
+
+    /**
+     * Attempt to start a Prayer grind script for a PRAYER_SET block found in agent output.
+     * Returns true if Prayer was started, false if unavailable or no script found.
+     */
+    const maybeStartPrayer = (report: string) =>
+      Effect.gen(function* () {
+        if (!config.prayerBaseUrl) return false
+        const script = parsePrayerScript(report)
+        if (!script) return false
+        if (!prayerCreds) {
+          yield* logToConsole(config.char.name, "monitor", "PRAYER_SET found but no credentials — skipping")
+          return false
+        }
+
+        // Lazily create PrayerManager on first use
+        if (!prayerManager) {
+          prayerManager = yield* Effect.promise(() =>
+            PrayerManager.create(config.prayerBaseUrl!, config.prayerCsprojPath),
+          )
+        }
+        if (!prayerManager) {
+          yield* logToConsole(config.char.name, "monitor", "Prayer unavailable — falling back to body turns")
+          return false
+        }
+
+        const agentId = config.char.name.toLowerCase()
+        yield* Effect.promise(() => prayerManager!.ensureSession(agentId, prayerCreds!.username, prayerCreds!.password))
+        yield* Effect.promise(() => prayerManager!.startScript(agentId, script))
+        yield* Ref.set(prayerRunningRef, true)
+        yield* logToConsole(config.char.name, "monitor", `Prayer started — grind offloaded (${script.split("\n").length} lines)`)
+        return true
+      })
+
+    // --- Status snapshot helper ---
+
+    /** Build and emit a status snapshot if onStatusUpdate is configured. */
+    const emitStatus = (state: DomainState, summary: SituationSummary, phase: string) =>
+      Effect.gen(function* () {
+        if (!config.onStatusUpdate) return
+        const plan = yield* Ref.get(planRef)
+        const step = yield* Ref.get(stepRef)
+        const mode = yield* Ref.get(modeRef)
+        const turnCount = yield* Ref.get(turnCountRef)
+        const softAlerts = yield* Ref.get(softAlertAccRef)
+        const currentStep = plan && step < plan.steps.length ? plan.steps[step] : null
+        const snapshot: AgentStatusSnapshot = {
+          name: config.char.name.toLowerCase(),
+          domain: "spacemolt",
+          phase,
+          mode,
+          plan: plan?.reasoning ?? null,
+          currentGoal: currentStep?.goal ?? null,
+          stepIndex: step,
+          situation: String((summary.metrics as Record<string, unknown>).situationType ?? "unknown"),
+          metrics: summary.metrics as Record<string, number | boolean | string>,
+          turnCount,
+          lastUpdated: new Date().toISOString(),
+          recentAlerts: [...softAlerts.values()].map((a) => a.message).slice(-5),
+        }
+        try { config.onStatusUpdate(snapshot) } catch { /* silent */ }
       })
 
     // --- Inline helpers ---
@@ -386,13 +485,33 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         if (currentFiber) {
           const poll = yield* Fiber.poll(currentFiber)
           if (poll._tag === "Some") {
-            yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, state)
-            yield* maybeCompleteProcedure()
+            // Apply HARNESS_STATE from report before evaluation so brain sees current state
+            const report = yield* Ref.get(subagentReportRef)
+            const harnessTag = parseHarnessState(report)
+            if (harnessTag) {
+              yield* Ref.update(gameStateRef, (s) => applyHarnessState(s, harnessTag))
+            }
+            // Check for PRAYER_SET — if found, start Prayer and skip evaluation
+            const prayerStarted = yield* maybeStartPrayer(report)
+            if (prayerStarted) {
+              // Prayer is now running — clear the fiber ref so state machine doesn't re-evaluate
+              yield* Ref.set(subagentFiberRef, null)
+            } else {
+              const evalState = yield* Ref.get(gameStateRef)
+              yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, evalState)
+              yield* maybeCompleteProcedure()
+            }
           }
         }
 
-        // Plan + spawn cycle
-        yield* planAndSpawn(state, summary)
+        // Plan + spawn cycle (skip if Prayer is running)
+        const prayerActive = yield* Ref.get(prayerRunningRef)
+        if (!prayerActive) {
+          yield* planAndSpawn(state, summary)
+        }
+
+        // Emit status snapshot for Overlord monitoring
+        yield* emitStatus(state, summary, "active").pipe(Effect.catchAll(() => Effect.void))
       })
 
     /** Process a tick: heartbeat, timeout checks, and proactive plan/spawn. */
@@ -401,6 +520,97 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         yield* logTickReceived(config.char.name, tick)
         yield* Ref.set(lastProcessedTickRef, tick)
         yield* Ref.set(tickCountRef, tick)
+
+        // --- Operator IPC: wind-down check ---
+        const playersDir = path.resolve(config.char.dir, "../..")
+        const windDown = yield* Effect.sync(() => readWindDown(playersDir))
+        if (windDown) {
+          yield* logToConsole(config.char.name, "monitor", `Wind-down signal received: ${windDown.reason}`)
+          yield* Deferred.succeed(exitSignal, { _tag: "ExternalSignal", reason: `wind-down: ${windDown.reason}` })
+          return
+        }
+
+        // --- Operator IPC: drain edict inbox ---
+        const playerDir = path.resolve(config.char.dir, "..")
+        const edicts = yield* Effect.sync(() => drainEdictInbox(playerDir))
+        if (edicts.length > 0) {
+          yield* logToConsole(config.char.name, "monitor", `Drained ${edicts.length} edict(s) from inbox`)
+          for (const edict of edicts) {
+            const alert: import("../types.js").Alert = {
+              priority: edict.priority === "critical" ? "critical" : edict.priority === "high" ? "high" : "low",
+              message: edict.content.slice(0, 500),
+              suggestedAction: "respond to operator edict",
+              ruleName: `edict:${edict.id}`,
+            }
+            yield* Ref.update(softAlertAccRef, (acc) => {
+              const next = new Map(acc)
+              next.set(alert.ruleName ?? alert.message, alert)
+              return next
+            })
+          }
+          // Critical edicts: kill subagent immediately so brain replans with edict context
+          const criticalEdicts = edicts.filter((e) => e.priority === "critical")
+          if (criticalEdicts.length > 0) {
+            yield* logToConsole(config.char.name, "monitor", `Critical edict received — killing subagent for replan`)
+            yield* killSubagent(subagentFiberRef)
+            yield* Ref.set(planRef, null)
+            yield* Ref.set(stepRef, 0)
+          }
+        }
+
+        // --- Prayer tick poll ---
+        const prayerActive = yield* Ref.get(prayerRunningRef)
+        if (prayerActive && prayerManager) {
+          const agentId = config.char.name.toLowerCase()
+          const pollWaitMs = Math.floor(config.tickIntervalSec * 500) // half a tick
+          const result = yield* Effect.promise(() => prayerManager!.pollWithLongPoll(agentId, pollWaitMs)).pipe(
+            Effect.catchAll((e) => {
+              return logToConsole(config.char.name, "monitor", `Prayer poll error: ${e}`).pipe(
+                Effect.as({ isHalted: false, hasActiveCommand: false, snapshot: { sessionId: "", isHalted: false, hasActiveCommand: false } } as import("../../prayer/prayer-manager.js").PrayerPollResult),
+              )
+            }),
+          )
+
+          if (!result.isHalted) {
+            // Check for combat threats every tick — halt Prayer immediately if found
+            const threats = yield* Effect.promise(() => prayerManager!.checkThreats(agentId)).pipe(
+              Effect.catchAll(() => Effect.succeed([] as import("../../prayer/prayer-manager.js").PrayerThreat[])),
+            )
+            if (threats.length > 0) {
+              yield* Effect.promise(() => prayerManager!.halt(agentId)).pipe(Effect.catchAll(() => Effect.void))
+              yield* Ref.set(prayerRunningRef, false)
+              const threatSummary = `Prayer halted: combat threat (${threats[0]!.summary})`
+              yield* Ref.set(prayerSummaryRef, threatSummary)
+              yield* logToConsole(config.char.name, "monitor", threatSummary)
+            } else {
+              yield* logToConsole(config.char.name, "monitor", `Prayer tick: running (fuel=${result.fuel ?? "?"} credits=${result.credits ?? "?"})`)
+              // Still running — skip normal planning this tick
+              yield* emitStatus(yield* Ref.get(gameStateRef), classifier.summarize(yield* Ref.get(gameStateRef)), "prayer").pipe(Effect.catchAll(() => Effect.void))
+              return
+            }
+          }
+
+          if (result.isHalted) {
+            // Prayer finished — build resume summary, inject into softAlerts so brain sees it
+            const fullState = yield* Effect.promise(() => prayerManager!.getFullStateForResume(agentId)).pipe(
+              Effect.catchAll(() => Effect.succeed(null)),
+            )
+            const prayerSummary = buildPrayerSummary(result, fullState)
+            yield* Ref.set(prayerRunningRef, false)
+            yield* Ref.set(prayerSummaryRef, prayerSummary)
+            yield* Ref.update(softAlertAccRef, (acc) => {
+              const next = new Map(acc)
+              next.set("prayer:summary", {
+                priority: "high",
+                message: prayerSummary,
+                suggestedAction: "review Prayer results and plan next steps",
+                ruleName: "prayer:summary",
+              })
+              return next
+            })
+            yield* logToConsole(config.char.name, "monitor", `Prayer halted cleanly — resuming body turns`)
+          }
+        }
 
         const state = yield* Ref.get(gameStateRef)
         const summary = classifier.summarize(state)
@@ -411,12 +621,32 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         if (currentFiber) {
           const poll = yield* Fiber.poll(currentFiber)
           if (poll._tag === "Some") {
-            yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, state)
-            yield* maybeCompleteProcedure()
+            // Apply HARNESS_STATE from report before evaluation so brain sees current state
+            const report = yield* Ref.get(subagentReportRef)
+            const harnessTag = parseHarnessState(report)
+            if (harnessTag) {
+              yield* Ref.update(gameStateRef, (s) => applyHarnessState(s, harnessTag))
+            }
+            // Check for PRAYER_SET — if found, start Prayer and skip evaluation
+            const prayerStarted = yield* maybeStartPrayer(report)
+            if (prayerStarted) {
+              yield* Ref.set(subagentFiberRef, null)
+            } else {
+              const evalState = yield* Ref.get(gameStateRef)
+              yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, evalState)
+              yield* maybeCompleteProcedure()
+            }
           }
         }
 
-        yield* planAndSpawn(state, summary)
+        // Skip plan/spawn while Prayer is running
+        const prayerStillActive = yield* Ref.get(prayerRunningRef)
+        if (!prayerStillActive) {
+          yield* planAndSpawn(state, summary)
+        }
+
+        // Emit status snapshot for Overlord monitoring
+        yield* emitStatus(state, summary, "active").pipe(Effect.catchAll(() => Effect.void))
       })
 
     /** Process a reset event (e.g. death): kill everything, start fresh. */
@@ -426,6 +656,12 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           yield* hooks.onReset()
         }
         yield* killSubagent(subagentFiberRef)
+        // Halt Prayer if running (death → Prayer session is stale)
+        if (prayerManager) {
+          const agentId = config.char.name.toLowerCase()
+          yield* Effect.promise(() => prayerManager!.halt(agentId)).pipe(Effect.catchAll(() => Effect.void))
+          yield* Ref.set(prayerRunningRef, false)
+        }
         yield* Ref.set(planRef, null)
         yield* Ref.set(stepRef, 0)
         yield* Ref.set(softAlertAccRef, new Map())

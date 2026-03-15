@@ -10,6 +10,7 @@ import type { StateRenderer } from "../../state-renderer.js"
 import type { BrainMode, Plan, StepTiming, Alert } from "../../types.js"
 import type { LifecycleHooks, PlanContext } from "../lifecycle.js"
 import { brainPlan } from "./brain.js"
+import { semanticDiarySlice } from "../../../util/embed.js"
 
 export interface PlanningRefs {
   readonly plan: Ref.Ref<Plan | null>
@@ -54,14 +55,17 @@ export const maybeRequestPlan = (
       const charFs = yield* CharacterFs
       const log = yield* CharacterLog
 
-      const diary = yield* charFs.readDiary(services.char)
+      const rawDiary = yield* charFs.readDiary(services.char)
+      // Semantic diary recall — find entries most relevant to current situation.
+      // Falls back to tail slice if embed server unavailable.
+      const mode = yield* Ref.get(refs.mode)
+      const diaryQuery = summary.headline + " mode:" + mode
+      const diary = yield* Effect.promise(() => semanticDiarySlice(diaryQuery, rawDiary))
       const background = yield* charFs.readBackground(services.char)
       const values = yield* charFs.readValues(services.char)
       const previousFailure = yield* Ref.get(refs.previousFailure)
       const recentChat = yield* Ref.get(refs.chatContext)
       const stepTimingHistory = yield* Ref.get(refs.stepTimingHistory)
-
-      const mode = yield* Ref.get(refs.mode)
       const investigationReport = yield* Ref.get(refs.investigationReport)
       const procedureTargets = yield* Ref.get(refs.procedureTargets)
 

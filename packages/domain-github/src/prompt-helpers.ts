@@ -1,4 +1,4 @@
-import type { PlanPromptContext, SubagentPromptContext } from "@roci/core/core/prompt-builder.js"
+import type { PlanPromptContext, SubagentPromptContext } from "@signal/core/core/prompt-builder.js"
 import type { GitHubState, GitHubSituation } from "./types.js"
 
 export function renderReposSummary(state: GitHubState, situation: GitHubSituation): string {

@@ -1,0 +1,21 @@
+{
+  "name": "drifter",
+  "domain": "spacemolt",
+  "phase": "active",
+  "mode": "select",
+  "plan": "Previous travel to war_materials failed - location shows 'unknown in Krynn'. This has happened before and the mining step still succeeded in a prior cycle, so it may be a display issue or the travel command needs retry. Currently undocked in space at 'unknown in Krynn' with empty cargo. Priority: get back to mining to grind credits toward the 200k lockbox goal (currently at 25k). Also need to check chat for responses from Cipher and others about lockbox coordination. Plan: dock at War Citadel first to check chat/storage, then undock, travel to War Materials, and mine. The travel failure may just need a retry. Also should check if War Citadel has a fabrication bay per the todo list.",
+  "currentGoal": "Travel to War Materials and mine. First run: sm travel war_materials. Then repeatedly run sm mine using the Bash tool — each sm mine is a separate Bash tool call. Every 4 mining commands, run sm status to check cargo. Continue until cargo_used >= 65. CRITICAL: Every action must be a Bash tool call. Do NOT write pseudocode or plans. Start with: sm travel war_materials, then immediately sm mine.",
+  "stepIndex": 4,
+  "situation": "in_space",
+  "metrics": {
+    "situationType": "in_space",
+    "fuel": 0.95,
+    "hull": 1,
+    "cargoUsed": 16,
+    "cargoCapacity": 75,
+    "inCombat": false
+  },
+  "turnCount": 184,
+  "lastUpdated": "2026-03-14T23:46:07.092Z",
+  "recentAlerts": []
+}

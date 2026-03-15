@@ -1,6 +1,6 @@
 import { SituationType } from "./types.js"
 import type { GameState, Situation } from "./types.js"
-import { tag } from "@roci/core/logging/console-renderer.js"
+import { tag } from "@signal/core/logging/console-renderer.js"
 
 /** Extract a compact snapshot of key state values for logging. */
 export function snapshot(state: GameState): Record<string, unknown> {

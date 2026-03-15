@@ -3,19 +3,19 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "At War Materials with 22/180 cargo — nearly empty hold at a mining site. Priority one from the todo list: ore_refinement is 596/600 to L3, meaning just 4 more refinements unlock gas_processing. But wasting a dock cycle on 22 units is inefficient. Fill cargo first, then dock at War Citadel to refine (hitting L3 in the process) and sell. Darksteel ore is high-value — keep mining for more if the belt yields it. No threats detected, hull and fuel are full. Clean extraction loop.",
-  "currentGoal": "Mine at War Materials until cargo is at least 80% full (~144 units). Prioritize darksteel, titanium, and iron ore. Keep the basic_tow_rig in cargo.",
-  "stepIndex": 0,
+  "plan": "Previous Saclateni travel failed at 20 ticks — agent completed 3 of 4 jumps. Back in Krynn now. Two faction chat threads are relevant: Zealot is looking for War Citadel (we're literally here — give them the system ID 'krynn'), and Drifter's lockbox plan needs circuit boards (we have 25). Respond to both in one message, then retry the Saclateni expedition with more generous tick budget and explicit multi-jump instructions. Break the travel into two legs for reliability: Krynn to The Rampart (known working), then The Rampart to Saclateni (the leg that failed). Once in Saclateni, mine darksteel — that's the strategic play from the diary.",
+  "currentGoal": "You are in Saclateni. Navigate to any asteroid belt or mining location in the system. Mine darksteel_ore and any other valuable ore. Fill cargo as much as possible (you have 171 free cargo slots). Keep mining until cargo is above 80% full or no more minable resources. Do NOT leave the system.",
+  "stepIndex": 3,
   "situation": "in_space",
   "metrics": {
     "situationType": "in_space",
-    "fuel": 0.97,
+    "fuel": 0.88,
     "hull": 1,
-    "cargoUsed": 22,
+    "cargoUsed": 9,
     "cargoCapacity": 180,
     "inCombat": false
   },
-  "turnCount": 16,
-  "lastUpdated": "2026-03-14T08:17:25.148Z",
+  "turnCount": 190,
+  "lastUpdated": "2026-03-14T23:46:57.206Z",
   "recentAlerts": []
 }

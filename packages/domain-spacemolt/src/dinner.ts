@@ -62,8 +62,7 @@ export const dinner = {
 
       const updatedDiary = yield* claude.invoke({
         prompt,
-        model: "haiku",
-        outputFormat: "text",
+        model: "nvidia/nemotron-3-super-120b-a12b:free",
         maxTurns: 1,
       })
 

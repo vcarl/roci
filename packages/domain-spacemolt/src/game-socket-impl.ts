@@ -7,7 +7,7 @@ import type {
   WelcomeEvent,
 } from "./ws-types.js"
 import { parseGameEvent } from "./ws-types.js"
-import { tag } from "@roci/core/logging/console-renderer.js"
+import { tag } from "@signal/core/logging/console-renderer.js"
 
 const WS_URL = "wss://game.spacemolt.com/ws"
 const HEALTH_URL = "https://game.spacemolt.com/health"

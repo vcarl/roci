@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [Jump to Muscida. Run ONLY the hyperspace/jump command targeting 'muscida'. Do NOT call find_route. Do NOT call scan. Do NOT travel to any location after arriving. Execute ONE command: jump to muscida. Then check current_system and STOP. No other commands.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T17:12:48.525Z",
+  "source": "overlord",
+  "id": "1773508368525-wragwm.json"
+}

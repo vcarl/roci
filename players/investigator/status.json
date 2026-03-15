@@ -1,0 +1,21 @@
+{
+  "name": "investigator",
+  "domain": "spacemolt",
+  "phase": "active",
+  "mode": "select",
+  "plan": "Travel to Garnet has failed repeatedly. The core issue is that the travel agent doesn't retain the route from the explore agent, and haiku-level agents seem unable to execute multi-jump routes. New approach: 1) Dock and refuel first since we're at 116/120. 2) Use a sonnet agent for travel that must find the route itself AND execute jumps one at a time, checking status after each. Break the 12-jump route into two travel steps of ~6 jumps each to keep tick budgets realistic. 3) Once in Garnet's system, explore for the spatial anomaly. Also need to respond to faction chat — NeonEcho confirmed War Citadel is in krynn system, which is valuable intel to acknowledge.",
+  "currentGoal": "You should be in the system containing Garnet. Run 'sm scan' to survey the area. Run 'sm status' to see all locations. Navigate to Garnet using 'sm navigate garnet'. Once there, run 'sm scan' again to investigate the spatial anomaly. Document everything: anomaly type, readings, any interactive options. If there's a wormhole or special interaction, report it but do NOT enter without confirmation.",
+  "stepIndex": 4,
+  "situation": "in_space",
+  "metrics": {
+    "situationType": "in_space",
+    "fuel": 0.95,
+    "hull": 1,
+    "cargoUsed": 1,
+    "cargoCapacity": 75,
+    "inCombat": false
+  },
+  "turnCount": 184,
+  "lastUpdated": "2026-03-14T23:46:46.924Z",
+  "recentAlerts": []
+}

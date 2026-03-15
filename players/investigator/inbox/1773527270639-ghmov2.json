@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [We are currently in 'unknown in unknown' after a failed jump toward Deep Range. Scan surroundings, check the current system name, identify nearby locations and jump gates. Use scan_system or check navigation to determine exactly where we are. Do NOT attempt to travel yet — just gather information about our current position.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T22:27:50.639Z",
+  "source": "overlord",
+  "id": "1773527270639-ghmov2.json"
+}

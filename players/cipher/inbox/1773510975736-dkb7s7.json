@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [You are at 82 Eridani Belt. Call the mine command. Wait for the result. Call mine again. Repeat until cargo is at least 30/65. Do NOT write scripts, DSL, or any invented syntax. Only use the mine command. Do NOT travel or explore. Stay at the belt.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T17:56:15.735Z",
+  "source": "overlord",
+  "id": "1773510975736-dkb7s7.json"
+}

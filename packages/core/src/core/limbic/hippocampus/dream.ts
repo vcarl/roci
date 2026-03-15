@@ -92,7 +92,7 @@ export const dream = {
 
       const compressedDiary = yield* claude.invoke({
         prompt: diaryInput,
-        model: "haiku",
+        model: "nvidia/nemotron-3-super-120b-a12b:free",
         outputFormat: "text",
         maxTurns: 1,
       })
@@ -116,7 +116,7 @@ export const dream = {
 
       const compressedSecrets = yield* claude.invoke({
         prompt: secretsInput,
-        model: "haiku",
+        model: "nvidia/nemotron-3-super-120b-a12b:free",
         outputFormat: "text",
         maxTurns: 1,
       })

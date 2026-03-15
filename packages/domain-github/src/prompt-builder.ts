@@ -8,11 +8,11 @@ import type {
   EvaluatePromptContext,
   SubagentPromptContext,
   PlannedActionBrainPromptContext,
-} from "@roci/core/core/prompt-builder.js"
-import { PromptBuilderTag } from "@roci/core/core/prompt-builder.js"
+} from "@signal/core/core/prompt-builder.js"
+import { PromptBuilderTag } from "@signal/core/core/prompt-builder.js"
 import type { GitHubState } from "./types.js"
-import type { BrainMode } from "@roci/core/core/types.js"
-import { parseFrontmatter, renderTemplate } from "@roci/core/core/template.js"
+import type { BrainMode } from "@signal/core/core/types.js"
+import { parseFrontmatter, renderTemplate } from "@signal/core/core/template.js"
 import {
   buildTimingSection,
   renderIdentitySection,

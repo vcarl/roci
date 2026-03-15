@@ -1,11 +1,11 @@
 import * as path from "node:path"
 import { execSync, execFileSync } from "node:child_process"
 import { Effect } from "effect"
-import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "@roci/core/core/domain-bundle.js"
+import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "@signal/core/core/domain-bundle.js"
 import { spaceMoltDomainBundle, spaceMoltServiceLayer } from "./index.js"
 import { spaceMoltPhaseRegistry } from "./phases.js"
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs"
-import { askUser } from "@roci/core/util/prompt.js"
+import { askUser } from "@signal/core/util/prompt.js"
 
 const IMAGE_NAME = "spacemolt-player"
 const SM_CLI_REPO = "git@github.com:vcarl/sm-cli.git"

@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [You are docked at The Rampart Checkpoint. Undock, travel to an asteroid belt in this system or a nearby system, and mine ore. Target: fill cargo to at least 90 units. Mine iron_ore or copper_ore — whatever is available. Do NOT delegate to any sub-agent or 'Prayer'. Do NOT send chat messages. Do NOT do anything except undock, travel to a belt, and mine. When cargo reaches 90+ units, STOP mining.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T23:46:25.624Z",
+  "source": "overlord",
+  "id": "1773531985624-lyxuqo.json"
+}

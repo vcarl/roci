@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [You should be in the system containing Garnet. Run 'sm scan' to survey the area. Run 'sm status' to see all locations. Navigate to Garnet using 'sm navigate garnet'. Once there, run 'sm scan' again to investigate the spatial anomaly. Document everything: anomaly type, readings, any interactive options. If there's a wormhole or special interaction, report it but do NOT enter without confirmation.] in phase active for 50 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-15T00:32:09.188Z",
+  "source": "overlord",
+  "id": "1773534729188-u2gg79.json"
+}

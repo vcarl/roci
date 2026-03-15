@@ -1,0 +1,9 @@
+/home/savolent/Signal/embed_server.py:22: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+[embed] Loading BAAI/bge-small-en-v1.5...
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Fetching 5 files:  20%|██        | 1/5 [00:00<00:00,  7.13it/s]Fetching 5 files:  40%|████      | 2/5 [00:01<00:03,  1.06s/it]Fetching 5 files: 100%|██████████| 5/5 [00:01<00:00,  2.71it/s]

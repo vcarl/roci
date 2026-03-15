@@ -1,5 +1,5 @@
 import { Layer } from "effect"
-import { EventProcessorTag, type EventProcessor, type EventResult } from "@roci/core/core/limbic/thalamus/event-processor.js"
+import { EventProcessorTag, type EventProcessor, type EventResult } from "@signal/core/core/limbic/thalamus/event-processor.js"
 import type { GameState } from "./types.js"
 import type { GameEvent, StateUpdateEvent } from "./ws-types.js"
 

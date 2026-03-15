@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [Run 'sm find_route' with no arguments to see its usage, then run 'sm scan' to scan the current system for stations or points of interest. Report ALL output exactly as shown. Do NOT travel. Do NOT run any travel or dock commands. Only run find_route and scan commands and report their full output.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T22:50:10.364Z",
+  "source": "overlord",
+  "id": "1773528610364-62qd01.json"
+}

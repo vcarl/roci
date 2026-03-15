@@ -1,5 +1,5 @@
 import { Layer } from "effect"
-import { EventProcessorTag, type EventProcessor, type EventResult } from "@roci/core/core/limbic/thalamus/event-processor.js"
+import { EventProcessorTag, type EventProcessor, type EventResult } from "@signal/core/core/limbic/thalamus/event-processor.js"
 import type { GitHubEvent, GitHubState } from "./types.js"
 
 const gitHubEventProcessor: EventProcessor = {

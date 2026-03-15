@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [Mine asteroids. You are at Delta Major Belt. Call mine_asteroids repeatedly. After each mine completes, call mine_asteroids again. If you get 'action already in progress', call wait_for_action then mine again. Do NOT travel. Do NOT navigate. Do NOT jump. Do NOT stop until cargo is above 60. You currently have 5/100 cargo.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T13:47:14.996Z",
+  "source": "overlord",
+  "id": "1773496034996-ncxnec.json"
+}

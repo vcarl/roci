@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [You are lost in an unknown location. Use the travel command to go to location_id '82_eridani_belt'. Do NOT use any other command. Do NOT mine, explore, or scan. ONLY travel. One command: travel to 82_eridani_belt.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T17:31:44.487Z",
+  "source": "overlord",
+  "id": "1773509504487-ezbxcg.json"
+}

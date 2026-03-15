@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [Call mine_asteroid over and over at your current location. Do NOT use Prayer. Do NOT set any prayer. Do NOT navigate anywhere. Do NOT use any chat actions. The ONLY action you should call is mine_asteroid. After each mine_asteroid call, check your cargo. Stop when cargo_used >= 60. If mine_asteroid returns a cooldown error, wait the cooldown duration then call mine_asteroid again. You must directly invoke the mine_asteroid action each time - never delegate to Prayer or any other system.] in phase active for 50 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T22:45:32.024Z",
+  "source": "overlord",
+  "id": "1773528332024-kp0f3h.json"
+}

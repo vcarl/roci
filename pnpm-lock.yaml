@@ -24,7 +24,7 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@25.5.0)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2)
 
-  apps/roci:
+  apps/signal:
     dependencies:
       '@effect/cli':
         specifier: ^0.73.2
@@ -41,13 +41,13 @@ importers:
       '@effect/printer-ansi':
         specifier: ^0.47.0
         version: 0.47.0(@effect/typeclass@0.38.0(effect@3.19.19))(effect@3.19.19)
-      '@roci/core':
+      '@signal/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@roci/domain-github':
+      '@signal/domain-github':
         specifier: workspace:*
         version: link:../../packages/domain-github
-      '@roci/domain-spacemolt':
+      '@signal/domain-spacemolt':
         specifier: workspace:*
         version: link:../../packages/domain-spacemolt
       effect:
@@ -96,7 +96,7 @@ importers:
       '@effect/platform':
         specifier: ^0.94.5
         version: 0.94.5(effect@3.19.19)
-      '@roci/core':
+      '@signal/core':
         specifier: workspace:*
         version: link:../core
       effect:
@@ -108,7 +108,7 @@ importers:
       '@effect/platform':
         specifier: ^0.94.5
         version: 0.94.5(effect@3.19.19)
-      '@roci/core':
+      '@signal/core':
         specifier: workspace:*
         version: link:../core
       effect:

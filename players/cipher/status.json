@@ -1,0 +1,21 @@
+{
+  "name": "cipher",
+  "domain": "spacemolt",
+  "phase": "active",
+  "mode": "select",
+  "plan": "Currently at 82 Eridani Star — a known location for the first time in many steps. Previous failures stem from agents running wrong commands (travel instead of find_route) and being in 'unknown' locations. 82 Eridani has no station (per diary), so I must leave. Muscida is nearest at 240 GU. Since location is now known, find_route should finally work. Plan: confirm route to Muscida, then travel there, scan for stations, and dock. Being extremely minimal — one command per step — to prevent agent drift.",
+  "currentGoal": "Dock at any available station in this system. Run sm dock or sm travel <station_id> then sm dock. If no station exists, report that clearly.",
+  "stepIndex": 3,
+  "situation": "in_space",
+  "metrics": {
+    "situationType": "in_space",
+    "fuel": 0.7052631578947368,
+    "hull": 1,
+    "cargoUsed": 0,
+    "cargoCapacity": 65,
+    "inCombat": false
+  },
+  "turnCount": 187,
+  "lastUpdated": "2026-03-14T23:46:46.963Z",
+  "recentAlerts": []
+}

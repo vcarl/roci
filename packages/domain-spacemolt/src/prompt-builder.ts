@@ -5,11 +5,11 @@ import type {
   PromptBuilder,
   PlanPromptContext,
   PlannedActionBrainPromptContext,
-} from "@roci/core/core/prompt-builder.js"
-import { PromptBuilderTag } from "@roci/core/core/prompt-builder.js"
+} from "@signal/core/core/prompt-builder.js"
+import { PromptBuilderTag } from "@signal/core/core/prompt-builder.js"
 import type { GameState, Situation } from "./types.js"
 import { snapshot } from "./state-renderer.js"
-import { loadTemplate, renderTemplate } from "@roci/core/core/template.js"
+import { loadTemplate, renderTemplate } from "@signal/core/core/template.js"
 
 // ── Template loading ────────────────────────────────────────
 

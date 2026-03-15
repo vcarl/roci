@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [You are already at Nova Terra Industrial Belt. Mine asteroids here. Do NOT write any loop syntax, PRAYER_SET, or pseudo-code. Instead, call the mine action directly, then call it again, and again. Each mine call extracts ore. Keep calling mine until cargo is at least 60/70 full. Check cargo after each mine call. If a mine call fails, try again. This is purely mechanical — call mine, check cargo, repeat.] in phase active for 3 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T13:24:37.875Z",
+  "source": "overlord",
+  "id": "1773494677875-cbzc3x.json"
+}

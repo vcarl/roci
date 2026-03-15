@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [Mine ore at War Materials. DO NOT use prayer macros — issue individual mine commands directly each tick. Prioritize darksteel_ore first, then titanium_ore, then copper_ore or iron_ore. Do NOT mine common_rock. Keep mining until cargo is at least 150/180. If a mine command fails, check status and retry with a valid target.] in phase active for 3 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T13:27:31.768Z",
+  "source": "overlord",
+  "id": "1773494851768-95xsm3.json"
+}

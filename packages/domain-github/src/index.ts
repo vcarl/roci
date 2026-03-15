@@ -1,16 +1,16 @@
 import * as path from "node:path"
 import { readFileSync, readdirSync } from "node:fs"
 import { Layer } from "effect"
-import type { DomainBundle } from "@roci/core/core/domain-bundle.js"
-import { SkillRegistryTag } from "@roci/core/core/skill.js"
-import type { Skill } from "@roci/core/core/skill.js"
+import type { DomainBundle } from "@signal/core/core/domain-bundle.js"
+import { SkillRegistryTag } from "@signal/core/core/skill.js"
+import type { Skill } from "@signal/core/core/skill.js"
 import { GitHubEventProcessorLive } from "./event-processor.js"
 import { GitHubInterruptRegistryLive } from "./interrupts.js"
 import { GitHubSituationClassifierLive } from "./situation-classifier.js"
 import { GitHubStateRendererLive } from "./renderer.js"
 import { GitHubPromptBuilderLive } from "./prompt-builder.js"
 import { GitHubClientLive } from "./github-client.js"
-import { parseFrontmatter } from "@roci/core/core/template.js"
+import { parseFrontmatter } from "@signal/core/core/template.js"
 
 // ── Load skills from .claude/skills/ at startup ─────────────
 

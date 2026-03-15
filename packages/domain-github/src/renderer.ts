@@ -1,6 +1,6 @@
 import { Layer } from "effect"
-import type { StateRenderer } from "@roci/core/core/state-renderer.js"
-import { StateRendererTag } from "@roci/core/core/state-renderer.js"
+import type { StateRenderer } from "@signal/core/core/state-renderer.js"
+import { StateRendererTag } from "@signal/core/core/state-renderer.js"
 import type { GitHubState } from "./types.js"
 
 function snapshot(state: GitHubState): Record<string, unknown> {

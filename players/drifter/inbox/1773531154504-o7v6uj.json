@@ -1,0 +1,7 @@
+{
+  "priority": "low",
+  "content": "You appear to be stuck on [You are at War Materials asteroid belt. Execute the bash command 'sm mine' and wait for the output. Then execute 'sm mine' again. Keep repeating: run 'sm mine', wait for result, run 'sm mine' again. Every 4 mining commands, run 'sm status' to check cargo. Continue until cargo_used >= 65. CRITICAL: You must use the Bash tool to run these commands. Do NOT write pseudocode, prayers, loops, or abstract plans. Each 'sm mine' is a separate Bash tool invocation. Start now with your first 'sm mine' command.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
+  "issuedAt": "2026-03-14T23:32:34.504Z",
+  "source": "overlord",
+  "id": "1773531154504-o7v6uj.json"
+}

@@ -30,7 +30,7 @@ export const summarizeTimeout = (
 
     const summary = yield* claude.invoke({
       prompt,
-      model: "haiku",
+      model: "nvidia/nemotron-3-nano-30b-a3b:free",
       maxTurns: 1,
     })
 

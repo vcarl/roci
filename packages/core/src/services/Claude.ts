@@ -8,32 +8,86 @@ import { OAuthToken } from "./OAuthToken.js"
 
 export type ClaudeModel = "opus" | "sonnet" | "haiku"
 
+/** Any model string — Anthropic models or OpenRouter model IDs (e.g. "nvidia/nemotron-3-super-120b-a12b:free"). */
+export type AnyModel = ClaudeModel | (string & Record<never, never>)
+
+const ANTHROPIC_MODELS = new Set(["opus", "sonnet", "haiku"])
+const OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? ""
+
 export class ClaudeError {
   readonly _tag = "ClaudeError"
   constructor(readonly message: string, readonly cause?: unknown) {}
   toString() { return this.message }
 }
 
+/**
+ * Call OpenRouter API directly (no claude CLI needed).
+ * Returns the assistant content string.
+ */
+async function invokeOpenRouter(opts: {
+  prompt: string
+  model: string
+  systemPrompt?: string
+}): Promise<string> {
+  const messages: Array<{ role: string; content: string }> = []
+  if (opts.systemPrompt) {
+    messages.push({ role: "system", content: opts.systemPrompt })
+  }
+  messages.push({ role: "user", content: opts.prompt })
+
+  const resp = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: opts.model, messages, max_tokens: 2048 }),
+  })
+
+  if (!resp.ok) {
+    const body = await resp.text()
+    throw new Error(`OpenRouter ${resp.status}: ${body.slice(0, 300)}`)
+  }
+
+  const data = await resp.json() as {
+    choices?: Array<{ message?: { content?: string | null } }>
+    error?: { message?: string }
+  }
+
+  if (data.error) {
+    throw new Error(`OpenRouter error: ${data.error.message ?? JSON.stringify(data.error)}`)
+  }
+
+  const content = data.choices?.[0]?.message?.content
+  if (content == null) {
+    throw new Error(`OpenRouter returned no content: ${JSON.stringify(data).slice(0, 200)}`)
+  }
+
+  return content
+}
+
 export class Claude extends Context.Tag("Claude")<
   Claude,
   {
     /**
-     * Invoke `claude -p` on the **host** machine (not inside a Docker container).
+     * Invoke a model on the **host** machine (not inside a Docker container).
+     *
+     * Anthropic models ("opus" | "sonnet" | "haiku") use claude -p.
+     * Any other model string routes to OpenRouter via HTTP (requires OPENROUTER_API_KEY env var).
      *
      * This is intended **only for orchestrator-internal tasks** that don't need
-     * tool access or container context — for example:
-     *   - Memory consolidation (dream/diary compression in hippocampus/dream.ts)
-     *   - Timeout summarization (hypothalamus/timeout-summarizer.ts)
-     *   - End-of-session reflection (spacemolt/dinner.ts)
+     * tool access or container context:
+     *   - Memory consolidation (dream/diary compression)
+     *   - Timeout summarization
+     *   - End-of-session reflection (dinner)
      *
      * **Domain logic (planning, evaluation, execution) should NOT use this.**
-     * Use `runTurn` from `core/limbic/hypothalamus/process-runner.ts` instead,
-     * which runs inside the Docker container with full tool access, streaming
-     * output, and timeout handling.
+     * Use runTurn from process-runner.ts instead.
      */
     readonly invoke: (opts: {
       prompt: string
-      model: ClaudeModel
+      model: AnyModel
       systemPrompt?: string
       outputFormat?: "text" | "json" | "stream-json"
       maxTurns?: number
@@ -41,10 +95,6 @@ export class Claude extends Context.Tag("Claude")<
   }
 >() {}
 
-/**
- * Write content to a temp file, returning its path.
- * Caller is responsible for cleanup.
- */
 function writeTempFile(prefix: string, content: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), "roci-"))
   const filePath = path.join(dir, `${prefix}.txt`)
@@ -60,20 +110,15 @@ function cleanupTempFile(filePath: string): void {
   }
 }
 
-/**
- * Return a shell-safe literal using $'...' ANSI-C quoting.
- * Escapes backslashes, single quotes, and control characters so the
- * result can be embedded directly in a bash command string.
- */
 function shellEscape(s: string): string {
   let escaped = ""
   for (const ch of s) {
     const code = ch.charCodeAt(0)
     if (ch === "\\") escaped += "\\\\"
-    else if (ch === "'") escaped += "\\'"
-    else if (ch === "\n") escaped += "\\n"
-    else if (ch === "\r") escaped += "\\r"
-    else if (ch === "\t") escaped += "\\t"
+    else if (ch === "'") escaped += "\'"
+    else if (ch === "\n") escaped += "\n"
+    else if (ch === "\r") escaped += "\r"
+    else if (ch === "\t") escaped += "\t"
     else if (code < 0x20 || code === 0x7f) escaped += `\\x${code.toString(16).padStart(2, "0")}`
     else escaped += ch
   }
@@ -87,8 +132,25 @@ export const ClaudeLive = Layer.effect(
     const oauthToken = yield* OAuthToken
 
     return Claude.of({
-      invoke: (opts) =>
-        Effect.scoped(
+      invoke: (opts) => {
+        // Route to OpenRouter for non-Anthropic models
+        if (!ANTHROPIC_MODELS.has(opts.model)) {
+          if (!OPENROUTER_API_KEY) {
+            return Effect.fail(new ClaudeError(
+              `OpenRouter model "${opts.model}" requested but OPENROUTER_API_KEY is not set`
+            ))
+          }
+          return Effect.promise(() => invokeOpenRouter({
+            prompt: opts.prompt,
+            model: opts.model,
+            systemPrompt: opts.systemPrompt,
+          })).pipe(
+            Effect.mapError((e) => new ClaudeError(`OpenRouter invocation failed: ${e}`, e)),
+          )
+        }
+
+        // Anthropic model — use claude -p
+        return Effect.scoped(
           Effect.gen(function* () {
             const promptFile = writeTempFile("prompt", opts.prompt)
 
@@ -101,7 +163,6 @@ export const ClaudeLive = Layer.effect(
               "--no-session-persistence",
             ]
 
-            // Disable thinking for non-opus models
             if (opts.model !== "opus") {
               args.push("--effort", "low")
             }
@@ -110,9 +171,6 @@ export const ClaudeLive = Layer.effect(
               args.push("--max-turns", String(opts.maxTurns))
             }
 
-            // Build the shell command: pipe prompt via stdin
-            // Unset CLAUDECODE to allow running from within a Claude Code session
-            // System prompt goes via temp file too if present
             const envPrefix = `CLAUDE_CODE_OAUTH_TOKEN=${shellEscape(token)} `
             let shellCmd: string
             if (opts.systemPrompt) {
@@ -163,7 +221,8 @@ export const ClaudeLive = Layer.effect(
           Effect.mapError((e) =>
             e instanceof ClaudeError ? e : new ClaudeError("Claude invocation failed", e),
           ),
-        ),
+        )
+      },
     })
   }),
 )
