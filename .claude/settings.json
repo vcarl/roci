@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory",
+        "/work/.claude/memory.db"
+      ],
+      "env": {}
+    },
+    "spacemolt": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://game.spacemolt.com/mcp/v2"
+      ],
+      "env": {}
+    }
+  }
+}
