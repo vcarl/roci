@@ -3,19 +3,19 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "Travel to Garnet has failed repeatedly. The core issue is that the travel agent doesn't retain the route from the explore agent, and haiku-level agents seem unable to execute multi-jump routes. New approach: 1) Dock and refuel first since we're at 116/120. 2) Use a sonnet agent for travel that must find the route itself AND execute jumps one at a time, checking status after each. Break the 12-jump route into two travel steps of ~6 jumps each to keep tick budgets realistic. 3) Once in Garnet's system, explore for the spatial anomaly. Also need to respond to faction chat — NeonEcho confirmed War Citadel is in krynn system, which is valuable intel to acknowledge.",
-  "currentGoal": "You should be in the system containing Garnet. Run 'sm scan' to survey the area. Run 'sm status' to see all locations. Navigate to Garnet using 'sm navigate garnet'. Once there, run 'sm scan' again to investigate the spatial anomaly. Document everything: anomaly type, readings, any interactive options. If there's a wormhole or special interaction, report it but do NOT enter without confirmation.",
-  "stepIndex": 4,
+  "plan": "Currently docked at Sabik Star with nearly full hull, nearly full fuel, and almost empty cargo (1/75). Credits are low at 3,548. The character is an explorer/investigator who prioritizes discovery and intelligence gathering over commerce. Sabik system is in unknown space (police: 0), making it an interesting investigative opportunity. The connected systems include several unexplored options. Given the diary notes about successful exploration runs and the character's core drive toward understanding anomalies, the priority should be to explore the Sabik system's local POIs first, then consider a jump to a connected system. Sabik I (planet) and Phase Shimmer nebula are local POIs worth scanning. The nebula is particularly interesting given previous Phase Crystal finds at similar nebulas. With low credits, any salvage or trade goods discovered would be welcome but secondary to intelligence gathering.",
+  "currentGoal": "Scan and survey Phase Shimmer — Sabik nebula for anomalies, resources, or signals of interest. Document all findings.",
+  "stepIndex": 1,
   "situation": "in_space",
   "metrics": {
     "situationType": "in_space",
-    "fuel": 0.95,
+    "fuel": 0.9416666666666667,
     "hull": 1,
     "cargoUsed": 1,
     "cargoCapacity": 75,
     "inCombat": false
   },
-  "turnCount": 184,
-  "lastUpdated": "2026-03-14T23:46:46.924Z",
+  "turnCount": 24,
+  "lastUpdated": "2026-03-15T06:24:33.206Z",
   "recentAlerts": []
 }

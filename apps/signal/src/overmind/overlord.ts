@@ -53,6 +53,9 @@ function readAllStatus(): Map<string, AgentStatusSnapshot> {
 
   if (!fs.existsSync(playersDir)) return result
 
+  // Agents not updated within 3× poll interval are considered offline (stale session data)
+  const staleThresholdMs = pollIntervalMs * 3
+
   const entries = fs.readdirSync(playersDir, { withFileTypes: true })
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
@@ -61,6 +64,14 @@ function readAllStatus(): Map<string, AgentStatusSnapshot> {
     try {
       const raw = fs.readFileSync(statusPath, "utf-8")
       const snapshot = JSON.parse(raw) as AgentStatusSnapshot
+
+      // Skip entries with no lastUpdated — pre-dates status reporter
+      if (!snapshot.lastUpdated) continue
+
+      // Skip stale entries from old sessions
+      const ageMs = Date.now() - new Date(snapshot.lastUpdated).getTime()
+      if (ageMs > staleThresholdMs) continue
+
       result.set(entry.name, snapshot)
     } catch {
       // corrupt status file — skip
