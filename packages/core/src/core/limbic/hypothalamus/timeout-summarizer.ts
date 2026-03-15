@@ -3,7 +3,7 @@ import { Claude, ClaudeError } from "../../../services/Claude.js"
 
 /**
  * When a turn times out, generate a short summary of what was accomplished
- * using a quick haiku call.
+ * using a free nemotron-nano call (off critical path, cost = $0).
  */
 export const summarizeTimeout = (
   partialOutput: string,
