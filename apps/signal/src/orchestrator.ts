@@ -12,7 +12,7 @@ import { readWindDown, clearWindDown } from "@signal/core/operator/wind-down-fil
 
 /**
  * Ensure a domain container exists and is running.
- * Container name: `roci-<domainName>`.
+ * Container name: `signal-<domainName>`.
  * Returns the container ID.
  */
 const ensureContainer = (containerName: string, rd: ResolvedDomain) =>
@@ -117,7 +117,7 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
     // Ensure per-domain containers
     const containerIds = new Map<string, string>()
     for (const rd of resolvedDomains) {
-      const containerName = `roci-${rd.name}`
+      const containerName = `signal-${rd.name}`
       const containerId = yield* ensureContainer(containerName, rd)
       containerIds.set(rd.name, containerId)
     }
@@ -217,7 +217,7 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
         Effect.gen(function* () {
           yield* logToConsole("orchestrator", "main", "Shutting down — stopping containers...")
           for (const [domainName] of containerIds) {
-            const containerName = `roci-${domainName}`
+            const containerName = `signal-${domainName}`
             yield* docker.stop(containerName).pipe(
               Effect.tap(() => logToConsole("orchestrator", "main", `Container ${containerName} stopped`)),
               Effect.catchAll(() => Effect.void),

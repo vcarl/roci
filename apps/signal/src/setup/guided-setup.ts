@@ -153,7 +153,7 @@ export const runGuidedSetup = (projectRoot: string) =>
     // 4. Optionally validate and start
     const totalChars = Object.values(config).reduce((sum, e) => sum + e.characters.length, 0)
     if (totalChars === 0) {
-      yield* logToConsole("setup", "cli", "No characters were added. Run 'roci setup' again when ready.")
+      yield* logToConsole("setup", "cli", "No characters were added. Run 'signal setup' again when ready.")
       return
     }
 
@@ -166,6 +166,6 @@ export const runGuidedSetup = (projectRoot: string) =>
       const resolved = resolveConfigs(projectRoot, [], [])
       yield* validateAndStart(projectRoot, resolved, 30, false)
     } else {
-      yield* logToConsole("setup", "cli", "Setup complete. Run 'roci' or 'roci start' to begin.")
+      yield* logToConsole("setup", "cli", "Setup complete. Run 'signal' or 'signal start' to begin.")
     }
   })

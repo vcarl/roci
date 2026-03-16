@@ -138,7 +138,7 @@ export const DockerLive = Layer.effect(
             args.push("--entrypoint", opts.entrypoint.join(" "))
           }
 
-          args.push("--label", "roci-crew=true")
+          args.push("--label", "signal-crew=true")
           args.push(opts.image)
 
           if (opts.cmd) {

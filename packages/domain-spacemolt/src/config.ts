@@ -78,7 +78,7 @@ const spaceMoltInitProcedure: DomainProcedure<InitContext> = {
         if (existsSync(regCodePath)) {
           messages.push({ level: "ok", text: `${ctx.characterName} — no credentials.txt yet, but registration-code.txt found (will auto-register on first run)` })
         } else {
-          messages.push({ level: "warning", text: `${ctx.characterName} — no credentials.txt or registration-code.txt. Run 'roci setup --domain spacemolt' to configure.` })
+          messages.push({ level: "warning", text: `${ctx.characterName} — no credentials.txt or registration-code.txt. Run 'signal setup --domain spacemolt' to configure.` })
         }
         return messages
       }

@@ -3,7 +3,7 @@
  * Pack script that creates a self-contained tarball including workspace dependencies.
  * Vendors workspace packages into dist/node_modules/ so they're included in the tarball
  * (npm always excludes top-level node_modules, but dist/ contents are included).
- * Node.js module resolution finds @roci/* packages via dist/node_modules/ when
+ * Node.js module resolution finds @signal/* packages via dist/node_modules/ when
  * the entry point runs from dist/.
  */
 import { cpSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs"
@@ -26,7 +26,7 @@ cpSync(resolve(appRoot, "bin"), resolve(stagingDir, "bin"), { recursive: true })
 
 // Read and modify package.json: remove workspace: deps from dependencies
 const pkg = JSON.parse(readFileSync(resolve(appRoot, "package.json"), "utf-8"))
-const workspaceDeps = ["@roci/core", "@roci/domain-spacemolt", "@roci/domain-github"]
+const workspaceDeps = ["@signal/core", "@signal/domain-spacemolt", "@signal/domain-github"]
 for (const dep of workspaceDeps) {
   delete pkg.dependencies[dep]
 }
@@ -36,9 +36,9 @@ writeFileSync(resolve(stagingDir, "package.json"), JSON.stringify(pkg, null, 2) 
 // Vendor workspace packages into dist/node_modules/ so Node resolves them
 // when running from dist/main.js
 for (const [pkgName, pkgDir] of [
-  ["@roci/core", "packages/core"],
-  ["@roci/domain-spacemolt", "packages/domain-spacemolt"],
-  ["@roci/domain-github", "packages/domain-github"],
+  ["@signal/core", "packages/core"],
+  ["@signal/domain-spacemolt", "packages/domain-spacemolt"],
+  ["@signal/domain-github", "packages/domain-github"],
 ]) {
   const src = resolve(repoRoot, pkgDir)
   const dest = resolve(stagingDir, "dist", "node_modules", pkgName)

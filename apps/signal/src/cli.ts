@@ -87,12 +87,12 @@ const stopCommand = Command.make("stop", { domain: stopDomain }, (args) =>
   Effect.gen(function* () {
     const docker = yield* Docker
     if (args.domain._tag === "Some") {
-      yield* docker.stop(`roci-${args.domain.value}`)
-      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} stopped`)
+      yield* docker.stop(`signal-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container signal-${args.domain.value} stopped`)
     } else {
-      const containers = yield* docker.listByLabel("roci-crew")
+      const containers = yield* docker.listByLabel("signal-crew")
       if (containers.length === 0) {
-        yield* logToConsole("orchestrator", "cli", "No roci containers found")
+        yield* logToConsole("orchestrator", "cli", "No signal containers found")
         return
       }
       for (const c of containers) {
@@ -101,7 +101,7 @@ const stopCommand = Command.make("stop", { domain: stopDomain }, (args) =>
       }
     }
   }),
-).pipe(Command.withDescription("Stop roci container(s)"))
+).pipe(Command.withDescription("Stop signal container(s)"))
 
 // --- pause command ---
 const pauseDomain = Options.text("domain").pipe(
@@ -113,10 +113,10 @@ const pauseCommand = Command.make("pause", { domain: pauseDomain }, (args) =>
   Effect.gen(function* () {
     const docker = yield* Docker
     if (args.domain._tag === "Some") {
-      yield* docker.pause(`roci-${args.domain.value}`)
-      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} paused`)
+      yield* docker.pause(`signal-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container signal-${args.domain.value} paused`)
     } else {
-      const containers = yield* docker.listByLabel("roci-crew")
+      const containers = yield* docker.listByLabel("signal-crew")
       for (const c of containers) {
         if (c.status === "running") {
           yield* docker.pause(c.name || c.id)
@@ -125,7 +125,7 @@ const pauseCommand = Command.make("pause", { domain: pauseDomain }, (args) =>
       }
     }
   }),
-).pipe(Command.withDescription("Pause roci container(s)"))
+).pipe(Command.withDescription("Pause signal container(s)"))
 
 // --- resume command ---
 const resumeDomain = Options.text("domain").pipe(
@@ -137,10 +137,10 @@ const resumeCommand = Command.make("resume", { domain: resumeDomain }, (args) =>
   Effect.gen(function* () {
     const docker = yield* Docker
     if (args.domain._tag === "Some") {
-      yield* docker.resume(`roci-${args.domain.value}`)
-      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} resumed`)
+      yield* docker.resume(`signal-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container signal-${args.domain.value} resumed`)
     } else {
-      const containers = yield* docker.listByLabel("roci-crew")
+      const containers = yield* docker.listByLabel("signal-crew")
       for (const c of containers) {
         if (c.status === "paused") {
           yield* docker.resume(c.name || c.id)
@@ -149,16 +149,16 @@ const resumeCommand = Command.make("resume", { domain: resumeDomain }, (args) =>
       }
     }
   }),
-).pipe(Command.withDescription("Resume roci container(s)"))
+).pipe(Command.withDescription("Resume signal container(s)"))
 
 // --- status command ---
 const statusCommand = Command.make("status", {}, () =>
   Effect.gen(function* () {
     const docker = yield* Docker
-    const containers = yield* docker.listByLabel("roci-crew")
+    const containers = yield* docker.listByLabel("signal-crew")
 
     if (containers.length === 0) {
-      yield* Effect.log("No roci containers found.")
+      yield* Effect.log("No signal containers found.")
       return
     }
 
@@ -166,7 +166,7 @@ const statusCommand = Command.make("status", {}, () =>
       yield* Effect.log(`${c.name}: ${c.status} (${c.id.slice(0, 12)})`)
     }
   }),
-).pipe(Command.withDescription("Show status of roci container(s)"))
+).pipe(Command.withDescription("Show status of signal container(s)"))
 
 // --- destroy command ---
 const destroyDomain = Options.text("domain").pipe(
@@ -178,12 +178,12 @@ const destroyCommand = Command.make("destroy", { domain: destroyDomain }, (args)
   Effect.gen(function* () {
     const docker = yield* Docker
     if (args.domain._tag === "Some") {
-      yield* docker.remove(`roci-${args.domain.value}`)
-      yield* logToConsole("orchestrator", "cli", `Container roci-${args.domain.value} destroyed`)
+      yield* docker.remove(`signal-${args.domain.value}`)
+      yield* logToConsole("orchestrator", "cli", `Container signal-${args.domain.value} destroyed`)
     } else {
-      const containers = yield* docker.listByLabel("roci-crew")
+      const containers = yield* docker.listByLabel("signal-crew")
       if (containers.length === 0) {
-        yield* logToConsole("orchestrator", "cli", "No roci containers found")
+        yield* logToConsole("orchestrator", "cli", "No signal containers found")
         return
       }
       for (const c of containers) {
@@ -192,7 +192,7 @@ const destroyCommand = Command.make("destroy", { domain: destroyDomain }, (args)
       }
     }
   }),
-).pipe(Command.withDescription("Remove roci container(s)"))
+).pipe(Command.withDescription("Remove signal container(s)"))
 
 // --- init command ---
 const initDomain = Options.text("domain").pipe(
@@ -333,15 +333,15 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
 
     // If --domain was provided but no characters, show usage
     if (Option.isNone(args.domain)) {
-      yield* logToConsole("setup", "cli", "No domain specified. Usage: roci setup <character> [character...] --domain <domain>")
-      yield* logToConsole("setup", "cli", "Or run 'roci setup' with no arguments for guided setup.")
+      yield* logToConsole("setup", "cli", "No domain specified. Usage: signal setup <character> [character...] --domain <domain>")
+      yield* logToConsole("setup", "cli", "Or run 'signal setup' with no arguments for guided setup.")
       return
     }
 
     const domainName = args.domain.value
 
     if (characters.length === 0) {
-      yield* logToConsole("setup", "cli", "No characters specified. Usage: roci setup <character> [character...] --domain <domain>")
+      yield* logToConsole("setup", "cli", "No characters specified. Usage: signal setup <character> [character...] --domain <domain>")
       return
     }
 
@@ -482,7 +482,7 @@ const createAppCommand = Command.make("create-app", { characters: createAppChara
 ).pipe(Command.withDescription("Create GitHub Apps for character identities via manifest flow"))
 
 // --- default (no subcommand) handler ---
-// Reuse the same options as `start` so `roci` and `roci start` accept the same filters.
+// Reuse the same options as `start` so `signal` and `signal start` accept the same filters.
 const defaultCharacters = Args.text({ name: "characters" }).pipe(Args.repeated)
 
 const defaultTickInterval = Options.integer("tick-interval").pipe(
@@ -549,8 +549,8 @@ const runAutoDetect = (args: {
   })
 
 // --- root command ---
-const rociCommand = Command.make(
-  "roci",
+const signalCommand = Command.make(
+  "signal",
   { characters: defaultCharacters, tickInterval: defaultTickInterval, domain: defaultDomainOption, manualApproval: defaultManualApproval, nonstop: defaultNonstop },
   (args) => runAutoDetect(args),
 ).pipe(
@@ -582,4 +582,4 @@ const serviceLayer = Layer.mergeAll(
   CharacterLogLive.pipe(Layer.provide(projectRootLayer)),
 )
 
-export { rociCommand, serviceLayer }
+export { signalCommand, serviceLayer }

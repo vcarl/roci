@@ -82,7 +82,7 @@
  * 4. Wire them into a `DomainBundle` layer in `bundle.ts`.
  * 5. Create a `DomainConfig` that includes the bundle, phase
  *    registry, container mounts, and any init procedures.
- * 6. Register the domain in the CLI's domain registry so `roci run
+ * 6. Register the domain in the CLI's domain registry so `signal run
  *    --domain <yours>` works.
  *
  * The key insight: every service receives `DomainState` (which is

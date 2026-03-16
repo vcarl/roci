@@ -10,7 +10,7 @@ import { logToConsole } from "@signal/core/logging/console-renderer.js"
 /** Log a ProcedureMessage to console with appropriate prefix. */
 export const logProcMsg = (msg: ProcedureMessage) => {
   const prefix = msg.level === "ok" ? "OK" : msg.level === "warning" ? "WARNING" : "ERROR"
-  return logToConsole("roci", "cli", `${prefix}: ${msg.text}`)
+  return logToConsole("signal", "cli", `${prefix}: ${msg.text}`)
 }
 
 /**
@@ -29,7 +29,7 @@ export const validateAndStart = (
     let allGood = true
 
     for (const rd of resolved) {
-      yield* logToConsole("roci", "cli", `Validating ${rd.name} domain...`)
+      yield* logToConsole("signal", "cli", `Validating ${rd.name} domain...`)
       const domainConfig = rd.config
 
       // Run domain's project-level init if present
@@ -43,7 +43,7 @@ export const validateAndStart = (
         const charDir = path.resolve(projectRoot, "players", charName, "me")
         const charDirExists = yield* fs.exists(charDir)
         if (!charDirExists) {
-          yield* logToConsole("roci", "cli", `MISSING: ${charDir} — create this directory with character files`)
+          yield* logToConsole("signal", "cli", `MISSING: ${charDir} — create this directory with character files`)
           allGood = false
           continue
         }
@@ -53,7 +53,7 @@ export const validateAndStart = (
           const filePath = path.resolve(charDir, file)
           const fileExists = yield* fs.exists(filePath)
           if (!fileExists) {
-            yield* logToConsole("roci", "cli", `MISSING: ${charName}/${file}`)
+            yield* logToConsole("signal", "cli", `MISSING: ${charName}/${file}`)
             allGood = false
           }
         }
@@ -74,13 +74,13 @@ export const validateAndStart = (
     }
 
     if (!allGood) {
-      yield* logToConsole("roci", "cli", "")
-      yield* logToConsole("roci", "cli", "Fix the issues above before starting.")
+      yield* logToConsole("signal", "cli", "")
+      yield* logToConsole("signal", "cli", "Fix the issues above before starting.")
       return
     }
 
     // Validation passed — start execution
-    yield* logToConsole("roci", "cli", "Validation passed. Starting execution...")
+    yield* logToConsole("signal", "cli", "Validation passed. Starting execution...")
 
     // Validate all character directories exist
     const charFs = yield* CharacterFs

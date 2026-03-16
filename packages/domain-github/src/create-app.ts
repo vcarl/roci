@@ -26,8 +26,8 @@ export function createGitHubApp(
   const redirectUrl = `http://localhost:${port}/callback`
 
   const manifest = JSON.stringify({
-    name: `roci-${characterName}`,
-    url: `https://github.com/roci-${characterName}`,
+    name: `signal-${characterName}`,
+    url: `https://github.com/signal-${characterName}`,
     hook_attributes: { active: false },
     redirect_url: redirectUrl,
     public: false,

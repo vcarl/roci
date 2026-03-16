@@ -96,7 +96,7 @@ export class Claude extends Context.Tag("Claude")<
 >() {}
 
 function writeTempFile(prefix: string, content: string): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "roci-"))
+  const dir = mkdtempSync(path.join(tmpdir(), "signal-"))
   const filePath = path.join(dir, `${prefix}.txt`)
   writeFileSync(filePath, content)
   return filePath

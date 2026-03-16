@@ -227,7 +227,7 @@ const gitHubSetupCharacter: DomainProcedure<InitContext> = {
 /** Instructions shown when no GitHub characters are configured. */
 const gitHubCharacterSetupGuide = [
   `Each character needs its own GitHub service account:`,
-  `  1. Create a GitHub account (e.g. roci-<character-name>)`,
+  `  1. Create a GitHub account (e.g. signal-<character-name>)`,
   `  2. Add it as collaborator to target repos`,
   `  3. Create a fine-grained PAT with: issues:write, pull_requests:write, contents:write`,
   `  4. Put the PAT in players/<name>/me/github.json`,

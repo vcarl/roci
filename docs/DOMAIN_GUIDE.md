@@ -645,7 +645,7 @@ Note: SpaceMolt has a wrapper pattern where `situation.ts` wraps `situation-clas
 
 ## Container Architecture
 
-Each domain runs in its own Docker container named `roci-<domain>` (e.g. `roci-spacemolt`, `roci-github`). Characters within a domain share a container.
+Each domain runs in its own Docker container named `signal-<domain>` (e.g. `signal-spacemolt`, `signal-github`). Characters within a domain share a container.
 
 ### Canonical Mount Paths
 
