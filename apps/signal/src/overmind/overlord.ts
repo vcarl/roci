@@ -4,7 +4,7 @@
  * Polls all agent status.json files every 5 minutes.
  * Detects stuck agents and drops edict nudges.
  * Responds to HELP_REQUESTED signals with Opus.
- * Writes wind-down when usage threshold is hit (via fetch-usage.py — CULT-only).
+ * Writes wind-down when usage threshold is hit (reads last.json cache from desktop usage-check).
  *
  * Usage:
  *   node dist/overmind/overlord.js [--players-dir <path>] [--interval <seconds>] [--no-usage-check]
@@ -114,7 +114,7 @@ function drainHelpRequests(): HelpRequest[] {
   return requests
 }
 
-// ─── Usage check (CULT-only) ─────────────────────────────────────────────────
+// ─── Usage check (reads last.json cache written by desktop usage-check skill) ──
 
 type UsageResult = {
   session: number
@@ -122,11 +122,33 @@ type UsageResult = {
   session_end_time?: string
 }
 
-function checkUsage(fetchUsagePath: string): UsageResult | null {
-  if (!fs.existsSync(fetchUsagePath)) return null
+const LAST_JSON_PATH = "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/.claude/skills/usage-check/last.json"
+const USAGE_CACHE_MAX_AGE_MS = 15 * 60 * 1000 // 15 minutes
+
+function checkUsage(): UsageResult | null {
+  if (!fs.existsSync(LAST_JSON_PATH)) return null
   try {
-    const out = execSync(`python3 "${fetchUsagePath}"`, { encoding: "utf-8", timeout: 30_000 })
-    return JSON.parse(out) as UsageResult
+    const raw = fs.readFileSync(LAST_JSON_PATH, "utf-8")
+    const data = JSON.parse(raw) as {
+      session: string | number
+      weekly: string | number
+      ts: number
+      session_end_time?: number | string
+    }
+    const ageMs = Date.now() - (data.ts ?? 0)
+    if (ageMs > USAGE_CACHE_MAX_AGE_MS) {
+      console.log(`[Overlord] Usage cache is ${Math.round(ageMs / 60000)}m old — skipping`)
+      return null
+    }
+    const parsePercent = (v: string | number): number =>
+      typeof v === "number" ? v : parseFloat(String(v).replace("%", ""))
+    const session_end_time =
+      data.session_end_time != null
+        ? typeof data.session_end_time === "number"
+          ? new Date(data.session_end_time).toISOString()
+          : String(data.session_end_time)
+        : undefined
+    return { session: parsePercent(data.session), weekly: parsePercent(data.weekly), session_end_time }
   } catch {
     return null
   }
@@ -223,8 +245,7 @@ async function poll(): Promise<void> {
 
   // 1. Usage check (CULT-only — only if fetch-usage.py exists)
   if (!noUsageCheck && !existingWindDown) {
-    const fetchUsagePath = path.resolve(process.cwd(), ".claude/skills/usage-check/fetch-usage.py")
-    const usage = checkUsage(fetchUsagePath)
+    const usage = checkUsage()
     if (usage) {
       console.log(`[Overlord] Usage: session=${usage.session}% weekly=${usage.weekly}%`)
       if (usage.session >= 90 || usage.weekly >= 95) {

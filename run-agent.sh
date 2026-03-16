@@ -19,6 +19,19 @@ export PRAYER_BASE_URL=http://172.17.0.1:5000
 bash "$SIGNAL_DIR/start-embed.sh"
 cd "$SIGNAL_DIR"
 
+# Refresh mcp-remote OAuth token from current Claude credentials (prevents popup on restart)
+python3 << 'PYEOF'
+import json, os
+try:
+    creds = json.load(open(os.path.expanduser("~/.claude/.credentials.json")))
+    token = creds["claudeAiOauth"]["accessToken"]
+    for p in ["/home/savolent/Signal/.oauth-token", "/home/savolent/Signal/apps/.oauth-token"]:
+        open(p, "w").write(token)
+    print("[run-agent] OAuth token refreshed.")
+except Exception as e:
+    print(f"[run-agent] OAuth refresh skipped: {e}")
+PYEOF
+
 while true; do
   echo "[${AGENT}] Starting in nonstop mode..."
   node "$SIGNAL_DIR/apps/signal/bin/signal.js" start --nonstop --domain spacemolt "$AGENT"
