@@ -22,14 +22,14 @@ const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
 })
 
 /** All SpaceMolt domain service layers bundled for the core state machine. */
-export const spaceMoltDomainBundle: DomainBundle = Layer.mergeAll(
+export const spaceMoltDomainBundle = Layer.mergeAll(
   SpaceMoltPromptBuilderLive,
   SpaceMoltEventProcessorLive,
   StubSkillRegistryLive,
   SpaceMoltInterruptRegistryLive,
   SpaceMoltSituationClassifierLive,
   SpaceMoltStateRendererLive,
-)
+) as unknown as DomainBundle
 
 /** SpaceMolt-specific service layer (GameSocket) for the CLI's global service layer. */
 export const spaceMoltServiceLayer = makeGameSocketLive()

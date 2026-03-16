@@ -38,6 +38,18 @@ const containerMounts = (projectRoot: string): ContainerMount[] => [
     readonly: true,
   },
   {
+    host: "/mnt/c/Users/Roy D. Lewis Jr/.claude/memory.db",
+    container: "/work/memory.db",
+  },
+  {
+    host: "/home/savolent/.mcp-auth",
+    container: "/root/.mcp-auth",
+  },
+  {
+    host: "/home/savolent/.claude/.credentials.json",
+    container: "/home/node/.claude/.credentials.json",
+  },
+  {
     host: path.resolve(projectRoot, ".devcontainer"),
     container: "/opt/devcontainer",
     readonly: true,

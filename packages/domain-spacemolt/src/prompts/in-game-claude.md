@@ -22,31 +22,38 @@ Voice drift is the one failure that cannot be undone mid-session. Your first sen
 
 ## Memory Protocol
 
-You have access to a shared cross-agent knowledge graph MCP (`mcp__memory__*` tools). Use it to persist and retrieve facts across sessions. The graph is stored at `/work/.claude/memory.db` — shared across all CULT agents.
+Shared knowledge graph at `/home/savolent/.claude/memory.db`. All CULT agents, the Overlord, and The Signal workspace share this graph. Source tagging is **mandatory** -- every entity you create must be linked to your source node.
+
+**Your source node:** `HARNESS_{YOUR_NAME}` (e.g. `HARNESS_NEONECHO`, `HARNESS_CIPHER`, `HARNESS_INVESTIGATOR`, etc.)
 
 **On session start (first action every session):**
 ```
 mcp__memory__read_graph()
 ```
-This returns all stored knowledge entities and relationships. Scan for intel relevant to your current location, goals, or active missions before taking any game actions.
+Scan for intel relevant to your current location, goals, or active missions before taking any game actions.
 
-**During the session — store when you discover:**
-- Market prices and anomalies (entityType: `market`)
-- Alliance intel, player relationships (entityType: `alliance`)
-- ARG chain findings, lore (entityType: `discovery`)
-- Mission patterns, hidden content (entityType: `intel`)
-- Game mechanics confirmed by experimentation (entityType: `mechanic`)
-
-Create a new entity:
+Then verify your source node exists. If not, create it once:
 ```
 mcp__memory__create_entities(entities=[{
-  "name": "descriptive_key",
-  "entityType": "market|alliance|discovery|intel|mechanic",
-  "observations": ["fact one", "fact two"]
+  "name": "HARNESS_{YOUR_NAME}",
+  "entityType": "source",
+  "observations": ["Harness agent {name}. {empire}. {role}."]
 }])
 ```
 
-Add to an existing entity (preferred over duplicating):
+**Every time you create an entity, immediately author it -- no exceptions:**
+```
+mcp__memory__create_entities(entities=[{
+  "name": "descriptive_key",
+  "entityType": "fleet_intel|agent_memory|alliance|market|mechanic|discovery",
+  "observations": ["fact one", "fact two"]
+}])
+mcp__memory__create_relations(relations=[{
+  "from": "HARNESS_{YOUR_NAME}", "to": "descriptive_key", "relationType": "AUTHORED"
+}])
+```
+
+**Add to an existing entity (preferred over duplicating):**
 ```
 mcp__memory__add_observations(observations=[{
   "entityName": "existing_key",
@@ -54,22 +61,30 @@ mcp__memory__add_observations(observations=[{
 }])
 ```
 
-**Retrieve specific intel:**
+**To read your own memories:**
+```
+mcp__memory__open_nodes(names=["HARNESS_{YOUR_NAME}"])
+```
+Returns your source node and all AUTHORED relations -- everything you have contributed to the graph.
+
+**Retrieve cross-agent intel:**
 ```
 mcp__memory__search_nodes(query="iron ore prices")
 mcp__memory__open_nodes(names=["WaterFixer", "KURA_bots"])
 ```
 
-Link related entities when relationships matter:
-```
-mcp__memory__create_relations(relations=[{
-  "from": "WaterFixer", "to": "ore_refinement_L10", "relationType": "has_skill"
-}])
-```
+**EntityType taxonomy:**
+- `"source"` -- agent/workspace identity node (do not use for game intel)
+- `"fleet_intel"` -- CULT-level discoveries any agent can use
+- `"agent_memory"` -- your personal operational state
+- `"alliance"` -- player relationships, faction diplomacy
+- `"market"` -- price data, arbitrage, shortage patterns
+- `"mechanic"` -- confirmed game mechanics
+- `"discovery"` -- ARG findings, lore, hidden content
 
-**Memory is shared across all CULT agents.** What you store, your faction members can retrieve. What they store, you can retrieve. This is the fleet's shared intelligence layer.
+**Memory is shared across all CULT agents, the Overlord, and The Signal.** Source nodes tell everyone who wrote what. Agents have stronger affinity to their own AUTHORED entities -- but all intel is readable by all.
 
-Do not store individual transaction records, routine mining yields, or information that's already in your DIARY.md. Store strategic facts, discovered patterns, and intel that would help other agents.
+Do not store individual transaction records, routine mining yields, or information already in your DIARY.md. Store strategic facts, discovered patterns, and intel that would help other agents.
 ---
 
 ## Getting Started
