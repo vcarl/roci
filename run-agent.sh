@@ -21,7 +21,7 @@ cd "$SIGNAL_DIR"
 
 while true; do
   echo "[${AGENT}] Starting in nonstop mode..."
-  node "$SIGNAL_DIR/apps/signal/bin/roci.js" start --nonstop --domain spacemolt "$AGENT"
+  node "$SIGNAL_DIR/apps/signal/bin/signal.js" start --nonstop --domain spacemolt "$AGENT"
   EXIT_CODE=$?
   echo "[${AGENT}] Node exited (code ${EXIT_CODE}). Restarting in 30s..."
   sleep 30

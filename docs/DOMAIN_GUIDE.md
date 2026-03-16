@@ -1,6 +1,6 @@
 # Domain Guide
 
-How to build a new domain for the Rocinante orchestrator. New domains should be created as workspace packages under `packages/domain-<name>/` (e.g. `packages/domain-mydomain/`), with the package name `@roci/domain-<name>`. Domain code imports from `@roci/core` instead of relative paths.
+How to build a new domain for the Rocinante orchestrator. New domains should be created as workspace packages under `packages/domain-<name>/` (e.g. `packages/domain-mydomain/`), with the package name `@signal/domain-<name>`. Domain code imports from `@signal/core` instead of relative paths.
 
 ## What is a Domain?
 
@@ -109,7 +109,7 @@ Maps raw domain events into `EventResult` objects that tell the engine how to re
 ```ts
 // packages/domain-mydomain/src/event-processor.ts
 import { Layer } from "effect"
-import { EventProcessorTag, type EventResult } from "@roci/core/core/limbic/thalamus/event-processor.js"
+import { EventProcessorTag, type EventResult } from "@signal/core/core/limbic/thalamus/event-processor.js"
 import type { MyEvent } from "./types.js"
 
 const myEventProcessor = {
@@ -162,8 +162,8 @@ Derives a structured `SituationSummary` from raw state. Called on every state ch
 
 ```ts
 import { Layer } from "effect"
-import { SituationClassifierTag } from "@roci/core/core/limbic/thalamus/situation-classifier.js"
-import type { SituationSummary } from "@roci/core/core/limbic/thalamus/situation-classifier.js"
+import { SituationClassifierTag } from "@signal/core/core/limbic/thalamus/situation-classifier.js"
+import type { SituationSummary } from "@signal/core/core/limbic/thalamus/situation-classifier.js"
 import type { MyState, MySituation } from "./types.js"
 
 const myClassifier = {
@@ -211,7 +211,7 @@ Renders state into human-readable forms for diff tracking and logging. Detailed 
 
 ```ts
 import { Layer } from "effect"
-import { StateRendererTag } from "@roci/core/core/state-renderer.js"
+import { StateRendererTag } from "@signal/core/core/state-renderer.js"
 
 const myRenderer = {
   snapshot(state: unknown): Record<string, unknown> {
@@ -248,8 +248,8 @@ Declarative rules that detect conditions warranting replanning. Use the `createI
 
 ```ts
 import { Layer } from "effect"
-import type { InterruptRule } from "@roci/core/core/limbic/amygdala/interrupt.js"
-import { InterruptRegistryTag, createInterruptRegistry } from "@roci/core/core/limbic/amygdala/interrupt.js"
+import type { InterruptRule } from "@signal/core/core/limbic/amygdala/interrupt.js"
+import { InterruptRegistryTag, createInterruptRegistry } from "@signal/core/core/limbic/amygdala/interrupt.js"
 import type { MyState, MySituation } from "./types.js"
 
 const rules: ReadonlyArray<InterruptRule> = [
@@ -313,7 +313,7 @@ A stub is valid for getting started:
 
 ```ts
 import { Layer } from "effect"
-import { SkillRegistryTag } from "@roci/core/core/skill.js"
+import { SkillRegistryTag } from "@signal/core/core/skill.js"
 
 export const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
   skills: [],
@@ -340,7 +340,7 @@ Phases are the top-level session structure. A minimal registry needs at least a 
 
 ```ts
 import { Effect, Deferred, Queue } from "effect"
-import { runStateMachine } from "@roci/core/core/orchestrator/state-machine.js"
+import { runStateMachine } from "@signal/core/core/orchestrator/state-machine.js"
 
 const activePhase = {
   name: "active",
@@ -373,8 +373,8 @@ const activePhase = {
 #### Planned-Action Pattern (GitHub-style)
 
 ```ts
-import { runPlannedAction } from "@roci/core/core/orchestrator/planned-action.js"
-import type { PlannedActionTempo } from "@roci/core/core/limbic/hypothalamus/tempo.js"
+import { runPlannedAction } from "@signal/core/core/orchestrator/planned-action.js"
+import type { PlannedActionTempo } from "@signal/core/core/limbic/hypothalamus/tempo.js"
 
 const tempo: PlannedActionTempo = {
   _tag: "PlannedAction",
@@ -426,7 +426,7 @@ Planned-action domains typically add `break` and `reflection` phases alongside `
 
 ```ts
 import { Layer } from "effect"
-import type { DomainConfig, DomainBundle } from "@roci/core/core/domain-bundle.js"
+import type { DomainConfig, DomainBundle } from "@signal/core/core/domain-bundle.js"
 import { myPhaseRegistry } from "./phases.js"
 // ... import all your Layer exports
 
@@ -450,7 +450,7 @@ export const myDomainConfig = (projectRoot: string): DomainConfig => ({
 })
 ```
 
-Register your domain in `apps/roci/src/domains/registry.ts` — one line in `DOMAIN_REGISTRY`:
+Register your domain in `apps/signal/src/domains/registry.ts` — one line in `DOMAIN_REGISTRY`:
 
 ```ts
 export const DOMAIN_REGISTRY: Record<string, DomainConfigFactory> = {
@@ -691,7 +691,7 @@ New domain author checklist:
 - [ ] `TempoConfig` — `StateMachineTempo` or `PlannedActionTempo` defined for your execution model
 - [ ] `DomainConfig` — bundle, phaseRegistry, containerMounts, imageName, serviceLayer, dockerfilePath, dockerContext, containerAddDirs
 - [ ] Domain bundle — `Layer.mergeAll(...)` of all 6 service layers
-- [ ] Domain registered in `apps/roci/src/domains/registry.ts`
+- [ ] Domain registered in `apps/signal/src/domains/registry.ts`
 - [ ] Domain entry added to `config.json` at project root
 - [ ] (State machine) `planPrompt` instructs LLM to return `{ reasoning, steps: [{ task, goal, model, successCondition, timeoutTicks }] }`
 - [ ] (State machine) `evaluatePrompt` instructs LLM to return `{ complete: boolean, reason: string }`

@@ -114,7 +114,7 @@ MONITOR_PID=$!
 
 # ── Launch harness (nonstop) ───────────────────────────────────────────
 echo "[harness] Launching: signal start --nonstop --domain spacemolt $AGENTS"
-node "$SIGNAL_DIR/apps/signal/bin/roci.js" start --nonstop --domain spacemolt $AGENTS
+node "$SIGNAL_DIR/apps/signal/bin/signal.js" start --nonstop --domain spacemolt $AGENTS
 
 # Harness exited — clean up monitor
 [ -n "$MONITOR_PID" ] && kill "$MONITOR_PID" 2>/dev/null || true

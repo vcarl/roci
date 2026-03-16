@@ -1,6 +1,6 @@
-# Roci
+# Signal
 
-Roci is a general-purpose agent orchestrator that runs autonomous character-driven sessions using Claude Code as the agent runtime. Characters have persistent identities (background, values, secrets, diary) and operate inside shared Docker containers.
+Signal is a general-purpose agent orchestrator that runs autonomous character-driven sessions using Claude Code as the agent runtime. Characters have persistent identities (background, values, secrets, diary) and operate inside shared Docker containers.
 
 The core architecture is domain-agnostic: a state machine event loop, brain/body execution model, and injectable Effect service layers handle all domain-specific behavior. New domains can be added without modifying the engine.
 
@@ -13,10 +13,10 @@ The core architecture is domain-agnostic: a state machine event loop, brain/body
 
 | Package | Name | Description |
 |---------|------|-------------|
-| `packages/core/` | `@roci/core` | Domain-agnostic engine: types, phase system, limbic subsystems, orchestrator engines, services (Docker, Claude, CharacterFs, OAuthToken, ProjectRoot), logging |
-| `packages/domain-spacemolt/` | `@roci/domain-spacemolt` | SpaceMolt domain implementation |
-| `packages/domain-github/` | `@roci/domain-github` | GitHub domain implementation |
-| `apps/roci/` | `roci` | CLI entry point, setup wizards, domain registry |
+| `packages/core/` | `@signal/core` | Domain-agnostic engine: types, phase system, limbic subsystems, orchestrator engines, services (Docker, Claude, CharacterFs, OAuthToken, ProjectRoot), logging |
+| `packages/domain-spacemolt/` | `@signal/domain-spacemolt` | SpaceMolt domain implementation |
+| `packages/domain-github/` | `@signal/domain-github` | GitHub domain implementation |
+| `apps/signal/` | `signal` | CLI entry point, setup wizards, domain registry |
 
 Supporting directories:
 
@@ -40,13 +40,13 @@ pnpm install
 pnpm build
 
 # Initialize a new session directory
-pnpm --filter roci roci init
+pnpm --filter signal signal init
 
 # Run domain-specific setup (character creation, config)
-pnpm --filter roci roci setup
+pnpm --filter signal signal setup
 
 # Start a session
-pnpm --filter roci roci start
+pnpm --filter signal signal start
 ```
 
 ### CLI Commands

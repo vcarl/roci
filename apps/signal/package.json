@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "type": "module",
   "bin": {
-    "roci": "./bin/roci.js"
+    "signal": "./bin/signal.js"
   },
   "files": [
     "dist",
@@ -17,7 +17,7 @@
     "pack": "node scripts/pack.js",
     "typecheck": "tsc --noEmit",
     "start": "tsx src/main.ts",
-    "roci": "tsx src/main.ts"
+    "signal": "tsx src/main.ts"
   },
   "dependencies": {
     "@signal/core": "workspace:*",

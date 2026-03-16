@@ -1,10 +1,10 @@
-# Contributing to Roci
+# Contributing to Signal
 
 ## Development Setup
 
 ```bash
 git clone <repo-url>
-cd roci
+cd Signal
 pnpm install
 pnpm build
 ```
@@ -21,16 +21,16 @@ This is a pnpm workspace monorepo with Nx for build orchestration.
 
 ### Where code goes
 
-- **`packages/core/`** (`@roci/core`) -- Domain-agnostic engine code. Types, services, orchestrator engines, limbic subsystems, and logging all live here. Changes here affect all domains.
-- **`packages/domain-*/`** (`@roci/domain-*`) -- Domain-specific implementations. Each domain provides the Effect service layers that the engine requires.
-- **`apps/roci/`** (`roci`) -- CLI entry point and domain registry. This is where domains are wired into the CLI.
+- **`packages/core/`** (`@signal/core`) -- Domain-agnostic engine code. Types, services, orchestrator engines, limbic subsystems, and logging all live here. Changes here affect all domains.
+- **`packages/domain-*/`** (`@signal/domain-*`) -- Domain-specific implementations. Each domain provides the Effect service layers that the engine requires.
+- **`apps/signal/`** (`signal`) -- CLI entry point and domain registry. This is where domains are wired into the CLI.
 - **`docs/`** -- Project documentation.
 - **`shared-resources/`** -- Assets shared across domains.
 
 ### Package boundaries
 
-- Domain packages depend on `@roci/core` but never on each other.
-- The `roci` app depends on `@roci/core` and all domain packages.
+- Domain packages depend on `@signal/core` but never on each other.
+- The `signal` app depends on `@signal/core` and all domain packages.
 - Core never imports from domain packages or the app.
 
 ## Code Style
@@ -74,8 +74,8 @@ pnpm check       # Lint + format with Biome
 To run commands for a specific package:
 
 ```bash
-pnpm --filter @roci/core build
-pnpm --filter roci roci start
+pnpm --filter @signal/core build
+pnpm --filter signal signal start
 ```
 
 ## Commit Conventions

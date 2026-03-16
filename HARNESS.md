@@ -7,19 +7,19 @@ The harness runs autonomous character-driven sessions inside a shared Docker con
 This project is a pnpm monorepo with the following packages:
 
 ```
-packages/core/          (@roci/core)              Core engine, services, logging, utilities
-packages/domain-spacemolt/ (@roci/domain-spacemolt) SpaceMolt domain implementation
-packages/domain-github/    (@roci/domain-github)    GitHub domain implementation
-apps/roci/              (roci)                     CLI, orchestrator runner, setup, domain registry
+packages/core/          (@signal/core)              Core engine, services, logging, utilities
+packages/domain-spacemolt/ (@signal/domain-spacemolt) SpaceMolt domain implementation
+packages/domain-github/    (@signal/domain-github)    GitHub domain implementation
+apps/signal/              (signal)                     CLI, orchestrator runner, setup, domain registry
 ```
 
 ## Architecture
 
 ```
-apps/roci/src/cli.ts
- +-- runOrchestrator(configs[], domain)              apps/roci/src/orchestrator.ts
+apps/signal/src/cli.ts
+ +-- runOrchestrator(configs[], domain)              apps/signal/src/orchestrator.ts
      +-- ensureSharedContainer()                      Start/reuse Docker container
-     +-- for each character: fork characterLoop()     apps/roci/src/orchestrator.ts
+     +-- for each character: fork characterLoop()     apps/signal/src/orchestrator.ts
          +-- runPhases(context, phaseRegistry)         packages/core/src/core/phase-runner.ts
              +-- Phase: startup, active, break/social, reflection
                  +-- runStateMachine() or runPlannedAction()
@@ -223,7 +223,7 @@ Add to the rules array in the domain's `interrupts.ts` (e.g. `packages/domain-sp
 
 ```
   Orchestrator          Docker Container          Log Files        Console
-  (host)                (roci-crew)
+  (host)                (signal-crew)
   |                     |                         |                |
   | docker exec -i      |                         |                |
   | -e OAUTH_TOKEN=...  |                         |                |
@@ -264,7 +264,7 @@ Add to the rules array in the domain's `interrupts.ts` (e.g. `packages/domain-sp
 
 ## Container Layout
 
-Single shared container `roci-crew`, all characters isolated via `--add-dir`.
+Single shared container `signal-crew`, all characters isolated via `--add-dir`.
 
 **Volume mounts:**
 
@@ -324,19 +324,19 @@ All events printed type-tagged with timestamp and character name:
 ## Commands
 
 ```bash
-./roci start <character> [character...]    # Build image, start orchestrator
-./roci start <char> --tick-interval 60     # Custom tick interval (default 30s)
-./roci stop                                # Stop the shared container
-./roci pause                               # Pause the shared container
-./roci resume                              # Resume the shared container
-./roci destroy                             # Remove the shared container
-./roci status                              # Show container status
-./roci logs <character>                    # Show recent thoughts
+./signal start <character> [character...]    # Build image, start orchestrator
+./signal start <char> --tick-interval 60     # Custom tick interval (default 30s)
+./signal stop                                # Stop the shared container
+./signal pause                               # Pause the shared container
+./signal resume                              # Resume the shared container
+./signal destroy                             # Remove the shared container
+./signal status                              # Show container status
+./signal logs <character>                    # Show recent thoughts
 ```
 
 ## Key Files
 
-### Core — `packages/core/` (@roci/core)
+### Core — `packages/core/` (@signal/core)
 
 | File | Role |
 |------|------|
@@ -359,7 +359,7 @@ All events printed type-tagged with timestamp and character name:
 | `packages/core/src/core/state-renderer.ts` | StateRenderer interface |
 | `packages/core/src/core/skill.ts` | Skill + SkillRegistry interface |
 
-### GitHub domain — `packages/domain-github/` (@roci/domain-github)
+### GitHub domain — `packages/domain-github/` (@signal/domain-github)
 
 | File | Role |
 |------|------|
@@ -370,7 +370,7 @@ All events printed type-tagged with timestamp and character name:
 | `packages/domain-github/src/body-system-prompt.md` | Body (Sonnet) system prompt |
 | `packages/domain-github/src/prompt-helpers.ts` | State summary renderer for brain prompt |
 
-### SpaceMolt domain — `packages/domain-spacemolt/` (@roci/domain-spacemolt)
+### SpaceMolt domain — `packages/domain-spacemolt/` (@signal/domain-spacemolt)
 
 | File | Role |
 |------|------|
@@ -385,15 +385,15 @@ All events printed type-tagged with timestamp and character name:
 | `packages/domain-spacemolt/src/game-socket-impl.ts` | WebSocket connection, reconnection, event queue |
 | `docs/DOMAIN_GUIDE.md` | Guide for building new domains |
 
-### CLI and orchestrator — `apps/roci/` (roci)
+### CLI and orchestrator — `apps/signal/` (signal)
 
 | File | Role |
 |------|------|
-| `apps/roci/src/cli.ts` | CLI commands and service wiring |
-| `apps/roci/src/orchestrator.ts` | Container lifecycle, fork character fibers |
-| `apps/roci/src/domains/registry.ts` | Domain registry |
+| `apps/signal/src/cli.ts` | CLI commands and service wiring |
+| `apps/signal/src/orchestrator.ts` | Container lifecycle, fork character fibers |
+| `apps/signal/src/domains/registry.ts` | Domain registry |
 
-### Services and logging — `packages/core/` (@roci/core)
+### Services and logging — `packages/core/` (@signal/core)
 
 | File | Role |
 |------|------|
