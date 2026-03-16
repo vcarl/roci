@@ -116,6 +116,49 @@ function generateSummaryWithClaude(characterName: string, background: string): s
 }
 
 /**
+ * Generate a list of one-word name suggestions for a character based on their description.
+ * Returns an array of lowercase names, or null on failure.
+ */
+export function generateNameSuggestions(characterDescription: string, count = 8): string[] | null {
+  const prompt = `You are naming an AI agent character. The user described them as:
+
+${characterDescription}
+
+Generate exactly ${count} one-word name suggestions. Each name should:
+- Be a single evocative word (not a proper name) that reflects the character's nature or function
+- Work as a callsign or handle (like Cipher, Drifter, Pilgrim, Seeker, Zealot)
+- Be lowercase
+- NOT be any of these already-taken names: neonecho, zealot, savolent, cipher, drifter, pilgrim, seeker, investigator
+
+Output ONLY the ${count} names, one per line. No numbers, no explanations, no punctuation.`
+
+  try {
+    const output = execFileSync("claude", [
+      "-p",
+      prompt,
+      "--model", "haiku",
+      "--dangerously-skip-permissions",
+      "--no-session-persistence",
+    ], {
+      encoding: "utf-8",
+      timeout: 30_000,
+      env: { ...process.env, CLAUDECODE: undefined },
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+
+    const names = output
+      .trim()
+      .split("\n")
+      .map(line => line.trim().toLowerCase().replace(/[^a-z]/g, ""))
+      .filter(name => name.length > 0)
+
+    return names.length > 0 ? names : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Scaffold a new character's generic identity files.
  *
  * Creates `players/<name>/me/` and writes the four standard files

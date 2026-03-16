@@ -140,8 +140,8 @@ const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilde
       timeoutTicks: String(ctx.step.timeoutTicks),
       budgetSeconds: String(budgetSeconds),
       briefing,
-      personality: ctx.identity.personality.slice(0, 1500),
-      values: ctx.identity.values.slice(0, 1000),
+      personality: ctx.identity.personality.slice(0, 2000),
+      values: ctx.identity.values.slice(0, 1500),
       toolDocs: TOOL_DOCS,
     })
   },

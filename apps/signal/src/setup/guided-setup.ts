@@ -4,7 +4,7 @@ import * as path from "node:path"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { DOMAIN_REGISTRY, resolveConfigs } from "../domains/registry.js"
 import type { ProcedureMessage } from "@signal/core/core/domain-bundle.js"
-import { scaffoldCharacter } from "@signal/core/core/character-scaffold.js"
+import { scaffoldCharacter, generateNameSuggestions } from "@signal/core/core/character-scaffold.js"
 import { logToConsole } from "@signal/core/logging/console-renderer.js"
 import { validateAndStart } from "./validate-and-start.js"
 import { ensureOAuthTokenInteractive } from "./oauth-token.js"
@@ -80,22 +80,55 @@ export const runGuidedSetup = (projectRoot: string) =>
       // Character creation loop
       let addMore = true
       while (addMore) {
-        const charName: string = yield* Prompt.text({
-          message: `Enter character name for ${DOMAIN_REGISTRY[domainName].displayName}`,
+        const charDescription: string = yield* Prompt.text({
+          message: `Describe this character's role and personality for ${DOMAIN_REGISTRY[domainName].displayName}`,
         })
 
-        if (!charName.trim()) {
-          yield* logToConsole("setup", "cli", "Empty name, skipping.")
+        if (!charDescription.trim()) {
+          yield* logToConsole("setup", "cli", "Empty description, skipping.")
           break
         }
 
-        const name = charName.trim()
-        const charDir = path.resolve(projectRoot, "players", name, "me")
+        // Generate name suggestions from description
+        yield* logToConsole("setup", "cli", "\nGenerating name suggestions...")
+        const suggestions = generateNameSuggestions(charDescription.trim())
 
-        const charDescription: string = yield* Prompt.text({
-          message: "Describe this character in a sentence or two (or press Enter to skip)",
-          default: "",
-        })
+        let name: string
+        if (suggestions && suggestions.length > 0) {
+          yield* logToConsole("setup", "cli", "")
+          for (let i = 0; i < suggestions.length; i++) {
+            yield* logToConsole("setup", "cli", `  ${i + 1}. ${suggestions[i]}`)
+          }
+          yield* logToConsole("setup", "cli", `  0. (enter my own)`)
+          yield* logToConsole("setup", "cli", "")
+
+          const pick: string = yield* Prompt.text({
+            message: `Pick a number (1-${suggestions.length}) or 0 for custom`,
+          })
+
+          const pickNum = parseInt(pick.trim(), 10)
+          if (pickNum === 0 || isNaN(pickNum) || pickNum < 0 || pickNum > suggestions.length) {
+            const custom: string = yield* Prompt.text({
+              message: "Enter character name",
+            })
+            name = custom.trim().toLowerCase()
+          } else {
+            name = suggestions[pickNum - 1]
+          }
+        } else {
+          yield* logToConsole("setup", "cli", "Name generation failed, enter manually.")
+          const manual: string = yield* Prompt.text({
+            message: "Enter character name",
+          })
+          name = manual.trim().toLowerCase()
+        }
+
+        if (!name) {
+          yield* logToConsole("setup", "cli", "No name provided, skipping.")
+          break
+        }
+
+        const charDir = path.resolve(projectRoot, "players", name, "me")
 
         yield* logToConsole("setup", "cli", `\nScaffolding ${name}...`)
 
@@ -104,7 +137,7 @@ export const runGuidedSetup = (projectRoot: string) =>
           projectRoot,
           characterName: name,
           identityTemplate: domainConfig.identityTemplate,
-          characterDescription: charDescription.trim() || undefined,
+          characterDescription: charDescription.trim(),
         })
         if (summary) {
           yield* logToConsole("setup", "cli", summary)

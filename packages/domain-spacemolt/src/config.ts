@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "@signal/core/core/domain-bundle.js"
 import { spaceMoltDomainBundle, spaceMoltServiceLayer } from "./index.js"
 import { spaceMoltPhaseRegistry } from "./phases.js"
-import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs"
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs"
 import { askUser } from "@signal/core/util/prompt.js"
 
 const IMAGE_NAME = "spacemolt-player"
@@ -150,11 +150,7 @@ const spaceMoltInitProject = (projectRoot: string): Effect.Effect<ProcedureMessa
     const messages: ProcedureMessage[] = []
     const smCliDir = path.resolve(projectRoot, "shared-resources/sm-cli")
 
-    // Check if directory exists and has content (not just an empty dir)
-    const needsClone = !existsSync(smCliDir)
-      || readdirSync(smCliDir).filter(f => !f.startsWith(".")).length === 0
-
-    if (!needsClone) {
+    if (existsSync(smCliDir)) {
       messages.push({ level: "ok", text: `sm-cli already present at ${smCliDir}` })
       return messages
     }
