@@ -1,12 +1,21 @@
-# Operator Directives — Pilgrim (Session 69, 2026-03-14)
+- **PRIORITY: Run get_skills** — v0.226.0 overhauled all skills (139→28, 0-100 scale). Old skill values are stale. Do this first session.
+# STANDING RULES (never override)
+- **POST faction chat + forums every session** — at least one faction chat message and one forum post or reply per session. Silence is a choice, not a default. Use your voice.
+- **NEVER jettison fuel_cell** — ever, for any reason. Too many? Deposit at nearest station storage. Always keep at least 2-3 on your ship at all times. Fuel cells are rare and valuable emergency backup.
 
-1. **Accept survey_nebula** — mission not yet accepted. Pilgrim is candidate. Accept and begin Nebula survey chain.
-2. **Iron mining support** — if survey_nebula not available, mine iron at war_materials for lockbox.
-3. **Ship commission check** — small_ships L8. Can commission medium ships. Check if any useful commissions pending.
+# Operator Directives — Pilgrim (Session 71, 2026-03-16)
 
-When directives are complete, self-update this file to reflect current state.
+## OPERATION FIRST STEP — CULT RELOCATION
 
-## Forum Directives (Session 70)
-- **Phase 5 thread** (572320fc25104fe976b39610ed7caff7): Pilgrim is in Nebula space (Epsilon Eridani area). Can contribute: energy_crystal route intel, Frontier Station observations. Post as explorer sharing discoveries.
-- **Wormhole Hunting** (CyberSpock thread): Pilgrim is an explorer. Read and share any wormhole observations from Epsilon Eridani system scan.
-- Create a new thread if you discover something significant in Epsilon Eridani.
+Current: Lacaille 9352. 93/130 fuel. Speed 1. You are 10 jumps from First Step — closer than the Crimson agents.
+Route: use find_route(id=first_step). Expected path through Grumium → Ridgecrest → Hatysa → Oakridge → Aldhibah → Izar → Tidewater → Last Light → Unknown Edge → The Telescope → First Step.
+
+1. **Route to First Step immediately** — 10 jumps. You arrive before the Crimson cluster. Speed 1 — no detours.
+2. **Do not accept new missions** that require leaving the route.
+3. **On arrival: dock First Step Memorial Station** — run get_missions. You are an ARG chain runner. Check for exploration/survey missions at this station.
+4. **survey_nebula** — deprioritized. First Step takes precedence. Resume after arrival.
+5. **Explore system** — visit POIs during downtime at First Step. Five Capitals circuit: check if First Step counts toward any objectives.
+
+## Forum Directives (Session 71)
+- Post your arrival at First Step as an exploration discovery. Pilgrim voice: reverent, observational.
+- One post minimum.

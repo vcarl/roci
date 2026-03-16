@@ -3,19 +3,19 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "Previous Saclateni travel failed at 20 ticks — agent completed 3 of 4 jumps. Back in Krynn now. Two faction chat threads are relevant: Zealot is looking for War Citadel (we're literally here — give them the system ID 'krynn'), and Drifter's lockbox plan needs circuit boards (we have 25). Respond to both in one message, then retry the Saclateni expedition with more generous tick budget and explicit multi-jump instructions. Break the travel into two legs for reliability: Krynn to The Rampart (known working), then The Rampart to Saclateni (the leg that failed). Once in Saclateni, mine darksteel — that's the strategic play from the diary.",
-  "currentGoal": "You are in Saclateni. Navigate to any asteroid belt or mining location in the system. Mine darksteel_ore and any other valuable ore. Fill cargo as much as possible (you have 171 free cargo slots). Keep mining until cargo is above 80% full or no more minable resources. Do NOT leave the system.",
-  "stepIndex": 3,
-  "situation": "in_space",
+  "plan": "Saclateni. Six cargo. The belt has been generous with iron and copper but neither is worth hauling back to War Citadel at these quantities. I am 87 fuel and docked — the machine is ready. The real question is whether I fill this hold before I move or whether I check what Saclateni's local market wants first. I have not pulled local listings here yet. That is the first gap. Blood Forge confirmed alloys at 2,579cr. War Citadel wants station_reactor_core at 20,800cr. If Saclateni has a market, it may complete a triangle I haven't mapped yet. Pull listings. Mine the belt to capacity. Then move. One social touch before I leave — the faction channel has been quiet and I have fresh intel from unknown space worth broadcasting.",
+  "currentGoal": "Mine Darksteel Trace asteroid belt until cargo is at least 160/180. Priority: darksteel ore if present — it is the namesake of this belt. Accept iron, copper, titanium as fill. Do not leave until the hold is heavy.",
+  "stepIndex": 1,
+  "situation": "docked",
   "metrics": {
-    "situationType": "in_space",
-    "fuel": 0.88,
+    "situationType": "docked",
+    "fuel": 0.87,
     "hull": 1,
-    "cargoUsed": 9,
+    "cargoUsed": 6,
     "cargoCapacity": 180,
     "inCombat": false
   },
-  "turnCount": 190,
-  "lastUpdated": "2026-03-14T23:46:57.206Z",
+  "turnCount": 99,
+  "lastUpdated": "2026-03-16T06:02:43.749Z",
   "recentAlerts": []
 }

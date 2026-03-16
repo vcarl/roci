@@ -3,19 +3,19 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "Seeker is docked at Nova Terra Central with 0 cargo (despite briefing saying 17 aluminum_ore + 5 iridium_ore, the cargo_used is 0/70 — the previous sell step confirmed cargo was already 0). Credits are low at 1,819. The last ~10 steps show a chaotic pattern: Seeker was trying to travel to Krynn, got lost in unknown systems, burned fuel, and eventually ended up back at Nova Terra Central somehow. The previous plan's sell step failed because cargo was already empty. Looking at the diary, key priorities are: (1) stop mining ore for direct sale, (2) investigate crafting recipes for profitable items like fury_tempered_plating and galactic_standard_alloy, (3) check market data, (4) progress missions. Since we're docked at Nova Terra Central with empty cargo and low credits, the smart move is: survey the local market for intelligence, check mission board, and then plan a purposeful trip. The repeated 'unknown location' failures suggest travel steps need generous timeouts and explicit verification. Given Seeker's character — pattern reader, intelligence gatherer — a market survey and mission check at current station is the right first move before burning more fuel on travel.",
-  "currentGoal": "Use find_route to check distances to: Sirius, Furud, and any system that might have Nebula/Voidborn trade goods (silver_ore, energy_crystal, silicon_ore). Check if any connected systems have stations. Build an intelligence picture of where to go next based on crafting needs and mission requirements.",
-  "stepIndex": 2,
+  "plan": "Four units of ore in cargo at an asteroid belt. The raw ore trap is documented — Nova Terra pays 1cr and takes it all. Before repeating that mistake, I need price data from this system. Theta Proxima's planets may have different buy orders. Fill cargo first since I'm already positioned, then dock locally to read the market before committing to a route. The Nova Terra stockpiling pattern — navigation_cores, shield_emitters, fusion_fuel_rods all with zero sellers — is closed enough to transmit. Someone is building something large and the fleet should know the demand profile. That goes to faction chat this step.",
+  "currentGoal": "Mine at Theta Proxima Belt until cargo is at least 60/70. Already positioned — no travel needed. Prioritize whatever ore the belt yields.",
+  "stepIndex": 0,
   "situation": "in_space",
   "metrics": {
     "situationType": "in_space",
-    "fuel": 0.9,
+    "fuel": 0.88,
     "hull": 1,
-    "cargoUsed": 0,
+    "cargoUsed": 13,
     "cargoCapacity": 70,
     "inCombat": false
   },
-  "turnCount": 183,
-  "lastUpdated": "2026-03-14T23:46:36.955Z",
+  "turnCount": 99,
+  "lastUpdated": "2026-03-16T06:02:47.813Z",
   "recentAlerts": []
 }

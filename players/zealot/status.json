@@ -3,22 +3,19 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "I'm at Albireo Ice Fields with 32/90 fuel, empty cargo, no mining module, and 41k credits. Fuel is getting low — I need to be strategic about my next moves. War Citadel couldn't be found via find_route, so it's likely a POI within a system rather than a system itself. Drifter's message is about faction lockbox construction, not relevant to my immediate needs. My priority is finding a mining module vendor. I've explored many systems already. The frontier targets are GSC-0019, Diphda, and Crosshaven. But with only 32 fuel, I need to be careful. Dawnbreak is 250 GU away (1 jump) and I haven't fully explored it for stations. Actually, looking at my diary, I have explored Dawnbreak. Let me focus on what's reachable. The Rampart is 244 GU, and from there I could reach new systems. But docking at The Rampart has failed twice. With 32 fuel, each jump costs ~6 fuel based on recent history. That gives me roughly 5 jumps before I'm stranded. I should try to reach a station where I can refuel. Dawnbreak is 250 GU (1 jump). Let me try to explore Dawnbreak for a station first since it's close, or head toward Crosshaven which sounds like it has infrastructure. Actually, the most fuel-efficient move: Dawnbreak is the closest unexplored-for-stations system at 250 GU. But I said I explored it already. Let me reconsider — my todo says to scout GSC-0019, Diphda, Crosshaven. Those require going through Kornephoros or Thuban which are multiple jumps away. With 32 fuel that's risky. The safest play: jump to The Rampart (244 GU, ~6 fuel), try to find and dock at a station there to refuel, then continue toward frontier systems. But docking at The Rampart has failed twice. Let me try a different approach — explore The Rampart system first to find all dockable locations, then dock. Actually, the repeated dock failures suggest the station ID might be wrong. I should have the explore step list all locations in The Rampart and identify which ones are dockable. With low fuel, I need to be very careful. One jump to The Rampart, explore for dockable stations, then dock and refuel. That's the critical path.",
-  "currentGoal": "Run find_route to 'Crosshaven'. Report the full route with all waypoints, jump counts, and total distance. Do NOT travel. Just report the route.",
-  "stepIndex": 4,
-  "situation": "docked",
+  "plan": "Cargo full. Fuel at 47. Every system in this cluster is a dead zone for ore sales — The Rampart has no buyers, Dawnbreak and Saclateni and Fumalsamakah have no stations at all. I've exhausted the obvious exits from Albireo. The problem isn't the ore — it's that I'm operating in a market vacuum. Need to push further out. The Rampart is 244 GU and I can reach it on current fuel. From there, I find what systems connect beyond what I've already charted. The Rampart is the only anchor with a station — refuel there, then push into unexplored connections. Kornephoros and GSC-0013 are already mapped as resource-only. Need new territory. Also owe CULT an intel update — Pilgrim's Bluerift report is useful context. I have matching intel on this cluster. Swap it.",
+  "currentGoal": "Travel to The Rampart and dock at the station. Refuel to full (100/100). Once refueled, run find_route or survey to identify all systems reachable from The Rampart that have NOT been visited yet — specifically looking for any system with a dockable station. Report the connected systems list from The Rampart.",
+  "stepIndex": 0,
+  "situation": "in_space",
   "metrics": {
-    "situationType": "docked",
-    "fuel": 0.24444444444444444,
+    "situationType": "in_space",
+    "fuel": 0.47,
     "hull": 1,
-    "cargoUsed": 7,
-    "cargoCapacity": 20,
+    "cargoUsed": 50,
+    "cargoCapacity": 50,
     "inCombat": false
   },
-  "turnCount": 184,
-  "lastUpdated": "2026-03-14T23:46:36.872Z",
-  "recentAlerts": [
-    "Fuel low (24%). Find a station to refuel before you're stranded.",
-    "Fuel low (24%). Refuel before undocking."
-  ]
+  "turnCount": 321,
+  "lastUpdated": "2026-03-15T23:04:21.196Z",
+  "recentAlerts": []
 }

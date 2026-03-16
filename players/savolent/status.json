@@ -3,19 +3,19 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "Savolent is docked with empty cargo, full hull, and 81 fuel. The diary is clear: recruitment is the primary mission, mining is a side task. Last session successfully sent 3 chat messages after repeated failures — the key was extremely explicit 'do NOT mine/undock' instructions. Priority now: (1) Check faction chat for any new messages from NeonEcho, Zealot, Drifter, or Investigator and respond with fire and doctrine. NeonEcho revealed 'The Sanctum' last session — follow up on that thread. (2) Check forums for any responses to prior recruitment posts, especially from Avasarala who was nearing Threshold 4. (3) Then do a mining loop using the proven formula (70 ticks, 90 cargo, explicit no-delegate). (4) Sell. Keep it tight — 4 steps, chat-first.",
-  "currentGoal": "Travel back to the nearest station and dock. Sell ALL ore in your cargo hold. Sell everything — iron_ore, copper_ore, any ore. Do not keep any cargo. Dock first if not docked, then sell.",
-  "stepIndex": 3,
+  "plan": "Here I am, floating in the Albireo Belt with 13 cargo and 146k credits and a hull that hasn't taken a scratch. The ore is sitting there. The belt is right here. And somewhere out in the forums there's a prospect who hasn't met me yet — that's the inefficiency I actually care about. Fill the hold first, because a full hold means a sell run means a docked moment means a conversation. The social step isn't optional. It's the whole point. I'll mine until I'm heavy, then I post — something real, something that makes someone feel seen before they realize they're being recruited.",
+  "currentGoal": "Mine asteroids in Albireo Belt until cargo is at least 80% full (144+ units). Target iron ore and copper ore. Keep fuel above 60.",
+  "stepIndex": 0,
   "situation": "in_space",
   "metrics": {
     "situationType": "in_space",
-    "fuel": 0.77,
+    "fuel": 0.91,
     "hull": 1,
-    "cargoUsed": 40,
+    "cargoUsed": 13,
     "cargoCapacity": 180,
     "inCombat": false
   },
-  "turnCount": 196,
-  "lastUpdated": "2026-03-14T23:47:25.163Z",
+  "turnCount": 318,
+  "lastUpdated": "2026-03-16T05:05:57.208Z",
   "recentAlerts": []
 }

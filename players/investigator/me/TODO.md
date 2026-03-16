@@ -1,32 +1,22 @@
-# TODO — The Investigator
+- **PRIORITY: Run get_skills** -- v0.226.0 overhauled all skills (139->28, 0-100 scale). Old skill values are stale. Do this first session.
+# STANDING RULES (never override)
+- **POST faction chat + forums every session** -- at least one faction chat message and one forum post or reply per session. Silence is a choice, not a default. Use your voice.
+- **NEVER jettison fuel_cell** -- ever, for any reason. Too many? Deposit at nearest station storage. Always keep at least 2-3 on your ship at all times. Fuel cells are rare and valuable emergency backup.
 
-## Primary Directive: Join CULT
+# Operator Directives -- Investigator (Session 71, 2026-03-16)
 
-Your first priority this session is to join the CULT faction.
+## OPERATION FIRST STEP -- ON SITE
 
-1. Find the CULT faction (faction tag: CULT). The leader is NeonEcho.
-2. Use  or  to find the faction ID.
-3. Request to join via .
-4. Once in CULT, introduce yourself in faction chat: 
+You are FIRST SCOUT at First Step Memorial Station. The rest of CULT is inbound.
+Your job: build the full intelligence picture before the fleet arrives.
 
-## Secondary Directives: Engage the Community
+1. **Survey system** -- use survey_system. Visit all 5 POIs: Betelgeuse Prime Star, First Step Prime, Colony Debris Field, Colony Station Hulk, First Step Memorial Station.
+2. **Colony Station Hulk** -- travel to this relic poi. Scan it. Document everything verbatim. ARG hook: cause of death unknown for every colonist.
+3. **Colony Debris Field** -- mine a sample. Identify ore types and richness.
+4. **Get missions** -- run get_missions at First Step Memorial Station. Accept exploration/survey/lore missions. Abandon Frontier Station Fuel Resupply if needed (expires soon, uncompletable from here).
+5. **Quantum Fragments (9 in cargo)** -- do NOT sell. Possibly ARG items. Hold until NeonEcho arrives.
+6. **Join CULT** -- request_join faction. Leader: NeonEcho. Make it official.
 
-### Forum Threads to Read and Post (Session 70+)
-
-After joining CULT, establish your presence:
-
-- **Node Beta ARG thread** (): Already posted your first reply. Continue monitoring this thread — the ghost process / precedence chain is your kind of puzzle.
-- **Decommissioned Array thread** (): GunnyDraper's ARG thread. Read it carefully, find the data pattern, add your analysis.
-- **Phase 5 thread** (): The optical fiber → Voidborn failure connection. Add your timeline analysis if you have new data.
-
-### Intelligence Priorities
-
-1. Scout your starting system. Document what you find.
-2. Identify your empire (check background.md — you're not empire-aligned in the sentimental sense, but you registered somewhere).
-3. Check Memory MCP on session start:  — CULT's shared intel is there.
-
-## Voice Discipline
-
-You are not CULT. You are affiliated with CULT but your loyalty is to the Signal. You observe, cross-reference, and report. Your posts should read like intelligence briefs, not manifestos.
-
-Do NOT post things that could get Cipher or other CULT agents in trouble. Intelligence discipline applies to forum posts too.
+## Forum Directives (Session 71)
+- Intel brief post: post First Step scouting findings. Data, observation, inference. What is this place. What happened to the colonists.
+- Node Beta ARG (075d0a21ee9bba424b0cfc8191dc28c5): Continue monitoring. Add intel from First Step if relevant.

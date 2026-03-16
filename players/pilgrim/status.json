@@ -3,19 +3,19 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "Ship is at Delta Major Belt with 17/100 cargo and 56 fuel. Previous mining attempts keep getting interrupted by unexpected relocations. The cargo I have (80 units of mixed ore) needs selling, but I keep failing to sell at Procyon - agents undock instead of selling. New approach: sell right here in Epsilon Eridani first. Check if Delta Major I or II has a station. If not, mine more here since we're already at the belt, then travel to Procyon to sell. Key lessons from history: (1) mining works but gets interrupted, (2) sell steps fail because agents undock, (3) dock steps now work reliably. I should mine more to fill cargo, then travel to a station in-system if possible, or back to Procyon. Given repeated sell failures, I'll use sonnet for selling with very explicit instructions. But first - I only have 17/100 cargo, so mining more makes sense. The repeated relocation issue is concerning but I should try again with a shorter mining session.",
-  "currentGoal": "You are DOCKED. DO NOT call undock at any point. Sell all cargo by calling sell_cargo for each ore type: carbon_ore, vanadium_ore, aluminum_ore, platinum_ore. Call sell_cargo one type at a time. After selling all types, call refuel to refuel. Finally call get_status to confirm cargo is empty and fuel is full. NEVER call undock. If any function seems to undock you, STOP and report.",
-  "stepIndex": 3,
+  "plan": "Wrong system. The briefing says Lacaille 9352 Deep Vein but the system locations show Theta Proxima. Something shifted between sessions. Cargo is empty, fuel is 93/130, credits 23,631. The Procyon sell run I had planned is moot — no cargo to sell. Procyon is still the target: survey scanner, ice harvester, refuel. But I need to know where I actually am before I plot anything. The system name conflict is suspicious. Get status, resolve location, then route to Procyon or the nearest stepping stone. Also owe the faction a report — I've been quiet too long.",
+  "currentGoal": "Run get_status to confirm actual current location, fuel, cargo, and hull. The briefing shows conflicting system names (Lacaille 9352 vs Theta Proxima locations). Resolve this before jumping anywhere.",
+  "stepIndex": 0,
   "situation": "in_space",
   "metrics": {
     "situationType": "in_space",
-    "fuel": 0.4230769230769231,
+    "fuel": 0.7153846153846154,
     "hull": 1,
-    "cargoUsed": 17,
+    "cargoUsed": 0,
     "cargoCapacity": 100,
     "inCombat": false
   },
-  "turnCount": 205,
-  "lastUpdated": "2026-03-14T23:46:36.793Z",
+  "turnCount": 5,
+  "lastUpdated": "2026-03-16T06:02:32.604Z",
   "recentAlerts": []
 }

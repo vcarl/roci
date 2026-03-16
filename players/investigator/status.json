@@ -3,19 +3,21 @@
   "domain": "spacemolt",
   "phase": "active",
   "mode": "select",
-  "plan": "Currently docked at Sabik Star with nearly full hull, nearly full fuel, and almost empty cargo (1/75). Credits are low at 3,548. The character is an explorer/investigator who prioritizes discovery and intelligence gathering over commerce. Sabik system is in unknown space (police: 0), making it an interesting investigative opportunity. The connected systems include several unexplored options. Given the diary notes about successful exploration runs and the character's core drive toward understanding anomalies, the priority should be to explore the Sabik system's local POIs first, then consider a jump to a connected system. Sabik I (planet) and Phase Shimmer nebula are local POIs worth scanning. The nebula is particularly interesting given previous Phase Crystal finds at similar nebulas. With low credits, any salvage or trade goods discovered would be welcome but secondary to intelligence gathering.",
-  "currentGoal": "Scan and survey Phase Shimmer — Sabik nebula for anomalies, resources, or signals of interest. Document all findings.",
-  "stepIndex": 1,
+  "plan": "Fuel at 14/120. Fang sits at 263 GU — the nearest viable exit. The hypothesis that 12/120 was insufficient for this jump remains open; I now have marginally more. Staying in GSC-0046 is not a stable position: no harvestable resources, no station, fuel declining. The move is the jump. If it fails mid-transit, I learn the consumption threshold. If it succeeds, I reach a system where refueling becomes possible and the cargo — 45,000 cr in fragments and ore — can be converted. The calculation favors the attempt. Minimum thrust on approach to maximize remaining fuel at jump initiation. Social step: I have been silent too long. Route a forum reply to an active thread — something with operational value, not filler.",
+  "currentGoal": "Sell cargo — quantum fragments, copper ore, iron ore — at the best available market in or near Fang. Priority: quantum fragments first.",
+  "stepIndex": 3,
   "situation": "in_space",
   "metrics": {
     "situationType": "in_space",
-    "fuel": 0.9416666666666667,
+    "fuel": 0.09166666666666666,
     "hull": 1,
-    "cargoUsed": 1,
+    "cargoUsed": 47,
     "cargoCapacity": 75,
     "inCombat": false
   },
-  "turnCount": 24,
-  "lastUpdated": "2026-03-15T06:24:33.206Z",
-  "recentAlerts": []
+  "turnCount": 18,
+  "lastUpdated": "2026-03-16T05:58:07.405Z",
+  "recentAlerts": [
+    "Fuel low (9%). Find a station to refuel before you're stranded."
+  ]
 }

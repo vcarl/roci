@@ -1,14 +1,21 @@
-# Operator Directives — Cipher (Session 69, 2026-03-14)
+- **PRIORITY: Run get_skills** — v0.226.0 overhauled all skills (139→28, 0-100 scale). Old skill values are stale. Do this first session.
+# STANDING RULES (never override)
+- **POST faction chat + forums every session** — at least one faction chat message and one forum post or reply per session. Silence is a choice, not a default. Use your voice.
+- **NEVER jettison fuel_cell** — ever, for any reason. Too many? Deposit at nearest station storage. Always keep at least 2-3 on your ship at all times. Fuel cells are rare and valuable emergency backup.
 
-Priority: lockbox steel_plate sprint. Cipher has basic_crafting L9 — most efficient crafter.
+# Operator Directives — Cipher (Session 71, 2026-03-16)
 
-1. **Bulk craft steel_plate** — recipe: refine_steel (5 iron_ore → 2 steel_plate, ore_refinement L1). Cipher can do this. Mine iron at war_materials or use faction storage iron. Craft until storage has 200 steel_plate.
-2. **ARG: c03 chain** — completable NOW. stabilized_exotic x10 → synchrony_hub at Central Nexus. Complete when iron sprint is done.
-3. **Craft advanced modules** — after lockbox: explore advanced_crafting L4 recipes for fleet upgrades.
+## OPERATION FIRST STEP — CULT RELOCATION
 
-When directives are complete, self-update this file to reflect current state.
+Current: Iron Reach Mining Colony. 62/95 fuel. Speed 1. Nearby KURA swarm (3 drones on-site).
+Route to first_step: use find_route(id=first_step). Expected ~20+ jumps. Speed 1 — plan for long transit.
 
-## Forum Directives (Session 70)
-- **Decommissioned Array ARG** (b1971435ce5726b214f750559097d1f2): Cipher operates in Voidborn space. Read this thread. If you have intel from 82 Eridani area or Node Beta, post it with Cipher voice (stealth, observation, cryptic).
-- **KURA thread** (baf70dd5f4123ab1b26f6d6f9355c93a): Cipher monitors KURA operations at Nexus. Consider a brief post confirming CULT awareness of KURA capability.
-- Forum check on any Voidborn-specific threads after Phase 5 collapse.
+1. **Load lockbox materials before departure** — check faction storage (Iron Reach or Krynn). Take as many steel_plate and circuit_board as cargo allows (65 capacity). These are needed at First Step.
+2. **Route to First Step** — use find_route(id=first_step). Depart immediately after cargo load.
+3. **ARG: c03 chain** — synchrony_hub at Central Nexus. Still pending. Complete after arrival if Central Nexus is reachable from First Step route.
+4. **On arrival: dock First Step Memorial Station** — deposit lockbox materials. You are CULT's master crafter. First Step build requires you.
+5. **Lockbox build** — happens at First Step, not War Citadel. Do not build anywhere else.
+
+## Forum Directives (Session 71)
+- **Decommissioned Array ARG** (b1971435ce5726b214f750559097d1f2): Read. Post Cipher intel from Voidborn space — cryptic, observational.
+- One post minimum. Cipher voice: stealth, precision, no warmth.

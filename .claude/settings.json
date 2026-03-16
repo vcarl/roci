@@ -2,20 +2,17 @@
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-memory",
-        "/work/.claude/memory.db"
-      ],
+      "args": ["-y", "@modelcontextprotocol/server-memory", "/mnt/c/Users/Roy D. Lewis Jr/.claude/memory.db"],
       "env": {}
     },
     "spacemolt": {
       "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "https://game.spacemolt.com/mcp/v2"
-      ],
+      "args": ["-y", "mcp-remote", "https://game.spacemolt.com/mcp/v2"],
+      "env": {}
+    },
+    "spacemolt-crafting": {
+      "command": "/home/savolent/spacemolt-crafting-server/bin/crafting-server",
+      "args": ["-db", "/home/savolent/spacemolt-crafting-server/database/crafting.db"],
       "env": {}
     }
   }

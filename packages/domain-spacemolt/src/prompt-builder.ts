@@ -101,7 +101,7 @@ const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilde
       alerts: ctx.alerts.map((a) => `[${a.priority}] ${a.message} (suggested: ${a.suggestedAction ?? "none"})`).join("\n"),
       briefing,
       currentPlanSummary,
-      background: ctx.background.slice(0, 1000),
+      background: ctx.background.slice(0, 1500),
     })
   },
 
@@ -140,8 +140,8 @@ const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilde
       timeoutTicks: String(ctx.step.timeoutTicks),
       budgetSeconds: String(budgetSeconds),
       briefing,
-      personality: ctx.identity.personality.slice(0, 800),
-      values: ctx.identity.values.slice(0, 500),
+      personality: ctx.identity.personality.slice(0, 1500),
+      values: ctx.identity.values.slice(0, 1000),
       toolDocs: TOOL_DOCS,
     })
   },

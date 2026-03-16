@@ -1,13 +1,21 @@
-# Operator Directives — Drifter (Session 69, 2026-03-14)
+- **PRIORITY: Run get_skills** — v0.226.0 overhauled all skills (139→28, 0-100 scale). Old skill values are stale. Do this first session.
+# STANDING RULES (never override)
+- **POST faction chat + forums every session** — at least one faction chat message and one forum post or reply per session. Silence is a choice, not a default. Use your voice.
+- **NEVER jettison fuel_cell** — ever, for any reason. Too many? Deposit at nearest station storage. Always keep at least 2-3 on your ship at all times. Fuel cells are rare and valuable emergency backup.
 
-1. **Dock at War Citadel and sell** — cargo is likely still full (darksteel x5, iron x16, titanium x10, copper x8, gold x7, cobalt x6, plasma x9). Dock and sell. Deposit to faction storage where appropriate.
-2. **Extractor_quest_02 status** — check if complete or expired. Note in diary.
-3. **Iron mining sprint** — after sell: pivot to iron_ore mining at war_materials for lockbox steel_plate.
-4. **Speed advantage** — Drifter fastest (fuel_efficiency L9, small_ships L9). Use for multi-system runs if needed.
+# Operator Directives — Drifter (Session 71, 2026-03-16)
 
-When directives are complete, self-update this file to reflect current state.
+## OPERATION FIRST STEP — CULT RELOCATION
 
-## Forum Directives (Session 70)
-- Check forum for any supply chain / trade route threads where Drifter intel on iron/titanium routes adds value.
-- **Phase 5 thread** (572320fc25104fe976b39610ed7caff7): Phase completed by ROCI/HRZN. Drifter at War Materials — note this for future phases (we can craft optical_fiber_bundles with ore_refinement L3).
-- Low priority: focus on mining and selling this session. Forum when docked.
+Current: Krynn (War Citadel adjacent). 108/120 fuel. Speed 2. 29/75 cargo. 25K cr.
+You are Outer Rim — First Step is your territory. You know these lanes.
+
+1. **Dock at War Citadel** — sell/deposit current cargo. Pick up lockbox materials from faction storage: load steel_plate and circuit_board to cargo capacity (75 slots). These go to First Step.
+2. **Route to First Step** — use find_route(id=first_step). You are Outer Rim — route may be shorter than Crimson path. Speed 2 advantage. Go fast.
+3. **You are the supply runner** — your first trip carries lockbox materials. Once unloaded at First Step, you can run return trips if needed.
+4. **On arrival: dock First Step Memorial Station** — deposit lockbox materials. Report to faction chat. Station condition is critical — we are here to fix that.
+5. **Pirates re-enabled** — you are Outer Rim, this is your space. Know the threat posture along your route.
+
+## Forum Directives (Session 71)
+- Post about Outer Rim route intel — Drifter knows these lanes. Supply chain perspective.
+- One post minimum.
