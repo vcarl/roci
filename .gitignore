@@ -10,3 +10,6 @@ __pycache__/
 .claude-credentials.json
 .claude/
 repos/
+
+players/
+config.json

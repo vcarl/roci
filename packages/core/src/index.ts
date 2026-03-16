@@ -1,11 +1,59 @@
 // Re-export core types and utilities
-export * from "./core/domain-bundle.js"
-export * from "./core/domain-types.js"
-export * from "./core/types.js"
-export * from "./core/phase.js"
-export * from "./core/phase-runner.js"
-export * from "./core/skill.js"
-export * from "./core/prompt-builder.js"
-export * from "./core/state-renderer.js"
-export * from "./core/template.js"
-export * from "./core/character-scaffold.js"
+
+export { scaffoldCharacter } from "./core/character-scaffold.js";
+export type {
+	ContainerMount,
+	DomainBundle,
+	DomainConfig,
+	DomainProcedure,
+	InitContext,
+	ProcedureMessage,
+} from "./core/domain-bundle.js";
+export type {
+	DomainEvent,
+	DomainSituation,
+	DomainState,
+} from "./core/domain-types.js";
+
+export type {
+	ConnectionState,
+	Phase,
+	PhaseContext,
+	PhaseRegistry,
+	PhaseResult,
+} from "./core/phase.js";
+export { PhaseRegistryTag } from "./core/phase.js";
+
+export { runPhases } from "./core/phase-runner.js";
+export type {
+	EvaluatePromptContext,
+	InterruptPromptContext,
+	PlannedActionBrainPromptContext,
+	PlanPromptContext,
+	PromptBuilder,
+	SubagentPromptContext,
+} from "./core/prompt-builder.js";
+export { PromptBuilderTag } from "./core/prompt-builder.js";
+export type { Skill, SkillRegistry } from "./core/skill.js";
+export { SkillRegistryTag } from "./core/skill.js";
+
+export type { StateRenderer } from "./core/state-renderer.js";
+export { StateRendererTag } from "./core/state-renderer.js";
+
+export {
+	loadTemplate,
+	loadTemplateWithMeta,
+	parseFrontmatter,
+	renderTemplate,
+	stripFrontmatter,
+} from "./core/template.js";
+export type {
+	Alert,
+	BrainMode,
+	ExitReason,
+	Plan,
+	PlanStep,
+	StateMachineResult,
+	StepCompletionResult,
+	StepTiming,
+} from "./core/types.js";

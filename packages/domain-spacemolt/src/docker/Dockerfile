@@ -90,11 +90,10 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
 
+# Use iptables-legacy for WSL2 compatibility (nf_tables has limited kernel support)
 USER root
-# Use iptables-legacy for WSL2 compatibility
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \
     update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
-
 USER node
 
 # Copy firewall script (must be in image for sudoers trust)
