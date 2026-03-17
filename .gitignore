@@ -43,6 +43,8 @@ Prayer/seed/
 Prayer/artifacts/
 
 # SpaceMolt CLI downloaded artifacts
-shared-resources/sm-cli/spacemolt/
+shared-resources/sm-cli/spacemolt/*
+!shared-resources/sm-cli/spacemolt/api.py
+!shared-resources/sm-cli/spacemolt/__init__.py
 shared-resources/sm-cli/spec/
 shared-resources/sm-cli/tests/
