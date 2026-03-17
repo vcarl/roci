@@ -130,6 +130,49 @@ export const runStateMachine = (config: StateMachineConfig) =>
       )
     }
 
+    // --- Eager Prayer connection: establish session at startup so agents know status from turn 1 ---
+    if (config.prayerBaseUrl && prayerCreds) {
+      const agentId = config.char.name.toLowerCase()
+      prayerManager = yield* Effect.promise(() =>
+        PrayerManager.create(config.prayerBaseUrl!, config.prayerCsprojPath),
+      )
+      if (prayerManager) {
+        const sessionOk = yield* Effect.promise(async () => {
+          try {
+            await prayerManager!.ensureSession(agentId, prayerCreds!.username, prayerCreds!.password)
+            return true
+          } catch (e) {
+            prayerManager = null
+            prayerManagerFailedAt = Date.now()
+            return `${e}`
+          }
+        })
+        if (sessionOk === true) {
+          yield* logToConsole(config.char.name, "monitor", `Prayer connected — session ready for ${agentId}`)
+          yield* Ref.update(softAlertAccRef, (acc) => {
+            const next = new Map(acc)
+            next.set("prayer:status", { priority: "low", message: "Prayer is connected and ready. You may use PRAYER_SET blocks to offload physical grind tasks.", suggestedAction: "use Prayer for mining/travel loops", ruleName: "prayer:status" })
+            return next
+          })
+        } else {
+          yield* logToConsole(config.char.name, "monitor", `Prayer session setup failed: ${sessionOk}`)
+          yield* Ref.update(softAlertAccRef, (acc) => {
+            const next = new Map(acc)
+            next.set("prayer:status", { priority: "low", message: "Prayer is offline. Do not use PRAYER_SET blocks — they will be skipped.", suggestedAction: "use direct sm-cli commands for all actions", ruleName: "prayer:status" })
+            return next
+          })
+        }
+      } else {
+        prayerManagerFailedAt = Date.now()
+        yield* logToConsole(config.char.name, "monitor", "Prayer unavailable at startup — body turns only")
+        yield* Ref.update(softAlertAccRef, (acc) => {
+          const next = new Map(acc)
+          next.set("prayer:status", { priority: "low", message: "Prayer is offline. Do not use PRAYER_SET blocks — they will be skipped.", suggestedAction: "use direct sm-cli commands for all actions", ruleName: "prayer:status" })
+          return next
+        })
+      }
+    }
+
     // --- Domain state ---
     const gameStateRef = yield* Ref.make<DomainState>(config.initialState)
     const chatContextRef = yield* Ref.make<Array<{ channel: string; sender: string; content: string }>>([])
