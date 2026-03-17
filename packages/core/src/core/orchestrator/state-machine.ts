@@ -266,14 +266,33 @@ export const runStateMachine = (config: StateMachineConfig) =>
             await prayerManager!.startScript(agentId, script)
             return true
           } catch (e) {
-            // Prayer went down after manager was created — reset so next PRAYER_SET retries
+            const err = e as Error
+            // Check if this is a parse error (script syntax wrong) — try LLM repair before giving up
+            const errMsg = err.message ?? ""
+            const isParseError = /parse|syntax|invalid|unexpected|format/i.test(errMsg)
+            if (isParseError && prayerManager) {
+              try {
+                const repaired = await prayerManager.repairScript(agentId, script, errMsg)
+                if (repaired) {
+                  await prayerManager.startScript(agentId, repaired)
+                  return "repaired"
+                }
+              } catch {
+                // repair also failed — fall through to full reset
+              }
+            }
+            // Prayer went down after manager was created — reset and set cooldown so next PRAYER_SET doesn't tight-loop
             prayerManager = null
-            return e as Error
+            prayerManagerFailedAt = Date.now()
+            return err
           }
         })
-        if (started !== true) {
+        if (started !== true && started !== "repaired") {
           yield* logToConsole(config.char.name, "monitor", `Prayer start failed (will retry): ${started}`)
           return false
+        }
+        if (started === "repaired") {
+          yield* logToConsole(config.char.name, "monitor", "Prayer script auto-repaired and started")
         }
         yield* Ref.set(prayerRunningRef, true)
         prayerStartedAt = Date.now()

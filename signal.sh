@@ -12,7 +12,8 @@ bash /home/savolent/Signal/start-embed.sh
 # OpenRouter free models for dinner/dream/timeout-summarizer
 export OPENROUTER_API_KEY=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
 
-# Prayer backend on Windows host (set when dotnet run is active in Prayer/)
-# export PRAYER_BASE_URL=http://host.docker.internal:5000
+# Prayer backend in WSL (run-prayer.sh starts it at :5000)
+export PRAYER_BASE_URL=http://localhost:5000
 
+cd /home/savolent/Signal
 exec node /home/savolent/Signal/apps/signal/bin/signal.js "$@"
