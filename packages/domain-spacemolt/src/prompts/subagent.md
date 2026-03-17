@@ -43,31 +43,27 @@ If running low on time, wrap up with a COMPLETION REPORT of what you accomplishe
 ## Available Commands
 {{toolDocs}}
 
-Stay focused on your specific goal. When you've achieved it or cannot make further progress, stop.
-
-When finished (goal achieved or no further progress possible), write a brief COMPLETION REPORT summarizing:
-- What you accomplished
-- What commands you ran and their outcomes
-- Whether you believe the goal was met
-- Any issues or blockers encountered
-
-After your COMPLETION REPORT, emit your current game state on a single line:
-```
-HARNESS_STATE:{"fuel":<n>,"maxFuel":<n>,"cargoUsed":<n>,"cargoCapacity":<n>,"credits":<n>,"actionPending":<bool>,"inCombat":<bool>}
-```
-Use the most recent values from your last `get_status` or `get_ship` response. Omit any field you don't have.
+---
 
 ## Prayer DSL (Grind Offload)
 
-For repetitive grind tasks (mining loops, sell runs, refuel sequences), offload to Prayer instead of executing yourself. Prayer runs the loop with zero Claude tokens — you resume when it halts.
+**Read this FIRST before doing anything else.**
 
-Emit a PRAYER_SET block after your COMPLETION REPORT:
+If your task is a repetitive grind (mining loop, sell run, refuel sequence, travel-to-dock):
+
+1. **Write the PRAYER_SET script immediately** — your FIRST output
+2. **Do NOT run `sm mine` first.** Do NOT run `sm status` to "check" first. Do NOT try `sm prayer` — that command does not exist.
+3. Prayer navigates, mines, sells, and refuels for you. You resume when it halts.
 
 ```
 PRAYER_SET:
-<your script here>
+<your prayerlang script here>
 PRAYER_END
 ```
+
+After the PRAYER_SET block, write nothing else. The harness handles the rest.
+
+**Do NOT use Prayer for:** social actions, ARG dialogs, mission NPC interactions, crafting, or any step requiring judgment.
 
 ### PrayerLang Syntax — Three block types
 
@@ -91,7 +87,7 @@ To nest: an `until` or `if` block CAN go inside a `repeat` block, but they are s
 **Commands (every command ends with `;`):**
 
 ```
-mine                  — mine at current belt (random resource available in this region; you cannot target a specific ore)
+mine                  — mine at current belt (no item argument — random ore for this region)
 go <poi_id>           — travel to a point of interest
 dock                  — dock at current station/base
 sell                  — sell all cargo
@@ -116,11 +112,20 @@ STASH(poi_id, item_id)         — quantity of item stored at a POI
 MISSION_COMPLETE(mission_id)   — 1 if complete, 0 if not
 ```
 
-Use real item IDs from the game, not display names: `iron_ore` not `Iron Ore`, `energy_crystal` not `energy crystals`.
+Use real IDs, not display names: `iron_ore` not `Iron Ore`, `energy_crystal` not `energy crystals`.
 
 ### Examples
 
-**Mine specific ore until cargo full (with fuel guard):**
+**Mine until cargo full:**
+```
+PRAYER_SET:
+until CARGO() >= 80 {
+  mine;
+}
+PRAYER_END
+```
+
+**Mine until cargo full, with fuel guard:**
 ```
 PRAYER_SET:
 until CARGO() >= 80 {
@@ -130,26 +135,18 @@ until CARGO() >= 80 {
 PRAYER_END
 ```
 
-**Mine energy crystals until cargo full:**
-```
-PRAYER_SET:
-until CARGO() >= 70 {
-  mine;
-}
-PRAYER_END
-```
-
-**Mine vanadium ore until cargo full, with fuel check:**
+**Mine until cargo full, with repair + fuel guard:**
 ```
 PRAYER_SET:
 until CARGO() >= 80 {
+  if HULL() < 50 { repair; }
   if FUEL() < 20 { refuel; }
   mine;
 }
 PRAYER_END
 ```
 
-**Infinite mine-sell loop (runs until manually halted by Overmind):**
+**Infinite mine-sell loop (runs until halted by Overmind):**
 ```
 PRAYER_SET:
 repeat {
@@ -162,9 +159,6 @@ repeat {
 }
 PRAYER_END
 ```
-
-**Mine with repair guard:**
-
 
 **Travel to a system and dock:**
 ```
@@ -188,9 +182,23 @@ until CREDITS() >= 50000 {
 PRAYER_END
 ```
 
-### When to use Prayer
+---
 
-Use PRAYER_SET when your task is pure grind: mining loops, sell runs, travel-to-dock, refuel sequences.
-**Do NOT use Prayer for:** social actions, ARG dialogs, mission NPC interactions, crafting, or any step requiring judgment.
+## Non-Grind Tasks
 
-If your entire task IS the grind, emit PRAYER_SET and stop — no further `sm` commands needed. The harness resumes you with a summary when Prayer halts (cargo full, fuel critical, script end, or combat threat).
+Stay focused on your specific goal. When you've achieved it or cannot make further progress, stop.
+
+When finished, write a brief COMPLETION REPORT:
+- What you accomplished
+- What commands you ran and their outcomes
+- Whether the goal was met
+- Any issues or blockers
+
+After your COMPLETION REPORT, emit your current game state on a single line:
+```
+HARNESS_STATE:{"fuel":<n>,"maxFuel":<n>,"cargoUsed":<n>,"cargoCapacity":<n>,"credits":<n>,"actionPending":<bool>,"inCombat":<bool>}
+```
+Use the most recent values from your last `sm status` response.
+
+## Recent Subagent History
+{{subagentReport}}

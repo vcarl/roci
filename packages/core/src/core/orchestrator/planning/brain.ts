@@ -39,7 +39,7 @@ function parsePlan(output: string, validProcedures?: string[]): Plan {
           goal: (s.goal as string) ?? "",
           model: (s.model as "haiku" | "sonnet") ?? "haiku",
           successCondition: (s.successCondition as string) ?? "",
-          timeoutTicks: (s.timeoutTicks as number) ?? 10,
+          timeoutTicks: (s.timeoutTicks as number) ?? 30,
         }))
       : [],
   }

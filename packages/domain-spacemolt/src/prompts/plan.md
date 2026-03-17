@@ -48,8 +48,12 @@ You are creating an action plan. Your output must be ONLY valid JSON matching th
 - Use `sonnet` for tasks requiring judgment (combat, social interaction, complex trading, ARG dialogs, recruitment)
 - Keep plans 2-6 steps long. Don't over-plan.
 - Success conditions must be observable from game state: `cargo_used > 90%`, `docked_at_base != null`, `current_system == X`
-- 1 tick ≈ {{tickIntervalSec}}s. Set realistic `timeoutTicks` based on task complexity and recent step history.
-- Agents that exceed their tick budget are penalized in evaluation. Calibrate carefully.
+- 1 tick ≈ {{tickIntervalSec}}s. Give agents room — over-budget rather than rush. Suggested ranges:
+  - travel / dock / refuel / sell: 20–35 ticks
+  - single mining run (fill cargo): 40–70 ticks
+  - social / forum / DM: 25–45 ticks
+  - complex multi-step (ARG, crafting, combat): 50–90 ticks
+- Tick overruns are logged but are not failures. An incomplete step that stalls is worse than one that runs long.
 - When planning a step that involves speaking in-game (chat, forum, DM): write the `goal` as your character would frame it. The body agent executes as you.
 
 
