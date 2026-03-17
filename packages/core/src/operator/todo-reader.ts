@@ -3,7 +3,7 @@ import * as path from "path"
 
 /**
  * Read operator TODO directives for an agent.
- * Path: players/{name}/TODO.md
+ * Path: {dir}/TODO.md (typically players/{name}/me/TODO.md)
  *
  * Returns the raw file content, or null if the file doesn't exist or is empty.
  * The file path is included in the returned object so the agent can self-update it.

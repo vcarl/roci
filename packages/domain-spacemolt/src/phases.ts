@@ -239,7 +239,7 @@ const activePhase = {
             const parts: string[] = []
 
             // Operator directives
-            const todo = readTodo(playerDir)
+            const todo = readTodo(context.char.dir)
             if (todo) {
               parts.push(
                 `## Operator Directives (${todo.filePath})\n${todo.content}\n\nYou may self-update this file using the Edit tool when directives are complete.`
