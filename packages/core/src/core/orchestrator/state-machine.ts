@@ -121,6 +121,11 @@ export const runStateMachine = (config: StateMachineConfig) =>
     // Cooldown: if PrayerManager.create() returns null, don't retry for 5 minutes
     let prayerManagerFailedAt = 0
 
+    // --- Failure cap state ---
+    // Track consecutive step failures to prevent runaway replan loops.
+    let consecutiveFailures = 0
+    let replanBlockedUntilTick = 0
+
     // Read credentials once for Prayer session creation
     let prayerCreds: { username: string; password: string } | null = null
     if (config.prayerBaseUrl) {
@@ -247,6 +252,19 @@ export const runStateMachine = (config: StateMachineConfig) =>
         const step = yield* Ref.get(stepRef)
         const noFiber = (yield* Ref.get(subagentFiberRef)) === null
         const needsPlan = noFiber && (!plan || step >= (plan?.steps.length ?? 0))
+
+        // Failure cap: if consecutive failures exceeded threshold, block new plans until ticks pass
+        if (needsPlan && replanBlockedUntilTick > 0) {
+          const currentTick = yield* Ref.get(tickCountRef)
+          if (currentTick <= replanBlockedUntilTick) {
+            yield* logToConsole(config.char.name, "monitor", `Replan blocked (failure cap) — tick ${currentTick}/${replanBlockedUntilTick}`)
+            return
+          }
+          // Block expired — reset and allow replan
+          replanBlockedUntilTick = 0
+          consecutiveFailures = 0
+          yield* logToConsole(config.char.name, "monitor", "Replan block expired — resuming")
+        }
 
         if (needsPlan) {
           const mode = yield* Ref.get(modeRef)
@@ -601,10 +619,55 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
             if (prayerStarted) {
               // Prayer is now running — clear the fiber ref so state machine doesn't re-evaluate
               yield* Ref.set(subagentFiberRef, null)
+              consecutiveFailures = 0
+              replanBlockedUntilTick = 0
             } else {
               const evalState = yield* Ref.get(gameStateRef)
+              const planBeforeEval = yield* Ref.get(planRef)
               yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, evalState)
               yield* maybeCompleteProcedure()
+              const planAfterEval = yield* Ref.get(planRef)
+              if (planBeforeEval !== null && planAfterEval === null) {
+                // Step failed — plan was cleared
+                consecutiveFailures++
+                const currentTick = yield* Ref.get(tickCountRef)
+                if (consecutiveFailures >= 5) {
+                  yield* logToConsole(config.char.name, "monitor", `Step failed ${consecutiveFailures}× consecutively — halting replan. Awaiting Overmind or state change.`)
+                  yield* Ref.update(softAlertAccRef, (acc) => {
+                    const next = new Map(acc)
+                    next.set("replan:blocked", {
+                      priority: "high",
+                      message: `Replan loop halted after ${consecutiveFailures} consecutive failures. Last failure recorded in previousFailure. Overmind intervention or significant state change required.`,
+                      suggestedAction: "Diagnose why the step keeps failing. Change approach or accept a different task.",
+                      ruleName: "replan:blocked",
+                    })
+                    return next
+                  })
+                  replanBlockedUntilTick = currentTick + 999  // hard block until reset
+                } else if (consecutiveFailures >= 3) {
+                  yield* logToConsole(config.char.name, "monitor", `Step failed ${consecutiveFailures}× consecutively — pausing replan for 5 ticks`)
+                  yield* Ref.update(softAlertAccRef, (acc) => {
+                    const next = new Map(acc)
+                    next.set("replan:blocked", {
+                      priority: "low",
+                      message: `Step has failed ${consecutiveFailures} times consecutively. Pausing replan briefly. Consider a different approach.`,
+                      suggestedAction: "Change strategy — the current step keeps failing.",
+                      ruleName: "replan:blocked",
+                    })
+                    return next
+                  })
+                  replanBlockedUntilTick = currentTick + 5
+                }
+              } else if (planBeforeEval !== null && planAfterEval !== null) {
+                // Step succeeded
+                consecutiveFailures = 0
+                replanBlockedUntilTick = 0
+                yield* Ref.update(softAlertAccRef, (acc) => {
+                  const next = new Map(acc)
+                  next.delete("replan:blocked")
+                  return next
+                })
+              }
             }
           }
         }
