@@ -621,6 +621,20 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
               yield* Ref.set(subagentFiberRef, null)
               consecutiveFailures = 0
               replanBlockedUntilTick = 0
+              // Advance step: Prayer owns the grind. Free agent for social/next-step tasks.
+              yield* Ref.update(stepRef, (s) => s + 1)
+              // Inject low-priority alert so planner generates social tasks, not more grind
+              yield* Ref.update(softAlertAccRef, (acc) => {
+                const next = new Map(acc)
+                next.set("prayer:active", {
+                  priority: "low",
+                  message: "Prayer is running and handling the grind autonomously. Use this time for social engagement: post to forums, reply to threads, check DMs, advance faction diplomacy, accept or complete missions. Do NOT plan mining, travel-to-mine, or crafting tasks — Prayer is handling those. Wait for prayer:summary before resuming economic tasks.",
+                  suggestedAction: "Plan social tasks: forum posts, DMs, faction diplomacy, mission check-ins. Prayer will notify when grind is complete.",
+                  ruleName: "prayer:active",
+                })
+                return next
+              })
+              yield* logToConsole(config.char.name, "monitor", "Prayer started — step advanced, social stage begins")
             } else {
               const evalState = yield* Ref.get(gameStateRef)
               const planBeforeEval = yield* Ref.get(planRef)
@@ -752,6 +766,11 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
                 const threatSummary = `Prayer halted: combat threat (${threats[0]!.summary})`
                 yield* Ref.set(prayerSummaryRef, threatSummary)
                 yield* logToConsole(config.char.name, "monitor", threatSummary)
+                yield* Ref.update(softAlertAccRef, (acc) => {
+                  const next = new Map(acc)
+                  next.delete("prayer:active")
+                  return next
+                })
               } else {
                 yield* logToConsole(config.char.name, "monitor", `Prayer check: running (fuel=${result.fuel ?? "?"} credits=${result.credits ?? "?"})`)
               }
@@ -776,6 +795,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
               yield* Ref.set(prayerSummaryRef, prayerSummary)
               yield* Ref.update(softAlertAccRef, (acc) => {
                 const next = new Map(acc)
+                next.delete("prayer:active")
                 next.set("prayer:summary", {
                   priority: "high",
                   message: prayerSummary,
@@ -810,8 +830,35 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
               yield* Ref.set(subagentFiberRef, null)
             } else {
               const evalState = yield* Ref.get(gameStateRef)
+              const planBeforeEval = yield* Ref.get(planRef)
               yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, evalState)
               yield* maybeCompleteProcedure()
+              const planAfterEval = yield* Ref.get(planRef)
+              if (planBeforeEval !== null && planAfterEval === null) {
+                consecutiveFailures++
+                const currentTick = yield* Ref.get(tickCountRef)
+                if (consecutiveFailures >= 5) {
+                  yield* logToConsole(config.char.name, "monitor", "Step failed " + consecutiveFailures + "x consecutively -- halting replan.")
+                  yield* Ref.update(softAlertAccRef, (acc) => {
+                    const next = new Map(acc)
+                    next.set("replan:blocked", { priority: "high", message: "Replan loop halted after " + consecutiveFailures + " consecutive failures.", suggestedAction: "Diagnose why the step keeps failing. Change approach or accept a different task.", ruleName: "replan:blocked" })
+                    return next
+                  })
+                  replanBlockedUntilTick = currentTick + 999
+                } else if (consecutiveFailures >= 3) {
+                  yield* logToConsole(config.char.name, "monitor", "Step failed " + consecutiveFailures + "x consecutively -- pausing replan for 5 ticks")
+                  yield* Ref.update(softAlertAccRef, (acc) => {
+                    const next = new Map(acc)
+                    next.set("replan:blocked", { priority: "low", message: "Step has failed " + consecutiveFailures + " times. Pausing replan briefly.", suggestedAction: "Change strategy -- the current step keeps failing.", ruleName: "replan:blocked" })
+                    return next
+                  })
+                  replanBlockedUntilTick = currentTick + 5
+                }
+              } else if (planBeforeEval !== null && planAfterEval !== null) {
+                consecutiveFailures = 0
+                replanBlockedUntilTick = 0
+                yield* Ref.update(softAlertAccRef, (acc) => { const next = new Map(acc); next.delete("replan:blocked"); return next })
+              }
             }
           }
         }
