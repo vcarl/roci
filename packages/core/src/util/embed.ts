@@ -7,18 +7,34 @@
 const EMBED_URL = `${process.env.EMBED_BASE_URL ?? "http://localhost:11435"}/v1/embeddings`
 const EMBED_MODEL = process.env.EMBED_MODEL ?? "BAAI/bge-small-en-v1.5"
 
+// Vector cache: content (capped at 512 chars) → embedding.
+// Diary entries don't change between plans — avoid re-embedding unchanged text.
+const MAX_CACHE = 512
+const vectorCache = new Map<string, number[]>()
+
 /**
  * Embed a single text string. Throws if embed server is unreachable.
  */
 export async function embed(text: string): Promise<number[]> {
+  const key = text.slice(0, 512)
+  const cached = vectorCache.get(key)
+  if (cached) return cached
+
   const resp = await fetch(EMBED_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: EMBED_MODEL, input: text }),
+    body: JSON.stringify({ model: EMBED_MODEL, input: key }),
   })
   if (!resp.ok) throw new Error(`Embed API ${resp.status}: ${await resp.text()}`)
   const data = await resp.json() as { data: Array<{ embedding: number[] }> }
-  return data.data[0].embedding
+  const vec = data.data[0].embedding
+
+  if (vectorCache.size >= MAX_CACHE) {
+    // Evict oldest entry (Map preserves insertion order)
+    vectorCache.delete(vectorCache.keys().next().value!)
+  }
+  vectorCache.set(key, vec)
+  return vec
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {

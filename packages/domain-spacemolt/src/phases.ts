@@ -278,6 +278,8 @@ const activePhase = {
         manualApproval,
         onStatusUpdate: (snapshot) => reportStatus(playersDir, context.char.name.toLowerCase(), snapshot),
         prayerBaseUrl: process.env.PRAYER_BASE_URL,
+        brainModel: process.env.BRAIN_MODEL || undefined,
+        evalModel: process.env.EVAL_MODEL || undefined,
       }).pipe(Effect.provide(context.domainBundle))
 
       // When the state machine exits, transition to social phase

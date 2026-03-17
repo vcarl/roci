@@ -1,4 +1,4 @@
-import type { ClaudeModel } from "../../../services/Claude.js"
+import type { AnyModel } from "../../../services/Claude.js"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
 
 /** Configuration for a single brain or body turn. */
@@ -7,7 +7,7 @@ export interface TurnConfig {
   playerName: string
   systemPrompt: string
   prompt: string
-  model: ClaudeModel
+  model: AnyModel
   timeoutMs: number
   env?: Record<string, string>
   /** Container --add-dir paths for claude subagent. */
@@ -27,6 +27,8 @@ export interface TurnResult {
   output: string
   timedOut: boolean
   durationMs: number
+  /** Epoch seconds when the rate limit resets, if this turn was rejected by a rate limit. */
+  rateLimitResetsAt?: number
 }
 
 /** Configuration for a full brain/body cycle. */
@@ -35,8 +37,8 @@ export interface CycleConfig {
   playerName: string
   brainSystemPrompt: string
   bodySystemPrompt: string
-  brainModel: ClaudeModel
-  bodyModel: ClaudeModel
+  brainModel: AnyModel
+  bodyModel: AnyModel
   brainTimeoutMs: number
   bodyTimeoutMs: number
   env?: Record<string, string>

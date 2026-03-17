@@ -124,6 +124,11 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
 
     const containerEnv: Record<string, string> = {}
 
+    // Pass through env vars that agents need inside Docker exec
+    if (process.env.PRAYER_BASE_URL) containerEnv.PRAYER_BASE_URL = process.env.PRAYER_BASE_URL
+    if (process.env.EMBED_BASE_URL) containerEnv.EMBED_BASE_URL = process.env.EMBED_BASE_URL
+    if (process.env.OPENROUTER_API_KEY) containerEnv.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+
     // Fork character fibers
     const allFibers = []
 

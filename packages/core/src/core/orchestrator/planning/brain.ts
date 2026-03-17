@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { CommandExecutor } from "@effect/platform"
-import { ClaudeError } from "../../../services/Claude.js"
+import { ClaudeError, type AnyModel } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import type { AiFunction } from "../../AiFunction.js"
@@ -18,6 +18,8 @@ export interface BrainContainerContext {
   char: CharacterConfig
   containerEnv?: Record<string, string>
   addDirs?: string[]
+  /** Override model for this brain turn. Anthropic aliases use Docker; any other string routes to OpenRouter. */
+  model?: AnyModel
 }
 
 // ── Plan parsing ────────────────────────────────────────────
@@ -68,8 +70,8 @@ export const brainPlan: AiFunction<PlanPromptContext & BrainContainerContext, Pl
         char: input.char,
         systemPrompt: "",
         prompt,
-        model: "sonnet",
-        timeoutMs: 180_000,
+        model: input.model ?? "sonnet",
+        timeoutMs: 90_000,
         env: input.containerEnv,
         addDirs: input.addDirs,
         role: "brain",
@@ -105,8 +107,8 @@ export const brainInterrupt: AiFunction<InterruptPromptContext & BrainContainerC
         char: input.char,
         systemPrompt: "",
         prompt,
-        model: "sonnet",
-        timeoutMs: 180_000,
+        model: input.model ?? "sonnet",
+        timeoutMs: 90_000,
         env: input.containerEnv,
         addDirs: input.addDirs,
         role: "brain",
@@ -143,8 +145,8 @@ export const brainEvaluate: AiFunction<EvaluatePromptContext & BrainContainerCon
         char: input.char,
         systemPrompt: "",
         prompt,
-        model: "haiku",
-        timeoutMs: 120_000,
+        model: input.model ?? "haiku",
+        timeoutMs: 60_000,
         env: input.containerEnv,
         addDirs: input.addDirs,
         role: "brain",

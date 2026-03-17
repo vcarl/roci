@@ -18,6 +18,7 @@ import type { TimingRefs } from "./step-tracker.js"
 import { recordStepTiming, recordStepOutcome } from "./step-tracker.js"
 import { brainEvaluate } from "./brain.js"
 import { runTurn } from "../../limbic/hypothalamus/process-runner.js"
+import type { AnyModel } from "../../../services/Claude.js"
 import { PromptBuilderTag } from "../../prompt-builder.js"
 
 export interface SubagentRefs {
@@ -55,6 +56,8 @@ interface EvaluateServices {
   readonly addDirs?: string[]
   readonly modeRef?: Ref.Ref<BrainMode>
   readonly investigationReportRef?: Ref.Ref<string | null>
+  /** Override model for eval turns. Defaults to "haiku". */
+  readonly evalModel?: AnyModel
 }
 
 /** Check if a completed subagent's step succeeded. Advance or replan. */
@@ -142,6 +145,7 @@ export const evaluateCompletedSubagent = (
           char: services.char,
           containerEnv: services.containerEnv,
           addDirs: services.addDirs,
+          model: services.evalModel,
         }).pipe(
           Effect.catchTag("ClaudeError", (e) =>
             Effect.succeed({

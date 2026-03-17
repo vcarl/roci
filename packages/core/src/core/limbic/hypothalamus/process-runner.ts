@@ -10,14 +10,16 @@
  * `services/Claude.ts` instead — that runs on the host.
  */
 
+import * as path from "node:path"
 import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
-import { ClaudeError } from "../../../services/Claude.js"
+import { ClaudeError, ANTHROPIC_MODELS, callOpenRouter } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
+import { writeWindDown } from "../../../operator/wind-down-file.js"
 
 /**
  * Shell-safe literal using $'...' ANSI-C quoting.
@@ -65,13 +67,36 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      const executor = yield* CommandExecutor.CommandExecutor
       const start = Date.now()
+
+      // OpenRouter branch — non-Anthropic models bypass Docker entirely.
+      // Brain turns (plan, evaluate, interrupt) use this path when configured.
+      if (!ANTHROPIC_MODELS.has(config.model)) {
+        yield* logToConsole(config.char.name, config.role, `[openrouter] model=${config.model}`)
+        const output = yield* Effect.promise(() =>
+          callOpenRouter({
+            prompt: config.prompt,
+            model: config.model,
+            systemPrompt: config.systemPrompt || undefined,
+            timeoutMs: config.timeoutMs,
+            maxTokens: 4096,
+          }),
+        ).pipe(
+          Effect.mapError((e) => new ClaudeError(`OpenRouter turn failed: ${e}`, e)),
+        )
+        yield* logToConsole(config.char.name, config.role,
+          `[openrouter] done in ${Math.round((Date.now() - start) / 1000)}s (${output.length} chars)`)
+        return { output, timedOut: false, durationMs: Date.now() - start } satisfies TurnResult
+      }
+
+      const executor = yield* CommandExecutor.CommandExecutor
       const oauthToken = yield* OAuthToken
       const { token, version: tokenVersion } = yield* oauthToken.getToken
 
       // Accumulate text output from assistant messages
       const textAccumulator = yield* Ref.make<string[]>([])
+      // Track rate limit rejection from stream events
+      const rateLimitRef = yield* Ref.make<number | null>(null)
 
       // Build claude flags — use stream-json for real-time output
       const claudeArgs: string[] = [
@@ -159,6 +184,13 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
 
             const event = parseStreamJson(line)
             if (event) {
+              // Detect rate limit rejection — capture resetsAt for wind-down
+              if (event.type === "rate_limit_event") {
+                const info = event.rate_limit_info as Record<string, unknown> | undefined
+                if (info?.status === "rejected" && typeof info.resetsAt === "number") {
+                  yield* Ref.set(rateLimitRef, info.resetsAt)
+                }
+              }
               yield* demuxEvent(config.char, line, event, source, textAccumulator)
             } else {
               printRaw(config.char.name, "raw", line)
@@ -215,8 +247,21 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
       const output = textParts.join("\n")
 
       const durationMs = Date.now() - start
+      const rateLimitResetsAt = yield* Ref.get(rateLimitRef)
 
-      return { output, timedOut, durationMs }
+      // Rate limit detected — write WIND_DOWN.json so the orchestrator nonstop loop
+      // waits until the session resets instead of spinning every 60s.
+      if (rateLimitResetsAt !== null) {
+        const playersDir = path.resolve(config.char.dir, "../..")
+        const sessionEndTime = new Date(rateLimitResetsAt * 1000).toISOString()
+        yield* logToConsole(config.char.name, config.role,
+          `Rate limit detected — writing WIND_DOWN (resetsAt=${sessionEndTime})`)
+        yield* Effect.sync(() =>
+          writeWindDown(playersDir, { reason: "rate_limit_five_hour", sessionEndTime })
+        )
+      }
+
+      return { output, timedOut, durationMs, ...(rateLimitResetsAt !== null ? { rateLimitResetsAt } : {}) }
     }),
   ).pipe(
     Effect.mapError((e) =>

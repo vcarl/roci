@@ -9,7 +9,7 @@
 #   bash ~/Signal/run-harness.sh neonecho zealot savolent # officers
 #   bash ~/Signal/run-harness.sh neonecho zealot savolent cipher pilgrim seeker drifter investigator
 
-USAGE_LIMIT=70      # % session usage that triggers wind-down
+USAGE_LIMIT=75      # % session usage that triggers wind-down
 CHECK_INTERVAL=300  # seconds between usage checks (5 min)
 
 SIGNAL_DIR="/home/savolent/Signal"
@@ -28,7 +28,7 @@ export SKIP_FIREWALL=1
 export EMBED_BASE_URL=http://localhost:11435
 export EMBED_MODEL=BAAI/bge-small-en-v1.5
 export OPENROUTER_API_KEY=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
-export PRAYER_BASE_URL=http://host.docker.internal:5000
+export PRAYER_BASE_URL=http://localhost:5000
 
 # ── Usage monitor sidecar ──────────────────────────────────────────────
 usage_monitor() {

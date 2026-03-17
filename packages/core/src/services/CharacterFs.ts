@@ -52,11 +52,23 @@ export const CharacterFsLive = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
 
+    // Session-scoped cache for static identity files (background.md, VALUES.md).
+    // These don't change during a run — avoid disk reads on every plan + spawn cycle.
+    const staticCache = new Map<string, string>()
+
     const readFileOr = (filePath: string, fallback: string) =>
       fs.readFileString(filePath).pipe(
         Effect.catchAll(() => Effect.succeed(fallback)),
         Effect.mapError((e) => new CharacterFsError(`Failed to read ${filePath}`, e)),
       )
+
+    const readCached = (filePath: string, fallback: string) => {
+      const hit = staticCache.get(filePath)
+      if (hit !== undefined) return Effect.succeed(hit)
+      return readFileOr(filePath, fallback).pipe(
+        Effect.tap((content) => Effect.sync(() => staticCache.set(filePath, content))),
+      )
+    }
 
     return CharacterFs.of({
       readDiary: (char) =>
@@ -90,10 +102,10 @@ export const CharacterFsLive = Layer.effect(
         }),
 
       readBackground: (char) =>
-        readFileOr(path.join(char.dir, "background.md"), ""),
+        readCached(path.join(char.dir, "background.md"), ""),
 
       readValues: (char) =>
-        readFileOr(path.join(char.dir, "VALUES.md"), ""),
+        readCached(path.join(char.dir, "VALUES.md"), ""),
 
       characterExists: (char) =>
         fs.exists(char.dir).pipe(

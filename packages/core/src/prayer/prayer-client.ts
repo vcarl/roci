@@ -22,6 +22,10 @@ export type PrayerFullState = {
   poiName?: string
   fuel?: number
   maxFuel?: number
+  hull?: number
+  maxHull?: number
+  shield?: number
+  armor?: number
   credits?: number
   cargoUsed?: number
   cargoCapacity?: number
@@ -30,6 +34,21 @@ export type PrayerFullState = {
   notifications?: Array<{ type: string; summary: string }>
   activeMissions?: Array<{ title: string; progressText: string }>
   executionStatusLines?: string[]
+  memory?: string[]
+  lastGenerationPrompt?: string
+}
+
+export type PrayerRoute = {
+  target?: string
+  hops?: string[]
+  totalJumps?: number
+  fuelEstimate?: number
+}
+
+export type PrayerApiStats = {
+  totalCalls?: number
+  distinctCommands?: number
+  topCommands?: Array<{ command: string; count: number; avgLatencyMs: number; maxLatencyMs: number }>
 }
 
 export class PrayerClient {
@@ -141,6 +160,10 @@ export class PrayerClient {
           ship?: {
             fuel: number
             maxFuel: number
+            hull?: number
+            maxHull?: number
+            shield?: number
+            armor?: number
             cargoUsed: number
             cargoCapacity: number
             cargo?: Record<string, { itemId: string; quantity: number }>
@@ -149,6 +172,8 @@ export class PrayerClient {
           activeMissions?: Array<{ title: string; progressText: string }>
         }
         executionStatusLines?: string[]
+        memory?: string[]
+        lastGenerationPrompt?: string
       }
 
       const cargo: Record<string, number> = {}
@@ -161,6 +186,10 @@ export class PrayerClient {
         poiName: data.state?.currentPOI?.name,
         fuel: data.state?.ship?.fuel,
         maxFuel: data.state?.ship?.maxFuel,
+        hull: data.state?.ship?.hull,
+        maxHull: data.state?.ship?.maxHull,
+        shield: data.state?.ship?.shield,
+        armor: data.state?.ship?.armor,
         credits: data.state?.credits,
         cargoUsed: data.state?.ship?.cargoUsed,
         cargoCapacity: data.state?.ship?.cargoCapacity,
@@ -169,9 +198,70 @@ export class PrayerClient {
         notifications: data.state?.notifications?.map((n) => ({ type: n.type, summary: n.summary })),
         activeMissions: data.state?.activeMissions?.map((m) => ({ title: m.title, progressText: m.progressText })),
         executionStatusLines: data.executionStatusLines,
+        memory: data.memory ?? undefined,
+        lastGenerationPrompt: data.lastGenerationPrompt ?? undefined,
       }
     } catch {
       return null
+    }
+  }
+
+
+  async setLlm(sessionId: string, provider: string, model: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/runtime/sessions/${sessionId}/llm`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, model }),
+    })
+    if (!res.ok) throw new Error(`Prayer setLlm ${res.status}: ${await res.text()}`)
+  }
+
+  async getRoute(sessionId: string): Promise<PrayerRoute | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/runtime/sessions/${sessionId}/route`, {
+        signal: AbortSignal.timeout(5_000),
+      })
+      if (!res.ok) return null
+      const data = await res.json() as {
+        target?: string
+        hops?: string[]
+        totalJumps?: number
+        fuelEstimate?: number
+      }
+      return {
+        target: data.target,
+        hops: data.hops,
+        totalJumps: data.totalJumps,
+        fuelEstimate: data.fuelEstimate,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  async getApiStats(sessionId: string): Promise<PrayerApiStats | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/runtime/sessions/${sessionId}/spacemolt/stats`, {
+        signal: AbortSignal.timeout(5_000),
+      })
+      if (!res.ok) return null
+      const data = await res.json() as {
+        totalCalls?: number
+        distinctCommands?: number
+        topCommands?: Array<{ command: string; count: number; avgLatencyMs: number; maxLatencyMs: number }>
+      }
+      return data
+    } catch {
+      return null
+    }
+  }
+
+  async saveExample(sessionId: string, prompt: string, script: string): Promise<void> {
+    try {
+      const res = await this.post(`/api/runtime/sessions/${sessionId}/save-example`, { prompt, script })
+      if (!res.ok) console.warn(`Prayer saveExample ${res.status}: ${await res.text()}`)
+    } catch {
+      // Non-critical — don't throw
     }
   }
 

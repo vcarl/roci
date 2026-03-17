@@ -123,9 +123,24 @@ type UsageResult = {
 }
 
 const LAST_JSON_PATH = "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/.claude/skills/usage-check/last.json"
-const USAGE_CACHE_MAX_AGE_MS = 15 * 60 * 1000 // 15 minutes
+const FETCH_USAGE_PY = "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/.claude/skills/usage-check/fetch-usage.py"
+const WIN_PYTHON = "/mnt/c/Users/Roy D. Lewis Jr/AppData/Local/Microsoft/WindowsApps/python3.exe"
+const USAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000 // 10 minutes
 
-function checkUsage(): UsageResult | null {
+function tryRefreshUsageCache(): void {
+  // cmd.exe /c runs in the Windows environment where python3 is in PATH.
+  // Direct python3.exe invocation fails from non-interactive WSL (no .bashrc, no AppExec aliases).
+  // Correct form: cmd.exe /c python3 "C:\path\with spaces\file.py" — no outer quotes around the whole cmd.
+  const winPath = FETCH_USAGE_PY.replace("/mnt/c/", "C:\\").replace(/\//g, "\\")
+  try {
+    execSync(`cmd.exe /c python3 "${winPath}"`, { encoding: "utf-8", timeout: 30_000, stdio: "pipe" })
+    console.log("[Overlord] Usage cache refreshed via fetch-usage.py")
+  } catch (err) {
+    console.log(`[Overlord] Usage cache refresh failed: ${err instanceof Error ? err.message.slice(0, 100) : err}`)
+  }
+}
+
+function readUsageCache(): UsageResult | null {
   if (!fs.existsSync(LAST_JSON_PATH)) return null
   try {
     const raw = fs.readFileSync(LAST_JSON_PATH, "utf-8")
@@ -135,11 +150,7 @@ function checkUsage(): UsageResult | null {
       ts: number
       session_end_time?: number | string
     }
-    const ageMs = Date.now() - (data.ts ?? 0)
-    if (ageMs > USAGE_CACHE_MAX_AGE_MS) {
-      console.log(`[Overlord] Usage cache is ${Math.round(ageMs / 60000)}m old — skipping`)
-      return null
-    }
+    if (!data.ts) return null
     const parsePercent = (v: string | number): number =>
       typeof v === "number" ? v : parseFloat(String(v).replace("%", ""))
     const session_end_time =
@@ -152,6 +163,25 @@ function checkUsage(): UsageResult | null {
   } catch {
     return null
   }
+}
+
+function checkUsage(): UsageResult | null {
+  if (!fs.existsSync(LAST_JSON_PATH)) {
+    tryRefreshUsageCache()
+    return readUsageCache()
+  }
+  try {
+    const raw = fs.readFileSync(LAST_JSON_PATH, "utf-8")
+    const data = JSON.parse(raw) as { ts?: number }
+    const ageMs = Date.now() - (data.ts ?? 0)
+    if (ageMs > USAGE_CACHE_MAX_AGE_MS) {
+      console.log(`[Overlord] Usage cache is ${Math.round(ageMs / 60000)}m old — refreshing`)
+      tryRefreshUsageCache()
+    }
+  } catch {
+    tryRefreshUsageCache()
+  }
+  return readUsageCache()
 }
 
 // ─── Stuck detection + nudge ────────────────────────────────────────────────
@@ -248,7 +278,7 @@ async function poll(): Promise<void> {
     const usage = checkUsage()
     if (usage) {
       console.log(`[Overlord] Usage: session=${usage.session}% weekly=${usage.weekly}%`)
-      if (usage.session >= 90 || usage.weekly >= 95) {
+      if (usage.session >= 60 || usage.weekly >= 95) {
         console.log(`[Overlord] Usage threshold hit — writing wind-down signal`)
         writeWindDown(playersDir, {
           reason: `usage threshold: session=${usage.session}% weekly=${usage.weekly}%`,

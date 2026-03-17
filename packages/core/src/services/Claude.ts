@@ -11,7 +11,7 @@ export type ClaudeModel = "opus" | "sonnet" | "haiku"
 /** Any model string — Anthropic models or OpenRouter model IDs (e.g. "nvidia/nemotron-3-super-120b-a12b:free"). */
 export type AnyModel = ClaudeModel | (string & Record<never, never>)
 
-const ANTHROPIC_MODELS = new Set(["opus", "sonnet", "haiku"])
+export const ANTHROPIC_MODELS = new Set(["opus", "sonnet", "haiku"])
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? ""
 
@@ -24,11 +24,14 @@ export class ClaudeError {
 /**
  * Call OpenRouter API directly (no claude CLI needed).
  * Returns the assistant content string.
+ * Exported for use by process-runner (brain turns with non-Anthropic models).
  */
-async function invokeOpenRouter(opts: {
+export async function callOpenRouter(opts: {
   prompt: string
   model: string
   systemPrompt?: string
+  timeoutMs?: number
+  maxTokens?: number
 }): Promise<string> {
   const messages: Array<{ role: string; content: string }> = []
   if (opts.systemPrompt) {
@@ -42,7 +45,8 @@ async function invokeOpenRouter(opts: {
       "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model: opts.model, messages, max_tokens: 2048 }),
+    body: JSON.stringify({ model: opts.model, messages, max_tokens: opts.maxTokens ?? 4096 }),
+    ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
   })
 
   if (!resp.ok) {
@@ -140,7 +144,7 @@ export const ClaudeLive = Layer.effect(
               `OpenRouter model "${opts.model}" requested but OPENROUTER_API_KEY is not set`
             ))
           }
-          return Effect.promise(() => invokeOpenRouter({
+          return Effect.promise(() => callOpenRouter({
             prompt: opts.prompt,
             model: opts.model,
             systemPrompt: opts.systemPrompt,

@@ -11,7 +11,7 @@
 
 import { spawn } from "node:child_process"
 import { PrayerClient } from "./prayer-client.js"
-import type { PrayerSnapshot, PrayerFullState } from "./prayer-client.js"
+import type { PrayerSnapshot, PrayerFullState, PrayerRoute, PrayerApiStats } from "./prayer-client.js"
 export type { PrayerFullState }
 
 export type { PrayerSnapshot }
@@ -123,6 +123,13 @@ export class PrayerManager {
     this.running.set(agentId, false)
     this.stateVersions.set(agentId, 0)
     console.log(`[Prayer][${agentId}] session created: ${sessionId}`)
+    // Configure LLM — use llamacpp (local) if available, falls back to Prayer default
+    try {
+      await this.client.setLlm(sessionId, "llamacpp", "")
+      console.log(`[Prayer][${agentId}] LLM set to llamacpp (local)`)
+    } catch {
+      console.log(`[Prayer][${agentId}] llamacpp unavailable — using Prayer default LLM`)
+    }
     return sessionId
   }
 
@@ -203,6 +210,29 @@ export class PrayerManager {
     return state.notifications.filter((n) => n.type === "combat")
   }
 
+
+  /** Save a successful (prompt → script) pair back to Prayer's RAG store for future generation. */
+  async saveExample(agentId: string, prompt: string, script: string): Promise<void> {
+    const sessionId = this.sessions.get(agentId)
+    if (!sessionId) return
+    await this.client.saveExample(sessionId, prompt, script)
+    console.log(`[Prayer][${agentId}] example saved to RAG store`)
+  }
+
+  /** Get the active pathfinding route (populated while a go command is executing). */
+  async getRoute(agentId: string): Promise<PrayerRoute | null> {
+    const sessionId = this.sessions.get(agentId)
+    if (!sessionId) return null
+    return this.client.getRoute(sessionId)
+  }
+
+  /** Get SpaceMolt API call statistics for this session. */
+  async getApiStats(agentId: string): Promise<PrayerApiStats | null> {
+    const sessionId = this.sessions.get(agentId)
+    if (!sessionId) return null
+    return this.client.getApiStats(sessionId)
+  }
+
   async cleanup(agentId: string): Promise<void> {
     const sessionId = this.sessions.get(agentId)
     if (!sessionId) return
@@ -268,12 +298,26 @@ export function buildPrayerSummary(
       `Credits: ${fullState.credits ?? "?"}`,
       `Cargo: ${fullState.cargoUsed ?? "?"}/${fullState.cargoCapacity ?? "?"} used`,
     )
+    if (fullState.hull !== undefined) {
+      lines.push(`Hull: ${fullState.hull}/${fullState.maxHull ?? "?"} | Shield: ${fullState.shield ?? "?"} | Armor: ${fullState.armor ?? "?"}`)
+    }
     if (fullState.cargo && Object.keys(fullState.cargo).length > 0) {
-      const items = Object.entries(fullState.cargo).map(([id, qty]) => `${id}×${qty}`).join(", ")
+      const items = Object.entries(fullState.cargo)
+        .sort(([, a], [, b]) => b - a)
+        .map(([id, qty]) => `${id}×${qty}`)
+        .join(", ")
       lines.push(`Cargo contents: ${items}`)
     }
-    if (fullState.executionStatusLines && fullState.executionStatusLines.length > 0) {
+    if (fullState.memory && fullState.memory.length > 0) {
+      // Show last 15 memory entries — this is what Prayer actually did
+      const recentMemory = fullState.memory.slice(-15).join("\n")
+      lines.push(`\nGrind log (last ${Math.min(15, fullState.memory.length)} actions):\n${recentMemory}`)
+    } else if (fullState.executionStatusLines && fullState.executionStatusLines.length > 0) {
       lines.push(`Execution log:\n${fullState.executionStatusLines.slice(-10).join("\n")}`)
+    }
+    if (fullState.activeMissions && fullState.activeMissions.length > 0) {
+      const missions = fullState.activeMissions.map((m) => `  ${m.title}: ${m.progressText}`).join("\n")
+      lines.push(`Active missions:\n${missions}`)
     }
   } else {
     lines.push(

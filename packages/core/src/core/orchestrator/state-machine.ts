@@ -28,6 +28,7 @@ import type { AgentStatusSnapshot } from "../../server/status-reporter.js"
 import { readWindDown } from "../../operator/wind-down-file.js"
 import { drainEdictInbox } from "../../operator/edict-inbox.js"
 import { PrayerManager, parsePrayerScript, buildPrayerSummary } from "../../prayer/prayer-manager.js"
+import type { AnyModel } from "../../services/Claude.js"
 
 export interface StateMachineConfig {
   char: CharacterConfig
@@ -58,6 +59,18 @@ export interface StateMachineConfig {
   prayerBaseUrl?: string
   /** Absolute path to Prayer.csproj for auto-start. Omit to skip auto-start. */
   prayerCsprojPath?: string
+  /**
+   * Model for brain planning turns (brainPlan, brainInterrupt).
+   * Anthropic aliases ("sonnet", "haiku") use Docker exec.
+   * Any other string routes to OpenRouter via HTTP.
+   * Defaults to "sonnet".
+   */
+  brainModel?: AnyModel
+  /**
+   * Model for step evaluation turns (brainEvaluate).
+   * Defaults to "haiku".
+   */
+  evalModel?: AnyModel
 }
 
 /**
@@ -102,6 +115,11 @@ export const runStateMachine = (config: StateMachineConfig) =>
     let prayerManager: PrayerManager | null = null
     const prayerRunningRef = yield* Ref.make(false)
     const prayerSummaryRef = yield* Ref.make<string | null>(null)
+    // Timing for non-blocking Prayer status checks: 5s after start, then every 60s
+    let prayerStartedAt = 0
+    let prayerLastCheckedAt = 0
+    // Cooldown: if PrayerManager.create() returns null, don't retry for 5 minutes
+    let prayerManagerFailedAt = 0
 
     // Read credentials once for Prayer session creation
     let prayerCreds: { username: string; password: string } | null = null
@@ -135,7 +153,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       procedureTargets: procedureTargetsRef,
       procedureStartState: procedureStartStateRef,
     }
-    const planningServices = { char: config.char, containerId: config.containerId, playerName: config.playerName, containerEnv: config.containerEnv, addDirs: config.addDirs, tickIntervalSec: config.tickIntervalSec, hooks, renderer }
+    const planningServices = { char: config.char, containerId: config.containerId, playerName: config.playerName, containerEnv: config.containerEnv, addDirs: config.addDirs, tickIntervalSec: config.tickIntervalSec, hooks, renderer, brainModel: config.brainModel }
     const evalServices = {
       renderer,
       classifier,
@@ -149,6 +167,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       addDirs: config.addDirs,
       modeRef,
       investigationReportRef,
+      evalModel: config.evalModel,
     }
     const spawnConfig = {
       char: config.char,
@@ -221,11 +240,19 @@ export const runStateMachine = (config: StateMachineConfig) =>
           return false
         }
 
-        // Lazily create PrayerManager on first use
+        // Lazily create PrayerManager on first use (with 5-minute cooldown on failure)
         if (!prayerManager) {
+          const cooldownMs = 5 * 60_000
+          if (prayerManagerFailedAt && Date.now() - prayerManagerFailedAt < cooldownMs) {
+            yield* logToConsole(config.char.name, "monitor", "Prayer unavailable (cooldown active) — skipping")
+            return false
+          }
           prayerManager = yield* Effect.promise(() =>
             PrayerManager.create(config.prayerBaseUrl!, config.prayerCsprojPath),
           )
+          if (!prayerManager) {
+            prayerManagerFailedAt = Date.now()
+          }
         }
         if (!prayerManager) {
           yield* logToConsole(config.char.name, "monitor", "Prayer unavailable — falling back to body turns")
@@ -233,9 +260,24 @@ export const runStateMachine = (config: StateMachineConfig) =>
         }
 
         const agentId = config.char.name.toLowerCase()
-        yield* Effect.promise(() => prayerManager!.ensureSession(agentId, prayerCreds!.username, prayerCreds!.password))
-        yield* Effect.promise(() => prayerManager!.startScript(agentId, script))
+        const started = yield* Effect.promise(async () => {
+          try {
+            await prayerManager!.ensureSession(agentId, prayerCreds!.username, prayerCreds!.password)
+            await prayerManager!.startScript(agentId, script)
+            return true
+          } catch (e) {
+            // Prayer went down after manager was created — reset so next PRAYER_SET retries
+            prayerManager = null
+            return e as Error
+          }
+        })
+        if (started !== true) {
+          yield* logToConsole(config.char.name, "monitor", `Prayer start failed (will retry): ${started}`)
+          return false
+        }
         yield* Ref.set(prayerRunningRef, true)
+        prayerStartedAt = Date.now()
+        prayerLastCheckedAt = Date.now()
         yield* logToConsole(config.char.name, "monitor", `Prayer started — grind offloaded (${script.split("\n").length} lines)`)
         return true
       })
@@ -400,6 +442,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           char: config.char,
           containerEnv: config.containerEnv,
           addDirs: config.addDirs,
+          model: config.brainModel,
         })
 
         yield* log.thought(config.char, {
@@ -504,11 +547,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           }
         }
 
-        // Plan + spawn cycle (skip if Prayer is running)
-        const prayerActive = yield* Ref.get(prayerRunningRef)
-        if (!prayerActive) {
-          yield* planAndSpawn(state, summary)
-        }
+        // Plan + spawn cycle — runs concurrently with Prayer
+        yield* planAndSpawn(state, summary)
 
         // Emit status snapshot for Overlord monitoring
         yield* emitStatus(state, summary, "active").pipe(Effect.catchAll(() => Effect.void))
@@ -558,57 +598,69 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           }
         }
 
-        // --- Prayer tick poll ---
+        // --- Prayer status check (non-blocking: 5s after start, then every 60s) ---
+        // Prayer runs concurrently with body turns — agents handle social/mental tasks while Prayer grinds.
         const prayerActive = yield* Ref.get(prayerRunningRef)
         if (prayerActive && prayerManager) {
           const agentId = config.char.name.toLowerCase()
-          const pollWaitMs = Math.floor(config.tickIntervalSec * 500) // half a tick
-          const result = yield* Effect.promise(() => prayerManager!.pollWithLongPoll(agentId, pollWaitMs)).pipe(
-            Effect.catchAll((e) => {
-              return logToConsole(config.char.name, "monitor", `Prayer poll error: ${e}`).pipe(
-                Effect.as({ isHalted: false, hasActiveCommand: false, snapshot: { sessionId: "", isHalted: false, hasActiveCommand: false } } as import("../../prayer/prayer-manager.js").PrayerPollResult),
+          const now = Date.now()
+          const firstCheckDue = prayerLastCheckedAt === prayerStartedAt && now - prayerStartedAt >= 5_000
+          const periodicCheckDue = prayerLastCheckedAt !== prayerStartedAt && now - prayerLastCheckedAt >= 60_000
+          if (firstCheckDue || periodicCheckDue) {
+            prayerLastCheckedAt = now
+            const result = yield* Effect.promise(() => prayerManager!.pollOnce(agentId)).pipe(
+              Effect.catchAll((e) => {
+                return logToConsole(config.char.name, "monitor", `Prayer poll error (treating as halted): ${e}`).pipe(
+                  Effect.as({ isHalted: true, hasActiveCommand: false, snapshot: { sessionId: "", isHalted: true, hasActiveCommand: false } } as import("../../prayer/prayer-manager.js").PrayerPollResult),
+                )
+              }),
+            )
+
+            if (!result.isHalted) {
+              // Check for combat threats — halt Prayer immediately if found
+              const threats = yield* Effect.promise(() => prayerManager!.checkThreats(agentId)).pipe(
+                Effect.catchAll(() => Effect.succeed([] as import("../../prayer/prayer-manager.js").PrayerThreat[])),
               )
-            }),
-          )
-
-          if (!result.isHalted) {
-            // Check for combat threats every tick — halt Prayer immediately if found
-            const threats = yield* Effect.promise(() => prayerManager!.checkThreats(agentId)).pipe(
-              Effect.catchAll(() => Effect.succeed([] as import("../../prayer/prayer-manager.js").PrayerThreat[])),
-            )
-            if (threats.length > 0) {
-              yield* Effect.promise(() => prayerManager!.halt(agentId)).pipe(Effect.catchAll(() => Effect.void))
-              yield* Ref.set(prayerRunningRef, false)
-              const threatSummary = `Prayer halted: combat threat (${threats[0]!.summary})`
-              yield* Ref.set(prayerSummaryRef, threatSummary)
-              yield* logToConsole(config.char.name, "monitor", threatSummary)
-            } else {
-              yield* logToConsole(config.char.name, "monitor", `Prayer tick: running (fuel=${result.fuel ?? "?"} credits=${result.credits ?? "?"})`)
-              // Still running — skip normal planning this tick
-              yield* emitStatus(yield* Ref.get(gameStateRef), classifier.summarize(yield* Ref.get(gameStateRef)), "prayer").pipe(Effect.catchAll(() => Effect.void))
-              return
+              if (threats.length > 0) {
+                yield* Effect.promise(() => prayerManager!.halt(agentId)).pipe(Effect.catchAll(() => Effect.void))
+                yield* Ref.set(prayerRunningRef, false)
+                const threatSummary = `Prayer halted: combat threat (${threats[0]!.summary})`
+                yield* Ref.set(prayerSummaryRef, threatSummary)
+                yield* logToConsole(config.char.name, "monitor", threatSummary)
+              } else {
+                yield* logToConsole(config.char.name, "monitor", `Prayer check: running (fuel=${result.fuel ?? "?"} credits=${result.credits ?? "?"})`)
+              }
             }
-          }
 
-          if (result.isHalted) {
-            // Prayer finished — build resume summary, inject into softAlerts so brain sees it
-            const fullState = yield* Effect.promise(() => prayerManager!.getFullStateForResume(agentId)).pipe(
-              Effect.catchAll(() => Effect.succeed(null)),
-            )
-            const prayerSummary = buildPrayerSummary(result, fullState)
-            yield* Ref.set(prayerRunningRef, false)
-            yield* Ref.set(prayerSummaryRef, prayerSummary)
-            yield* Ref.update(softAlertAccRef, (acc) => {
-              const next = new Map(acc)
-              next.set("prayer:summary", {
-                priority: "high",
-                message: prayerSummary,
-                suggestedAction: "review Prayer results and plan next steps",
-                ruleName: "prayer:summary",
+            if (result.isHalted) {
+              // Prayer finished — build resume summary, inject into softAlerts so brain sees it
+              const fullState = yield* Effect.promise(() => prayerManager!.getFullStateForResume(agentId)).pipe(
+                Effect.catchAll(() => Effect.succeed(null)),
+              )
+              const prayerSummary = buildPrayerSummary(result, fullState)
+              // Save the (prompt → script) pair back to Prayer's RAG store if generation was used
+              if (fullState?.lastGenerationPrompt) {
+                const snapshot = result.snapshot
+                if (snapshot.currentScript) {
+                  yield* Effect.promise(() =>
+                    prayerManager!.saveExample(agentId, fullState.lastGenerationPrompt!, snapshot.currentScript!)
+                  ).pipe(Effect.catchAll(() => Effect.void))
+                }
+              }
+              yield* Ref.set(prayerRunningRef, false)
+              yield* Ref.set(prayerSummaryRef, prayerSummary)
+              yield* Ref.update(softAlertAccRef, (acc) => {
+                const next = new Map(acc)
+                next.set("prayer:summary", {
+                  priority: "high",
+                  message: prayerSummary,
+                  suggestedAction: "review Prayer results and plan next steps",
+                  ruleName: "prayer:summary",
+                })
+                return next
               })
-              return next
-            })
-            yield* logToConsole(config.char.name, "monitor", `Prayer halted cleanly — resuming body turns`)
+              yield* logToConsole(config.char.name, "monitor", `Prayer halted — grind complete, summary injected`)
+            }
           }
         }
 
@@ -639,11 +691,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           }
         }
 
-        // Skip plan/spawn while Prayer is running
-        const prayerStillActive = yield* Ref.get(prayerRunningRef)
-        if (!prayerStillActive) {
-          yield* planAndSpawn(state, summary)
-        }
+        // Plan + spawn cycle — runs concurrently with Prayer
+        yield* planAndSpawn(state, summary)
 
         // Emit status snapshot for Overlord monitoring
         yield* emitStatus(state, summary, "active").pipe(Effect.catchAll(() => Effect.void))
