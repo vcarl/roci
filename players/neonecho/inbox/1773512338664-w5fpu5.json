@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [Sell ALL non-fuel cargo. Run 'sm commands' first, then 'sm help sell'. Sell each ore type individually. Try 'sm sell <item_id> <qty>', and if that fails try 'sm market-sell' or 'sm create-sell-order' at price 1. Items to sell: everything except fuel_cell. Run 'sm status' after each sale to verify. Do NOT undock. Do NOT travel.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-14T18:18:58.664Z",
-  "source": "overlord",
-  "id": "1773512338664-w5fpu5.json"
-}

@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [Mine at War Materials asteroid belt. CRITICAL INSTRUCTION: You must call the mine action DIRECTLY, one call at a time, then check cargo, then call mine again. Do NOT use prayer loops, PRAYER_SET, repeat-until, or any macro/loop construct — these DO NOT WORK and will waste the entire step. Sequence: call mine -> read cargo -> call mine -> read cargo -> repeat manually. Use general mining with NO target resource. Keep going until cargo is at least 67/75.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-14T18:00:59.625Z",
-  "source": "overlord",
-  "id": "1773511259625-me1u9a.json"
-}

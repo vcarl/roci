@@ -32,3 +32,17 @@ embed_server.pid
 
 # Submodule working state
 overlord.log
+
+# Prayer submodule runtime artifacts
+Prayer/*.log
+Prayer/*.pid
+Prayer/src/Prayer/cache/
+Prayer/src/Prayer/log/
+Prayer/src/Prayer/markets/
+Prayer/seed/
+Prayer/artifacts/
+
+# SpaceMolt CLI downloaded artifacts
+shared-resources/sm-cli/spacemolt/
+shared-resources/sm-cli/spec/
+shared-resources/sm-cli/tests/

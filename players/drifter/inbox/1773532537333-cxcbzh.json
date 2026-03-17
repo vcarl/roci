@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [Travel to War Materials and mine. First run: sm travel war_materials. Then repeatedly run sm mine using the Bash tool — each sm mine is a separate Bash tool call. Every 4 mining commands, run sm status to check cargo. Continue until cargo_used >= 65. CRITICAL: Every action must be a Bash tool call. Do NOT write pseudocode or plans. Start with: sm travel war_materials, then immediately sm mine.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-14T23:55:37.333Z",
-  "source": "overlord",
-  "id": "1773532537333-cxcbzh.json"
-}

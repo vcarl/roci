@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [Mine iron_ore at albireo_belt. You MUST actually execute mine commands and consume ticks. Do NOT just set up a prayer or automation — execute mine actions directly, one at a time, repeatedly. Call the mine action, wait for the result, then call it again. Keep mining until cargo is at least 80% full (144/180 units). Each mine action should produce ore. If a mine call fails, try again. Do NOT end early. Do NOT set up loops or prayers — just call mine repeatedly yourself.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-14T23:08:36.718Z",
-  "source": "overlord",
-  "id": "1773529716718-s6xsnh.json"
-}

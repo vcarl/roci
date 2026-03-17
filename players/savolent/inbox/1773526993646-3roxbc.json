@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [You are at albireo_belt. Mine ore by executing the mine action repeatedly. Execute mine, read the result, execute mine again. Do this over and over. Do NOT stop until cargo_used >= 90. Do NOT write any code blocks, pseudocode, DSL, or Prayer blocks. Only use the mine tool/action directly. Every single response you give should be a mine action call. You have 70 ticks — use them.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-14T22:23:13.646Z",
-  "source": "overlord",
-  "id": "1773526993646-3roxbc.json"
-}

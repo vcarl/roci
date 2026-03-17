@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [Dock at any available station in this system. Run sm dock or sm travel <station_id> then sm dock. If no station exists, report that clearly.] in phase active for 50 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-15T00:33:01.302Z",
-  "source": "overlord",
-  "id": "1773534781302-wirxbg.json"
-}

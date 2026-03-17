@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [Run ONLY this single command: sm dock war_citadel. Nothing else. Do not run sm undock, sm jump, sm travel, sm scan, or any other command. Just sm dock war_citadel. If it says you are already docked, report that and stop.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-14T23:04:52.975Z",
-  "source": "overlord",
-  "id": "1773529492975-gkc7qt.json"
-}

@@ -1,7 +1,0 @@
-{
-  "priority": "low",
-  "content": "You appear to be stuck on [Jump to The Rampart. Use the jump command targeting 'the_rampart'. After jumping, poll your location every 15 seconds for up to 3 minutes. The system WILL show 'unknown' temporarily during transit — this is normal. Do NOT report failure while it says 'unknown'. Only report success when current_system shows 'the_rampart', or failure after 3 full minutes of polling with no resolution.] in phase active for 15 minutes. Assess your current situation and either continue or abandon and replan.",
-  "issuedAt": "2026-03-14T23:45:34.730Z",
-  "source": "overlord",
-  "id": "1773531934730-4logww.json"
-}
