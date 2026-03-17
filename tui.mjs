@@ -6,7 +6,7 @@
  * Keys:
  *   Tab       -- cycle edict target
  *   [ / ]     -- cycle focused agent (thought panel)
- *   P         -- cycle edict priority
+ *   Ctrl+P    -- cycle edict priority
  *   Enter     -- send edict
  *   Ctrl+C    -- quit
  */
@@ -113,7 +113,7 @@ let targetIdx = 0;
 const priorities = ["low", "high", "critical"];
 let prioIdx = 1;
 let focusIdx = 0;
-let showOvermind = false;  // O key toggles overmind log panel
+let showOvermind = false;  // Ctrl+O toggles overmind log panel
 let statusMsg = "";
 let statusMsgTs = 0;
 
@@ -351,8 +351,8 @@ process.stdin.on("keypress", (ch, key) => {
   if (key.name === "tab")           { targetIdx = (targetIdx + 1) % allTargets.length; render(); return; }
   if (ch === "[")                   { focusIdx = (focusIdx - 1 + AGENTS.length) % AGENTS.length; render(); return; }
   if (ch === "]")                   { focusIdx = (focusIdx + 1) % AGENTS.length; render(); return; }
-  if (ch === "p" || ch === "P")     { prioIdx = (prioIdx + 1) % priorities.length; render(); return; }
-  if (ch === "o" || ch === "O")     { showOvermind = !showOvermind; render(); return; }
+  if (key.ctrl && key.name === "p") { prioIdx = (prioIdx + 1) % priorities.length; render(); return; }
+  if (key.ctrl && key.name === "o") { showOvermind = !showOvermind; render(); return; }
   if (key.name === "return" || key.name === "enter") {
     const msg = inputBuf.trim();
     if (msg) {

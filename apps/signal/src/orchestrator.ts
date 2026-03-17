@@ -174,7 +174,7 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
                 // Read wind-down to determine how long to wait before restarting
                 const windDown = yield* Effect.sync(() => readWindDown(playersDir))
                 if (windDown?.sessionEndTime) {
-                  const resumeAt = new Date(windDown.sessionEndTime).getTime() + 500_000
+                  const resumeAt = new Date(windDown.sessionEndTime).getTime() + 60_000
                   const waitMs = Math.max(0, resumeAt - Date.now())
                   yield* logToConsole(charName, "orchestrator", `Nonstop: session end detected. Waiting ${Math.round(waitMs / 1000)}s for reset...`)
                   yield* Effect.sleep(Duration.millis(waitMs))
