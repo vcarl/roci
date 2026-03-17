@@ -43,6 +43,21 @@ export function clearWindDown(playersDir: string): void {
   }
 }
 
+
+/**
+ * Returns true if the wind-down signal has expired — sessionEndTime is set and
+ * is more than 60s in the past. Used to auto-clear stale signals left over when
+ * the process was killed before it could clear the file itself.
+ *
+ * Wind-downs without sessionEndTime (manual intervention signals) are never
+ * considered stale by this function.
+ */
+export function isWindDownStale(signal: WindDownSignal): boolean {
+  if (!signal.sessionEndTime) return false
+  const resumeAt = new Date(signal.sessionEndTime).getTime() + 60_000
+  return Date.now() > resumeAt
+}
+
 /**
  * Start polling for a wind-down signal. Calls `onWindDown` when detected.
  * Returns a cancel function.

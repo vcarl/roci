@@ -8,7 +8,7 @@ import { execSync } from "node:child_process"
 import * as path from "node:path"
 import type { ResolvedDomain } from "./domains/registry.js"
 import { OAuthToken } from "@signal/core/services/OAuthToken.js"
-import { readWindDown, clearWindDown } from "@signal/core/operator/wind-down-file.js"
+import { readWindDown, clearWindDown, isWindDownStale } from "@signal/core/operator/wind-down-file.js"
 
 /**
  * Ensure a domain container exists and is running.
@@ -164,6 +164,11 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
         const loopEffect = nonstop
           ? Effect.gen(function* () {
               const playersDir = path.resolve(projectRoot, "players")
+              const startupWD = readWindDown(playersDir)
+              if (startupWD && isWindDownStale(startupWD)) {
+                clearWindDown(playersDir)
+                console.log("[" + charName + "][orchestrator] Stale wind-down cleared on startup (expired " + startupWD.sessionEndTime + ")")
+              }
               let iteration = 0
               while (true) {
                 iteration++

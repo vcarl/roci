@@ -18,7 +18,7 @@ import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
 import { askUser } from "@signal/core/util/prompt.js"
 import { reportStatus } from "@signal/core/server/status-reporter.js"
 import { readTodo } from "@signal/core/operator/todo-reader.js"
-import { readWindDown } from "@signal/core/operator/wind-down-file.js"
+import { readWindDown, clearWindDown, isWindDownStale } from "@signal/core/operator/wind-down-file.js"
 
 /** Active session wall-clock duration before transitioning to social phase. */
 const ACTIVE_SESSION_DURATION_MS = 50 * 60 * 1000 // 50 minutes
@@ -191,13 +191,19 @@ const activePhase = {
       const conn = context.connection as SMConnection
       const { events, initialState, tickIntervalSec, initialTick } = conn
 
-      // If a wind-down signal is still active (from a previous session), exit cleanly.
-      // Nonstop mode in orchestrator.ts will clear it and restart after the session resets.
+      // If a wind-down signal exists, check if it is stale (sessionEndTime passed).
+      // Stale = process was killed before it could clear the file. Auto-clear and continue.
+      // Fresh = session not yet reset. Return Shutdown so nonstop loop waits.
       const playersDir = path.resolve(context.char.dir, "..", "..")
       const existingWindDown = yield* Effect.sync(() => readWindDown(playersDir))
       if (existingWindDown) {
-        yield* logToConsole(context.char.name, "orchestrator", `Wind-down still active (${existingWindDown.reason}) — returning Shutdown for nonstop wait`)
-        return { _tag: "Shutdown" } as PhaseResult
+        if (isWindDownStale(existingWindDown)) {
+          yield* logToConsole(context.char.name, "orchestrator", `Stale wind-down cleared (expired ${existingWindDown.sessionEndTime}) — continuing`)
+          yield* Effect.sync(() => clearWindDown(playersDir))
+        } else {
+          yield* logToConsole(context.char.name, "orchestrator", `Wind-down still active (${existingWindDown.reason}) — returning Shutdown for nonstop wait`)
+          return { _tag: "Shutdown" } as PhaseResult
+        }
       }
 
       yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
