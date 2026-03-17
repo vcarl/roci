@@ -11,7 +11,7 @@
 
 import { spawn } from "node:child_process"
 import { PrayerClient } from "./prayer-client.js"
-import type { PrayerSnapshot, PrayerFullState, PrayerRoute, PrayerApiStats } from "./prayer-client.js"
+import type { PrayerSnapshot, PrayerFullState, PrayerRoute, PrayerApiStats, PrayerEconomyDeal } from "./prayer-client.js"
 export type { PrayerFullState }
 
 export type { PrayerSnapshot }
@@ -233,6 +233,22 @@ export class PrayerManager {
     return this.client.getApiStats(sessionId)
   }
 
+
+
+  /**
+   * Attempt to repair a broken PrayerLang script via the local LLM.
+   * Returns repaired script text, or null if repair fails.
+   */
+  async repairScript(agentId: string, brokenScript: string, parseError: string): Promise<string | null> {
+    const sessionId = this.sessions.get(agentId)
+    if (!sessionId) return null
+    const repaired = await this.client.repairScript(sessionId, brokenScript, parseError)
+    if (repaired) {
+      console.log(`[Prayer][${agentId}] script auto-repaired via LLM`)
+    }
+    return repaired
+  }
+
   async cleanup(agentId: string): Promise<void> {
     const sessionId = this.sessions.get(agentId)
     if (!sessionId) return
@@ -318,6 +334,31 @@ export function buildPrayerSummary(
     if (fullState.activeMissions && fullState.activeMissions.length > 0) {
       const missions = fullState.activeMissions.map((m) => `  ${m.title}: ${m.progressText}`).join("\n")
       lines.push(`Active missions:\n${missions}`)
+    }
+    if (fullState.currentPoiResources && fullState.currentPoiResources.length > 0) {
+      const res = fullState.currentPoiResources.map((r) => `  ${r.resourceId} — ${r.richnessText}${r.remaining !== undefined ? ` (${r.remaining} remaining)` : ""}`).join("\n")
+      lines.push(`Resources at current POI:\n${res}`)
+    }
+    if (fullState.economyDeals && fullState.economyDeals.length > 0) {
+      // Top 5 deals by profit per unit
+      const top = fullState.economyDeals
+        .sort((a, b) => b.profitPerUnit - a.profitPerUnit)
+        .slice(0, 5)
+      const dealLines = top.map((d) =>
+        `  ${d.itemId}: buy @${d.buyStationId} (${d.buyPrice}cr) → sell @${d.sellStationId} (${d.sellPrice}cr) = +${d.profitPerUnit}cr/unit`
+      ).join("\n")
+      lines.push(`Top arbitrage opportunities:\n${dealLines}`)
+    }
+    if (fullState.poisByResource && Object.keys(fullState.poisByResource).length > 0) {
+      const entries = Object.entries(fullState.poisByResource)
+        .slice(0, 8)
+        .map(([res, pois]) => `  ${res}: ${pois.slice(0, 3).join(", ")}`)
+        .join("\n")
+      lines.push(`Known mining locations (resource → POIs):\n${entries}`)
+    }
+    if (fullState.availableMissions && fullState.availableMissions.length > 0) {
+      const mlist = fullState.availableMissions.slice(0, 5).map((m) => `  [${m.type}] ${m.title} — ${m.rewardsSummary}`).join("\n")
+      lines.push(`Available missions at this station:\n${mlist}`)
     }
   } else {
     lines.push(

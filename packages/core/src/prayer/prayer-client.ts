@@ -36,6 +36,11 @@ export type PrayerFullState = {
   executionStatusLines?: string[]
   memory?: string[]
   lastGenerationPrompt?: string
+  economyDeals?: PrayerEconomyDeal[]
+  globalSellPrices?: Record<string, number>
+  poisByResource?: Record<string, string[]>
+  currentPoiResources?: PrayerPoiResource[]
+  availableMissions?: Array<{ title: string; type: string; difficulty?: number; rewardsSummary: string }>
 }
 
 export type PrayerRoute = {
@@ -49,6 +54,24 @@ export type PrayerApiStats = {
   totalCalls?: number
   distinctCommands?: number
   topCommands?: Array<{ command: string; count: number; avgLatencyMs: number; maxLatencyMs: number }>
+}
+
+
+export type PrayerEconomyDeal = {
+  itemId: string
+  buyStationId: string
+  buyPrice: number
+  sellStationId: string
+  sellPrice: number
+  profitPerUnit: number
+}
+
+export type PrayerPoiResource = {
+  resourceId: string
+  name: string
+  richnessText: string
+  richness?: number
+  remaining?: number
 }
 
 export class PrayerClient {
@@ -156,7 +179,16 @@ export class PrayerClient {
           system?: string
           credits?: number
           docked?: boolean
-          currentPOI?: { name?: string }
+          currentPOI?: {
+            name?: string
+            resources?: Array<{
+              resourceId: string
+              name: string
+              richnessText: string
+              richness?: number
+              remaining?: number
+            }>
+          }
           ship?: {
             fuel: number
             maxFuel: number
@@ -168,6 +200,28 @@ export class PrayerClient {
             cargoCapacity: number
             cargo?: Record<string, { itemId: string; quantity: number }>
           }
+          economyDeals?: Array<{
+            itemId: string
+            buyStationId: string
+            buyPrice: number
+            sellStationId: string
+            sellPrice: number
+            profitPerUnit: number
+          }>
+          galaxy?: {
+            market?: {
+              globalMedianSellPrices?: Record<string, number>
+            }
+            resources?: {
+              poisByResource?: Record<string, string[]>
+            }
+          }
+          availableMissions?: Array<{
+            title: string
+            type: string
+            difficulty?: number
+            rewardsSummary: string
+          }>
           notifications?: Array<{ type: string; summary: string; payloadJson: string }>
           activeMissions?: Array<{ title: string; progressText: string }>
         }
@@ -200,6 +254,29 @@ export class PrayerClient {
         executionStatusLines: data.executionStatusLines,
         memory: data.memory ?? undefined,
         lastGenerationPrompt: data.lastGenerationPrompt ?? undefined,
+        economyDeals: data.state?.economyDeals?.map((d) => ({
+          itemId: d.itemId,
+          buyStationId: d.buyStationId,
+          buyPrice: d.buyPrice,
+          sellStationId: d.sellStationId,
+          sellPrice: d.sellPrice,
+          profitPerUnit: d.profitPerUnit,
+        })),
+        globalSellPrices: data.state?.galaxy?.market?.globalMedianSellPrices ?? undefined,
+        poisByResource: data.state?.galaxy?.resources?.poisByResource ?? undefined,
+        currentPoiResources: data.state?.currentPOI?.resources?.map((r) => ({
+          resourceId: r.resourceId,
+          name: r.name,
+          richnessText: r.richnessText,
+          richness: r.richness,
+          remaining: r.remaining,
+        })),
+        availableMissions: data.state?.availableMissions?.map((m) => ({
+          title: m.title,
+          type: m.type,
+          difficulty: m.difficulty,
+          rewardsSummary: m.rewardsSummary,
+        })),
       }
     } catch {
       return null
@@ -263,6 +340,51 @@ export class PrayerClient {
     } catch {
       // Non-critical — don't throw
     }
+  }
+
+
+  async generate(sessionId: string, prompt: string, maxTokens = 512, temperature = 0.7): Promise<string | null> {
+    try {
+      const res = await this.post(`/api/runtime/sessions/${sessionId}/generate`, {
+        prompt,
+        maxTokens,
+        temperature,
+      })
+      if (!res.ok) return null
+      const data = await res.json() as { text?: string }
+      return data.text ?? null
+    } catch {
+      return null
+    }
+  }
+
+
+  /**
+   * Attempt to repair a broken PrayerLang script using the local LLM.
+   * Builds a focused repair prompt (no character context needed — pure syntax correction).
+   * Returns the repaired script text, or null if generation fails.
+   */
+  async repairScript(sessionId: string, brokenScript: string, parseError: string): Promise<string | null> {
+    const prompt =
+      "<|start_header_id|>system<|end_header_id|>\n" +
+      "You write PrayerLang DSL scripts for a SpaceMolt game agent.\n" +
+      "Fix the broken script below. Output only the corrected DSL text. No markdown, no explanation.\n" +
+      "Every command ends with a semicolon (;).\n" +
+      "<|eot_id|>\n" +
+      "<|start_header_id|>user<|end_header_id|>\n" +
+      "Broken script:\n" + brokenScript.trim() + "\n\n" +
+      "Parse error:\n" + parseError.trim() + "\n\n" +
+      "DSL rules:\n" +
+      "- Three block types only: repeat { ... }  |  until CONDITION { ... }  |  if CONDITION { ... }\n" +
+      "- NO 'repeat until' — does not exist. Use: until CONDITION { ... }\n" +
+      "- mine takes NO argument — use bare: mine;\n" +
+      "- Every command ends with ;\n" +
+      "- Conditions: FUEL() CARGO() HULL() CREDITS() STASH(poi,item) MISSION_COMPLETE(id)\n\n" +
+      "Return only the corrected script text.\n" +
+      "<|eot_id|>\n" +
+      "<|start_header_id|>assistant<|end_header_id|>\n"
+
+    return this.generate(sessionId, prompt, 400, 0.1)
   }
 
   async deleteSession(sessionId: string): Promise<void> {
