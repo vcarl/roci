@@ -3,7 +3,7 @@ dist/
 .nx/
 coverage/
 *.tsbuildinfo
-.ds_store
+.DS_Store
 __pycache__/
 .env
 .oauth-token
@@ -11,5 +11,24 @@ __pycache__/
 .claude/
 repos/
 
+# Runtime player data
 players/
+
+# Config / secrets
 config.json
+
+# Logs and runtime artifacts
+*.log
+*.pid
+*.bak
+
+# Windows Zone.Identifier alternate data streams (WSL artifact)
+*Zone.Identifier
+*:Zone.Identifier
+
+# Embed server
+embed_server.log
+embed_server.pid
+
+# Submodule working state
+overlord.log
