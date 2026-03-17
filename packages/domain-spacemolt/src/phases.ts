@@ -288,7 +288,14 @@ const activePhase = {
         evalModel: process.env.EVAL_MODEL || undefined,
       }).pipe(Effect.provide(context.domainBundle))
 
-      // When the state machine exits, transition to social phase
+      // Wind-down exit: skip social/reflection — halt so nonstop loop waits for session reset.
+      const windDownReason = yield* Deferred.await(exitSignal)
+      if (windDownReason._tag === "ExternalSignal" && windDownReason.reason.startsWith("wind-down")) {
+        yield* logToConsole(context.char.name, "orchestrator", `Wind-down halt — skipping social/reflection (${windDownReason.reason})`)
+        return { _tag: "Shutdown" } as PhaseResult
+      }
+
+      // Normal exit (session timer, hook): transition to social phase
       return { _tag: "Continue", next: "social", connection: context.connection } as PhaseResult
     }),
 }
