@@ -1,0 +1,10 @@
+{
+  "updatedAt": null,
+  "lockbox": {
+    "credits": 0, "creditsTarget": 200000,
+    "steelPlate": 0, "steelPlateTarget": 200,
+    "circuitBoard": 0, "circuitBoardTarget": 50
+  },
+  "gathering": { "current": 0, "target": 20 },
+  "factionStorage": {}
+}

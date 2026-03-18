@@ -66,3 +66,15 @@ export function applyHarnessState(state: unknown, tag: HarnessStateTag): unknown
 
   return s
 }
+
+// ── SOCIAL_REPORT parser ────────────────────────────────────
+
+/**
+ * Parse a SOCIAL_REPORT:...\nSOCIAL_END block from Claude's output.
+ * Returns the report text between the markers, or null if not found.
+ */
+export function parseSocialReport(output: string): string | null {
+  const match = output.match(/SOCIAL_REPORT:\s*\n?([\s\S]*?)\s*SOCIAL_END/)
+  if (!match) return null
+  return match[1]?.trim() || null
+}

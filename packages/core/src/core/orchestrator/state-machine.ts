@@ -29,6 +29,8 @@ import { readWindDown } from "../../operator/wind-down-file.js"
 import { drainEdictInbox } from "../../operator/edict-inbox.js"
 import { PrayerManager, parsePrayerScript, buildPrayerSummary } from "../../prayer/prayer-manager.js"
 import type { AnyModel } from "../../services/Claude.js"
+import { shouldRunSocial, runSocialTurn, type SocialBrainConfig, type SocialBrainState } from "./social-brain.js"
+import { updateTeamStatus, writeWorkspaceGoals, writeFactionChatCache } from "../../operator/workspace.js"
 
 export interface StateMachineConfig {
   char: CharacterConfig
@@ -71,6 +73,20 @@ export interface StateMachineConfig {
    * Defaults to "haiku".
    */
   evalModel?: AnyModel
+  /**
+   * Social Brain configuration. If enabled, a second autonomous planning loop
+   * fires between Core Brain turns to handle social presence.
+   */
+  socialBrain?: SocialBrainConfig
+  /**
+   * Pre-loaded social prompt templates (social-plan.md, social-body.md).
+   * Loaded by the domain layer at startup.
+   */
+  socialTemplates?: { plan: string; body: string }
+  /**
+   * Project root path for workspace file access.
+   */
+  projectRoot?: string
 }
 
 /**
@@ -121,10 +137,21 @@ export const runStateMachine = (config: StateMachineConfig) =>
     // Cooldown: if PrayerManager.create() returns null, don't retry for 5 minutes
     let prayerManagerFailedAt = 0
 
+    // --- Social Brain state ---
+    const socialBrainStateRef = yield* Ref.make<SocialBrainState>({
+      lastSocialTick: 0,
+      consecutiveFailures: 0,
+      skipUntilTick: 0,
+    })
+    // Track ticks for workspace updates
+    let lastWorkspaceGoalsTick = 0
+    let lastFactionChatCacheTick = 0
+
     // --- Failure cap state ---
     // Track consecutive step failures to prevent runaway replan loops.
     let consecutiveFailures = 0
     let replanBlockedUntilTick = 0
+    let replanBlockedLoggedUntil = 0  // suppress duplicate "blocked" logs within same block window
 
     // Read credentials once for Prayer session creation
     let prayerCreds: { username: string; password: string } | null = null
@@ -257,7 +284,10 @@ export const runStateMachine = (config: StateMachineConfig) =>
         if (needsPlan && replanBlockedUntilTick > 0) {
           const currentTick = yield* Ref.get(tickCountRef)
           if (currentTick <= replanBlockedUntilTick) {
-            yield* logToConsole(config.char.name, "monitor", `Replan blocked (failure cap) — tick ${currentTick}/${replanBlockedUntilTick}`)
+            if (replanBlockedLoggedUntil !== replanBlockedUntilTick) {
+              yield* logToConsole(config.char.name, "monitor", `Replan blocked (failure cap) — resumes at tick ${replanBlockedUntilTick}`)
+              replanBlockedLoggedUntil = replanBlockedUntilTick
+            }
             return
           }
           // Block expired — reset and allow replan
@@ -860,6 +890,96 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
                 yield* Ref.update(softAlertAccRef, (acc) => { const next = new Map(acc); next.delete("replan:blocked"); return next })
               }
             }
+          }
+        }
+
+        // --- Workspace updates (team status every tick, goals every 10, chat every 5) ---
+        if (config.projectRoot) {
+          const statusMetrics = summary.metrics as Record<string, unknown>
+          yield* Effect.sync(() => {
+            try {
+              updateTeamStatus(config.projectRoot!, config.char.name.toLowerCase(), {
+                location: String(statusMetrics.system ?? "unknown"),
+                docked: Boolean(statusMetrics.docked),
+                station: statusMetrics.station ? String(statusMetrics.station) : null,
+                credits: Number(statusMetrics.credits ?? 0),
+                fuel: Number(statusMetrics.fuel ?? 0),
+                cargo: { used: Number(statusMetrics.cargoUsed ?? 0), capacity: Number(statusMetrics.cargoCapacity ?? 0) },
+                currentActivity: String(statusMetrics.currentActivity ?? statusMetrics.situationType ?? "unknown"),
+                lastUpdated: new Date().toISOString(),
+              })
+            } catch { /* silent */ }
+          })
+
+          // Goals every 10 ticks
+          if (tick - lastWorkspaceGoalsTick >= 10) {
+            lastWorkspaceGoalsTick = tick
+            const factionStorage = (state as Record<string, unknown>).factionStorage as Record<string, number> | undefined
+            if (factionStorage) {
+              yield* Effect.sync(() => {
+                try {
+                  writeWorkspaceGoals(config.projectRoot!, factionStorage!)
+                } catch { /* silent */ }
+              })
+            }
+          }
+
+          // Faction chat cache every 5 ticks
+          if (tick - lastFactionChatCacheTick >= 5) {
+            lastFactionChatCacheTick = tick
+            const recentChat = yield* Ref.get(chatContextRef)
+            if (recentChat.length > 0) {
+              yield* Effect.sync(() => {
+                try {
+                  writeFactionChatCache(config.projectRoot!, recentChat.map(m => ({
+                    from: m.sender,
+                    message: m.content,
+                    timestamp: new Date().toISOString(),
+                  })))
+                } catch { /* silent */ }
+              })
+            }
+          }
+        }
+
+        // --- Social Brain: fires between Core turns when cadence is met ---
+        if (config.socialBrain?.enabled && config.socialTemplates && config.projectRoot) {
+          const currentTick = yield* Ref.get(tickCountRef)
+          const currentSocialState = yield* Ref.get(socialBrainStateRef)
+          const currentFiber = yield* Ref.get(subagentFiberRef)
+
+          // Only run social if no core subagent is running (sequential, never overlap)
+          if (!currentFiber && shouldRunSocial(currentTick, currentSocialState, config.socialBrain)) {
+            yield* logToConsole(config.char.name, "social", `Social Brain triggered (tick ${currentTick}, last social: ${currentSocialState.lastSocialTick})`)
+
+            const promptBuilder = yield* PromptBuilderTag
+            const newSocialState = yield* runSocialTurn({
+              char: config.char,
+              containerId: config.containerId,
+              playerName: config.playerName,
+              containerEnv: config.containerEnv,
+              addDirs: config.addDirs,
+              currentTick,
+              socialBrainState: currentSocialState,
+              projectRoot: config.projectRoot,
+              socialPlanTemplate: config.socialTemplates.plan,
+              socialBodyTemplate: config.socialTemplates.body,
+              systemPrompt: promptBuilder.systemPrompt("select", "social"),
+            }).pipe(
+              Effect.catchAll((e) => {
+                return logToConsole(config.char.name, "social", `Social turn error: ${e}`).pipe(
+                  Effect.as({
+                    lastSocialTick: currentTick,
+                    consecutiveFailures: currentSocialState.consecutiveFailures + 1,
+                    skipUntilTick: currentSocialState.consecutiveFailures + 1 >= 3
+                      ? currentTick + 15
+                      : currentSocialState.skipUntilTick,
+                  } satisfies SocialBrainState),
+                )
+              }),
+            )
+
+            yield* Ref.set(socialBrainStateRef, newSocialState)
           }
         }
 

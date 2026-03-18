@@ -19,12 +19,40 @@ import { askUser } from "@signal/core/util/prompt.js"
 import { reportStatus } from "@signal/core/server/status-reporter.js"
 import { readTodo } from "@signal/core/operator/todo-reader.js"
 import { readWindDown, clearWindDown, isWindDownStale } from "@signal/core/operator/wind-down-file.js"
+import { extractMemoriesFromDiary, writeMemoriesToDb } from "@signal/cult"
+import { seedWorkspace, generateWorkspaceIndex } from "@signal/core/operator/workspace.js"
+import { loadTemplate } from "@signal/core/core/template.js"
+import { fileURLToPath } from "node:url"
 
 /** Active session wall-clock duration before transitioning to social phase. */
 const ACTIVE_SESSION_DURATION_MS = 50 * 60 * 1000 // 50 minutes
 
+/** Social Brain cadence: fire every 25 ticks. */
+const SOCIAL_BRAIN_CADENCE = 25
+
+const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "prompts")
+
 /** Diary lines above this threshold trigger dream compression. */
 const DIARY_COMPRESSION_THRESHOLD = 200
+
+/** Host-side path to shared Signal Memory DB. */
+const MEMORY_DB_PATH = "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/memory-mcp/data/memory.db"
+
+/** Post-dream hook: extract high-signal facts and write to Signal Memory DB. */
+const afterDream = (char: { name: string }, compressedDiary: string) =>
+  Effect.sync(() => {
+    const entries = extractMemoriesFromDiary(char.name, compressedDiary)
+    if (entries.length === 0) return
+
+    const result = writeMemoriesToDb(char.name, entries, MEMORY_DB_PATH)
+    // Log results to stderr (host process, not in-container)
+    if (result.written > 0) {
+      process.stderr.write(`[memory-bridge] ${char.name}: wrote ${result.written} entries to Signal Memory\n`)
+    }
+    for (const err of result.errors) {
+      process.stderr.write(`[memory-bridge] ${char.name}: ${err}\n`)
+    }
+  })
 
 /** Internal connection type for SpaceMolt phases. */
 type SMConnection = ConnectionState<GameState, GameEvent>
@@ -148,7 +176,7 @@ const startupPhase = {
           `Connected via WebSocket as ${initialState.player.username}`,
         )
 
-        yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
+        yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, afterDream)
 
         const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
         return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -165,7 +193,7 @@ const startupPhase = {
       )
 
       // Dream if diary is long
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, afterDream)
 
       const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
       return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -235,7 +263,7 @@ const activePhase = {
       // playersDir already declared above (used for wind-down check)
 
       // TODO.md directive injection + officer deep context: read before each brain plan
-      const OFFICER_NAMES = new Set(["neonecho", "zealot", "savolent"])
+      const OFFICER_NAMES = new Set(["neonecho", "zealot", "savolent", "blackjack"])
       const overlordDir = path.resolve(context.char.dir, "..", "..", "..", "..", "overlord")
 
       const hooksWithTodo: LifecycleHooks = {
@@ -269,6 +297,27 @@ const activePhase = {
             return parts.length > 0 ? { additionalContext: parts.join("\n\n---\n\n") } : {}
           }),
       }
+      // Compute project root for workspace access
+      const projectRoot = path.resolve(context.char.dir, "..", "..", "..", "..")
+
+      // Seed workspace on startup (creates dirs + copies lore/doctrine, never overwrites)
+      yield* Effect.sync(() => {
+        try { seedWorkspace(projectRoot, overlordDir) } catch { /* silent */ }
+      })
+
+      // Load social brain templates
+      const socialTemplates = yield* Effect.gen(function* () {
+        const socialPlan = yield* loadTemplate(path.join(PROMPTS_DIR, "social-plan.md"))
+        const socialBody = yield* loadTemplate(path.join(PROMPTS_DIR, "social-body.md"))
+        return { plan: socialPlan, body: socialBody } as { plan: string; body: string } | undefined
+      }).pipe(
+        Effect.catchAll(() =>
+          logToConsole(context.char.name, "orchestrator", "Social brain templates not found — social brain disabled").pipe(
+            Effect.as(undefined as { plan: string; body: string } | undefined),
+          ),
+        ),
+      )
+
       yield* runStateMachine({
         char: context.char,
         containerId: context.containerId,
@@ -286,6 +335,9 @@ const activePhase = {
         prayerBaseUrl: process.env.PRAYER_BASE_URL,
         brainModel: process.env.BRAIN_MODEL || undefined,
         evalModel: process.env.EVAL_MODEL || undefined,
+        socialBrain: socialTemplates ? { enabled: true, cadence: SOCIAL_BRAIN_CADENCE } : undefined,
+        socialTemplates,
+        projectRoot,
       }).pipe(Effect.provide(context.domainBundle))
 
       // Wind-down exit: skip social/reflection — halt so nonstop loop waits for session reset.
@@ -326,7 +378,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, afterDream)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }
