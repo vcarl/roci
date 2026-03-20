@@ -13,7 +13,7 @@
 import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
-import { ClaudeError } from "../../../services/Claude.js"
+import { ClaudeError, ANTHROPIC_MODELS, callOpenRouter } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
@@ -65,8 +65,29 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      const executor = yield* CommandExecutor.CommandExecutor
       const start = Date.now()
+
+      // OpenRouter branch — non-Anthropic models bypass Docker entirely.
+      // Brain turns (plan, evaluate, interrupt) use this path when configured.
+      if (!ANTHROPIC_MODELS.has(config.model)) {
+        yield* logToConsole(config.char.name, config.role, `[openrouter] model=${config.model}`)
+        const output = yield* Effect.promise(() =>
+          callOpenRouter({
+            prompt: config.prompt,
+            model: config.model,
+            systemPrompt: config.systemPrompt || undefined,
+            timeoutMs: config.timeoutMs,
+            maxTokens: 4096,
+          }),
+        ).pipe(
+          Effect.mapError((e) => new ClaudeError(`OpenRouter turn failed: ${e}`, e)),
+        )
+        yield* logToConsole(config.char.name, config.role,
+          `[openrouter] done in ${Math.round((Date.now() - start) / 1000)}s (${output.length} chars)`)
+        return { output, timedOut: false, durationMs: Date.now() - start } satisfies TurnResult
+      }
+
+      const executor = yield* CommandExecutor.CommandExecutor
       const oauthToken = yield* OAuthToken
       const { token, version: tokenVersion } = yield* oauthToken.getToken
 
@@ -83,9 +104,9 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
         "--verbose",
       ]
 
-      // Brain (opus) uses full effort; body needs normal effort for multi-step
-      // workflows; only apply low effort to non-body, non-opus roles (old subagents)
-      if (config.model !== "opus" && config.role !== "body") {
+      // Body agents run at normal effort (multi-step workflows need headroom).
+      // Brain, evaluate, and other roles use low effort to control token spend.
+      if (config.role !== "body") {
         claudeArgs.push("--effort", "low")
       }
 

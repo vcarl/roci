@@ -1,4 +1,4 @@
-import type { ClaudeModel } from "../../../services/Claude.js"
+import type { AnyModel, ClaudeModel } from "../../../services/Claude.js"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
 
 /** Configuration for a single brain or body turn. */
@@ -7,7 +7,7 @@ export interface TurnConfig {
   playerName: string
   systemPrompt: string
   prompt: string
-  model: ClaudeModel
+  model: AnyModel
   timeoutMs: number
   env?: Record<string, string>
   /** Container --add-dir paths for claude subagent. */

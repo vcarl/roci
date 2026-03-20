@@ -22,6 +22,7 @@ import { killSubagent, evaluateCompletedSubagent, checkMidRun, maybeSpawnSubagen
 import { maybeRequestPlan } from "./planning/planning-cycle.js"
 import { runTurn } from "../limbic/hypothalamus/process-runner.js"
 import { PromptBuilderTag } from "../prompt-builder.js"
+import type { AnyModel } from "../../services/Claude.js"
 
 export interface StateMachineConfig {
   char: CharacterConfig
@@ -38,6 +39,14 @@ export interface StateMachineConfig {
   hooks?: LifecycleHooks
   /** Pause for manual approval before plan/subagent steps. */
   manualApproval?: boolean
+  /** Override model for brain plan/interrupt turns. Defaults to "sonnet". */
+  brainModel?: AnyModel
+  /** Override model for brain evaluate turns. Defaults to "haiku". */
+  evalModel?: AnyModel
+  /** Override model for "sonnet" complexity body steps. Defaults to "sonnet". */
+  sonnetModel?: AnyModel
+  /** Override model for "haiku" complexity body steps. Defaults to "haiku". */
+  haikuModel?: AnyModel
 }
 
 /**
@@ -100,7 +109,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       procedureTargets: procedureTargetsRef,
       procedureStartState: procedureStartStateRef,
     }
-    const planningServices = { char: config.char, containerId: config.containerId, playerName: config.playerName, containerEnv: config.containerEnv, addDirs: config.addDirs, tickIntervalSec: config.tickIntervalSec, hooks, renderer }
+    const planningServices = { char: config.char, containerId: config.containerId, playerName: config.playerName, containerEnv: config.containerEnv, addDirs: config.addDirs, tickIntervalSec: config.tickIntervalSec, hooks, renderer, brainModel: config.brainModel }
     const evalServices = {
       renderer,
       classifier,
@@ -114,6 +123,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       addDirs: config.addDirs,
       modeRef,
       investigationReportRef,
+      evalModel: config.evalModel,
     }
     const spawnConfig = {
       char: config.char,
@@ -123,6 +133,8 @@ export const runStateMachine = (config: StateMachineConfig) =>
       addDirs: config.addDirs,
       tickIntervalSec: config.tickIntervalSec,
       modeRef,
+      sonnetModel: config.sonnetModel,
+      haikuModel: config.haikuModel,
     }
     const spawnServices = { renderer, hooks }
 
