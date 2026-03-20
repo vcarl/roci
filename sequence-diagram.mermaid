@@ -1,0 +1,59 @@
+sequenceDiagram
+    participant O as Orchestrator<br/>(activePhase)
+    participant FS as CharacterFs
+    participant D as Docker Container
+    participant B as Brain (Opus)
+    participant Bo as Body (Sonnet)
+
+    loop Up to 3 cycles
+        Note over O: Drain event queue,<br/>update currentState
+
+        O->>O: classify situation<br/>renderStateSummary()
+
+        O->>FS: readBackground(char)
+        FS-->>O: background
+
+        O->>FS: readValues(char)
+        FS-->>O: values
+
+        O->>FS: readDiary(char)
+        FS-->>O: diary (last 3000 chars)
+
+        O->>D: ls reports/ | head -5
+        D-->>O: recent report files
+        O->>D: cat reports/{file} (×3)
+        D-->>O: report content
+
+        Note over O: buildBrainPrompt()<br/>State + Identity + Values<br/>+ Diary + Reports
+
+        rect rgb(60, 60, 90)
+            Note over O,Bo: runCycle()
+
+            O->>B: brain-system-prompt.md +<br/>brainPrompt (all context)
+            Note over B: Reasons about state,<br/>identity, values, diary,<br/>past reports (8 min timeout)
+            B-->>D: May write to DIARY.md
+            B-->>O: briefing (stdout)
+
+            O->>Bo: body-system-prompt.md +<br/>briefing (brain's stdout)
+            Note over Bo: Executes skills: code, triage,<br/>review, investigate, etc.<br/>Pushes, opens PRs, comments<br/>(15 min timeout)
+            Bo-->>D: Updates DIARY.md with accomplishments
+            Bo-->>O: body output (stdout)
+        end
+
+        O->>D: write reports/{timestamp}.md<br/>(body output for next cycle's brain)
+    end
+
+    Note over O: Transition to break phase
+
+    rect rgb(50, 70, 50)
+        Note over O,D: Break Phase (90 min)<br/>Poll event queue every 5s<br/>Wake early on critical interrupts
+    end
+
+    Note over O: Transition to reflection phase
+
+    rect rgb(70, 50, 50)
+        Note over O,FS: Reflection Phase<br/>Dream/compress diary if >200 lines
+    end
+
+    O->>O: Loop back to active phase
+
