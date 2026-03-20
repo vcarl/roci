@@ -57,3 +57,8 @@ export type {
 	StepCompletionResult,
 	StepTiming,
 } from "./core/types.js";
+
+export type { Edict, EdictPriority } from "./operator/edict-inbox.js";
+export { drainEdictInbox, writeEdict } from "./operator/edict-inbox.js";
+
+export { readTodo, writeTodo } from "./operator/todo-reader.js";
