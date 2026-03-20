@@ -16,6 +16,7 @@ import { logToConsole } from "../../logging/console-renderer.js"
 import { runTurn } from "../limbic/hypothalamus/process-runner.js"
 import { parseSocialReport } from "./harness-state.js"
 import { readSocialState, writeSocialState, type SocialState } from "../../operator/workspace.js"
+import type { AnyModel } from "../../services/Claude.js"
 import * as path from "node:path"
 import { readFileSync } from "node:fs"
 
@@ -83,6 +84,10 @@ export const runSocialTurn = (params: {
   socialPlanTemplate: string
   socialBodyTemplate: string
   systemPrompt: string
+  /** Model for planning turns (default "haiku") */
+  brainModel?: AnyModel
+  /** Model for body turns (default "haiku") */
+  evalModel?: AnyModel
 }) =>
   Effect.gen(function* () {
     const { char, currentTick, socialBrainState, projectRoot } = params
@@ -140,7 +145,7 @@ export const runSocialTurn = (params: {
       playerName: params.playerName,
       systemPrompt: params.systemPrompt,
       prompt: planPrompt,
-      model: "haiku",
+      model: params.evalModel ?? "haiku",
       timeoutMs: 60_000,
       env: params.containerEnv,
       addDirs: params.addDirs,
@@ -215,13 +220,18 @@ export const runSocialTurn = (params: {
 
     yield* logToConsole(char.name, "social", `Executing: [${firstStep.action}] ${firstStep.intent.slice(0, 80)}`)
 
+    // Map "haiku"/"sonnet" to actual configured models
+    const bodyModel: AnyModel = firstStep.model === "sonnet"
+      ? (params.brainModel ?? "sonnet")
+      : (params.evalModel ?? "haiku")
+
     const bodyResult = yield* runTurn({
       char,
       containerId: params.containerId,
       playerName: params.playerName,
       systemPrompt: params.systemPrompt,
       prompt: bodyPrompt,
-      model: firstStep.model,
+      model: bodyModel,
       timeoutMs: 120_000,
       env: params.containerEnv,
       addDirs: params.addDirs,

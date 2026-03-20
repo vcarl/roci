@@ -1,5 +1,8 @@
 # Task Board
 
+*Harness-level task tracking. For fleet operational state, see `fleet/` directory.*
+*Resource intel has moved to `fleet/resource-deposits.md`. This board tracks harness/infrastructure work only.*
+
 ## Open
 
 ## In Progress

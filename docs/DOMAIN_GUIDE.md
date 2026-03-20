@@ -1,6 +1,6 @@
 # Domain Guide
 
-How to build a new domain for the Rocinante orchestrator. New domains should be created as workspace packages under `packages/domain-<name>/` (e.g. `packages/domain-mydomain/`), with the package name `@signal/domain-<name>`. Domain code imports from `@signal/core` instead of relative paths.
+How to build a new domain for the Signal orchestrator. New domains should be created as workspace packages under `packages/domain-<name>/` (e.g. `packages/domain-mydomain/`), with the package name `@signal/domain-<name>`. Domain code imports from `@signal/core` instead of relative paths.
 
 ## What is a Domain?
 

@@ -251,6 +251,10 @@ interface SpawnSubagentConfig {
   readonly addDirs?: string[]
   readonly tickIntervalSec: number
   readonly modeRef?: Ref.Ref<BrainMode>
+  /** Model to use for "sonnet" complexity steps. Defaults to "sonnet". */
+  readonly sonnetModel?: AnyModel
+  /** Model to use for "haiku" complexity steps. Defaults to "haiku". */
+  readonly haikuModel?: AnyModel
 }
 
 interface SpawnSubagentServices {
@@ -315,13 +319,24 @@ export const maybeSpawnSubagent = (
           model: finalStep.model,
         })
 
+        // Map "haiku"/"sonnet" to actual configured models when using OpenRouter
+        const stepModel: AnyModel = (() => {
+          const rawModel = finalStep.model
+          if (rawModel === "sonnet") {
+            return smConfig.sonnetModel ?? "sonnet"
+          } else if (rawModel === "haiku") {
+            return smConfig.haikuModel ?? "haiku"
+          }
+          return rawModel
+        })()
+
         const result = yield* runTurn({
           char: smConfig.char,
           containerId: smConfig.containerId,
           playerName: smConfig.playerName,
           systemPrompt,
           prompt,
-          model: finalStep.model,
+          model: stepModel,
           timeoutMs: finalStep.timeoutTicks * smConfig.tickIntervalSec * 1000,
           env: smConfig.containerEnv,
           addDirs: smConfig.addDirs,

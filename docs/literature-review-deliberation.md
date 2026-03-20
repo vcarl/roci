@@ -1,6 +1,6 @@
 # Literature Review: Multi-Agent Deliberation & Coordination
 
-Research conducted March 2026 for issue [#9](https://github.com/SpaceMolt/signal-crew/issues/9).
+Research conducted March 2026 for issue [#9].
 
 Goal: identify coordination and deliberation patterns applicable to a crew of 4 AI agents (Captain, Engineer, Tactical, Diplomatic) operating a shared ship in a text-based space MMO.
 

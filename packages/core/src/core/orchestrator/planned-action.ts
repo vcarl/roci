@@ -55,6 +55,7 @@ export type BreakResult =
 export const runReflection = (
   char: CharacterConfig,
   dreamThreshold: number,
+  afterDream?: (char: CharacterConfig, compressedDiary: string) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const charFs = yield* CharacterFs
@@ -68,6 +69,16 @@ export const runReflection = (
           logToConsole(char.name, "error", `Dream failed: ${e}`),
         ),
       )
+
+      // Post-dream hook (e.g. memory bridge)
+      if (afterDream) {
+        const freshDiary = yield* charFs.readDiary(char)
+        yield* afterDream(char, freshDiary).pipe(
+          Effect.catchAll((e) =>
+            logToConsole(char.name, "error", `Post-dream hook failed: ${e}`),
+          ),
+        )
+      }
     }
   })
 

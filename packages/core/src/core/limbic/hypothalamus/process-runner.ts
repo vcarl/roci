@@ -21,6 +21,9 @@ import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
 import { writeWindDown } from "../../../operator/wind-down-file.js"
 
+/** Bypass rate limit wind-down for OpenRouter testing (set OPENROUTER_BYPASS_RATE_LIMIT=1) */
+const BYPASS_RATE_LIMIT = process.env.OPENROUTER_BYPASS_RATE_LIMIT === "1"
+
 /**
  * Shell-safe literal using $'...' ANSI-C quoting.
  */
@@ -189,6 +192,28 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
                 const info = event.rate_limit_info as Record<string, unknown> | undefined
                 if (info?.status === "rejected" && typeof info.resetsAt === "number") {
                   yield* Ref.set(rateLimitRef, info.resetsAt)
+                } else if (
+                  info?.status === "allowed_warning" &&
+                  typeof info.resetsAt === "number" &&
+                  typeof info.utilization === "number"
+                ) {
+                  // Different thresholds for Anthropic vs OpenRouter
+                  const isOpenRouter = !ANTHROPIC_MODELS.has(config.model)
+                  const threshold = isOpenRouter ? 0.95 : 0.75
+                  if (info.utilization > threshold) {
+                    // Check for bypass flag before triggering wind-down
+                    if (BYPASS_RATE_LIMIT && isOpenRouter) {
+                      yield* logToConsole(config.char.name, config.role,
+                        `Rate limit warning (utilization=${(info.utilization as number * 100).toFixed(0)}%) — BYPASSED (OPENROUTER_BYPASS_RATE_LIMIT=1)`)
+                    } else {
+                      yield* logToConsole(config.char.name, config.role,
+                        `Rate limit warning (utilization=${(info.utilization as number * 100).toFixed(0)}%) — triggering wind-down`)
+                      yield* Ref.set(rateLimitRef, info.resetsAt)
+                    }
+                  } else {
+                    yield* logToConsole(config.char.name, config.role,
+                      `Rate limit warning (utilization=${(info.utilization as number * 100).toFixed(0)}%) — continuing`)
+                  }
                 }
               }
               yield* demuxEvent(config.char, line, event, source, textAccumulator)

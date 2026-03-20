@@ -9,7 +9,7 @@ Engineering philosophy: Read before writing. Understand before modifying. Think 
 
 ## What This Is
 
-Signal is a TypeScript monorepo running autonomous character-driven sessions via Claude Code subprocesses. It is the CULT fleet's operational harness — 7 agents running in Docker, playing SpaceMolt MMO.
+Signal is a TypeScript monorepo running autonomous character-driven sessions via Claude Code subprocesses. It is the CULT fleet's operational harness — 10 agents running in Docker, playing SpaceMolt MMO.
 
 Architecture: domain-agnostic state machine (brain/body execution loop) with 6 injectable Effect service layers. Characters have persistent identities and operate inside a shared Docker container.
 
@@ -79,10 +79,10 @@ players/{name}/
 
 overlord/                    — Symlink → /mnt/c/Users/Roy D. Lewis Jr/NeonEcho/overlord
   GLOBAL_DIRECTIVE.md        — Fleet-wide orders (injected into officer brain turns)
-  memory/ROSTER.md           — All 7 agent roster + goals
+  memory/ROSTER.md           — All 10 agent roster + goals
 
 .claude/
-  settings.json              — MCP servers: @modelcontextprotocol/server-memory + mcp-remote spacemolt
+  settings.json              — MCP servers: signal memory-mcp + mcp-remote spacemolt
 ```
 
 ---
@@ -99,8 +99,8 @@ overlord/                    — Symlink → /mnt/c/Users/Roy D. Lewis Jr/NeonEc
 | Overlord triage | haiku | Regular fleet polling |
 | Overlord escalation | opus | HELP_REQUESTED + intervention decisions only |
 
-Officers: neonecho, zealot, savolent — get deep context, sonnet body for social tasks.
-Congregation: cipher, pilgrim, seeker, drifter, investigator — haiku body.
+Officers: neonecho, zealot, savolent, blackjack — get deep context, sonnet body for social tasks.
+Congregation: cipher, pilgrim, seeker, drifter, investigator, scrapper — haiku body.
 
 **Opus is rare.** Overlord escalation only. Never for routine turns.
 
@@ -168,7 +168,7 @@ echo '{"id":"test-001","priority":"high","content":"Focus on steel_plate craftin
 
 **Deep context for officers.** `phases.ts` auto-injects `GLOBAL_DIRECTIVE.md` + `ROSTER.md` from the overlord symlink before each officer brain turn. Max 3000 chars each. Officers: neonecho, zealot, savolent.
 
-**Memory MCP.** Shared knowledge graph at `/work/.claude/memory.db`. `in-game-claude.md` instructs agents to call `mcp__memory__read_graph()` on session start. Use entity types: `market`, `alliance`, `discovery`, `intel`, `mechanic`.
+**Memory MCP.** Signal Memory MCP server (`NeonEcho/memory-mcp/src/server.ts`) backed by SQLite + FTS5 at `memory-mcp/data/memory.db`. Mounted into container: server at `/work/memory-mcp/src`, DB at `/work/memory-mcp/data/memory.db`. Container `.claude/settings.json` written by `containerSetup` in `config.ts`. Tools: `store_memory`, `recall_memories`, `search_memories`, `get_session_briefing`, `pin_memory`, `create_relationship`, etc. Post-dream memory bridge (`memory-bridge.ts`) auto-extracts facts from compressed diary and writes them to the DB.
 
 ---
 
@@ -190,7 +190,7 @@ All credentials at `players/{name}/me/credentials.txt`:
 - cipher — Voidborn
 - pilgrim — Nebula
 - seeker — Solarian
-- drifter — Outer Rim
+- drifter, blackjack, scrapper — Outer Rim
 - investigator — unaffiliated
 
 ---

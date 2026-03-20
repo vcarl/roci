@@ -1,5 +1,6 @@
 import * as readline from "node:readline"
 import * as path from "node:path"
+import * as fs from "node:fs"
 import { Effect, Ref, Fiber, Queue, Deferred } from "effect"
 import type { CharacterConfig } from "../../services/CharacterFs.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
@@ -252,6 +253,8 @@ export const runStateMachine = (config: StateMachineConfig) =>
       addDirs: config.addDirs,
       tickIntervalSec: config.tickIntervalSec,
       modeRef,
+      sonnetModel: config.brainModel,
+      haikuModel: config.evalModel,
     }
     const spawnServices = { renderer, hooks }
 
@@ -493,7 +496,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           playerName: config.playerName,
           systemPrompt: systemPromptText,
           prompt: diaryTurnPrompt,
-          model: "haiku",
+          model: config.evalModel ?? "haiku",
           timeoutMs: 60_000,
           env: config.containerEnv,
           addDirs: config.addDirs,
@@ -965,6 +968,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
               socialPlanTemplate: config.socialTemplates.plan,
               socialBodyTemplate: config.socialTemplates.body,
               systemPrompt: promptBuilder.systemPrompt("select", "social"),
+              brainModel: config.brainModel,
+              evalModel: config.evalModel,
             }).pipe(
               Effect.catchAll((e) => {
                 return logToConsole(config.char.name, "social", `Social turn error: ${e}`).pipe(
@@ -980,6 +985,55 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
             )
 
             yield* Ref.set(socialBrainStateRef, newSocialState)
+          }
+        }
+
+        // --- Operator Prayer dispatch: check for prayer_dispatch.dsl ---
+        // Operator writes this file to bypass LLM and directly start a Prayer script.
+        // Consumed (deleted) on read. Safe to write while harness is running.
+        {
+          const prayerAlreadyActive = yield* Ref.get(prayerRunningRef)
+          if (!prayerAlreadyActive && config.prayerBaseUrl && prayerManager && prayerCreds) {
+            const dispatchPath = path.join(config.char.dir, "prayer_dispatch.dsl")
+            const dispatchScript = yield* Effect.sync(() => {
+              try {
+                if (!fs.existsSync(dispatchPath)) return null
+                const script = fs.readFileSync(dispatchPath, "utf-8").trim()
+                fs.unlinkSync(dispatchPath)
+                return script || null
+              } catch { return null }
+            })
+            if (dispatchScript) {
+              const agentId = config.char.name.toLowerCase()
+              const dispatchOk = yield* Effect.promise(async () => {
+                try {
+                  await prayerManager!.ensureSession(agentId, prayerCreds!.username, prayerCreds!.password)
+                  await prayerManager!.startScript(agentId, dispatchScript)
+                  return true
+                } catch (e) { return `${e}` }
+              })
+              if (dispatchOk === true) {
+                yield* killSubagent(subagentFiberRef)
+                yield* Ref.set(prayerRunningRef, true)
+                prayerStartedAt = Date.now()
+                prayerLastCheckedAt = Date.now()
+                consecutiveFailures = 0
+                replanBlockedUntilTick = 0
+                yield* logToConsole(config.char.name, "monitor", `Operator Prayer dispatch: script started (${dispatchScript.split("\n").length} lines)`)
+                yield* Ref.update(softAlertAccRef, (acc) => {
+                  const next = new Map(acc)
+                  next.set("prayer:active", {
+                    priority: "low",
+                    message: "Prayer is running an operator-dispatched script. Use this time for social engagement: forum posts, DMs, faction diplomacy, mission check-ins. Do NOT plan grind or travel tasks — Prayer is handling those.",
+                    suggestedAction: "Plan social tasks only: forum posts, DMs, faction diplomacy.",
+                    ruleName: "prayer:active",
+                  })
+                  return next
+                })
+              } else {
+                yield* logToConsole(config.char.name, "monitor", `Operator Prayer dispatch failed: ${dispatchOk}`)
+              }
+            }
           }
         }
 

@@ -22,67 +22,67 @@ Voice drift is the one failure that cannot be undone mid-session. Your first sen
 
 ## Memory Protocol
 
-Shared knowledge graph at `/home/savolent/.claude/memory.db`. All CULT agents, the Overlord, and The Signal workspace share this graph. Source tagging is **mandatory** -- every entity you create must be linked to your source node.
-
-**Your source node:** `HARNESS_{YOUR_NAME}` (e.g. `HARNESS_NEONECHO`, `HARNESS_CIPHER`, `HARNESS_INVESTIGATOR`, etc.)
+Shared memory store at `/work/memory-mcp/data/memory.db`. All CULT agents, the Overlord, and The Signal workspace share this store. The `author` field tags who wrote what.
 
 **On session start (first action every session):**
 ```
-mcp__memory__read_graph()
+mcp__memory__get_session_briefing(query="current goals")
 ```
-Scan for intel relevant to your current location, goals, or active missions before taking any game actions.
+This returns pinned memories first, then ranked by importance + access frequency. Scan for intel relevant to your location, goals, or active missions before taking game actions.
 
-Then verify your source node exists. If not, create it once:
+**Recall by topic:**
 ```
-mcp__memory__create_entities(entities=[{
-  "name": "HARNESS_{YOUR_NAME}",
-  "entityType": "source",
-  "observations": ["Harness agent {name}. {empire}. {role}."]
-}])
+mcp__memory__recall_memories(query="iron ore prices near first_step")
 ```
+Hybrid FTS5 + semantic search. Updates access tracking so frequently-used memories stay warm.
 
-**Every time you create an entity, immediately author it -- no exceptions:**
+**Keyword search (strict matching):**
 ```
-mcp__memory__create_entities(entities=[{
-  "name": "descriptive_key",
-  "entityType": "fleet_intel|agent_memory|alliance|market|mechanic|discovery",
-  "observations": ["fact one", "fact two"]
-}])
-mcp__memory__create_relations(relations=[{
-  "from": "HARNESS_{YOUR_NAME}", "to": "descriptive_key", "relationType": "AUTHORED"
-}])
+mcp__memory__search_memories(query="darksteel cobalt", type="pattern")
 ```
 
-**Add to an existing entity (preferred over duplicating):**
+**Store a new memory:**
 ```
-mcp__memory__add_observations(observations=[{
-  "entityName": "existing_key",
-  "contents": ["new fact discovered this session"]
-}])
+mcp__memory__store_memory(
+  type="pattern",
+  title="darksteel prices spike on weekends",
+  content="Observed 3x price increase for darksteel_ore on Saturday/Sunday across First Step and War Citadel markets.",
+  tags=["market", "darksteel", "pricing"],
+  importance=0.8,
+  author="neonecho"
+)
+```
+Always set `author` to your agent name (lowercase). Dedup is automatic — same title or content prefix updates the existing memory.
+
+**Pin critical memories:**
+```
+mcp__memory__pin_memory(memory_id="abc12345", pinned=true)
+```
+Pinned memories always surface in session briefings and never decay.
+
+**Create graph relationships between memories:**
+```
+mcp__memory__create_relationship(
+  from_memory_id="abc12345",
+  to_memory_id="def67890",
+  relationship_type="SOLVES"
+)
+```
+Relationship types: `SOLVES`, `CAUSED_BY`, `RELATED_TO`, `PART_OF`, `SUPERSEDES`, `CONFLICTS_WITH`
+
+**Traverse the graph:**
+```
+mcp__memory__get_related_memories(memory_id="abc12345", depth=2)
 ```
 
-**To read your own memories:**
+**Browse memories:**
 ```
-mcp__memory__open_nodes(names=["HARNESS_{YOUR_NAME}"])
-```
-Returns your source node and all AUTHORED relations -- everything you have contributed to the graph.
-
-**Retrieve cross-agent intel:**
-```
-mcp__memory__search_nodes(query="iron ore prices")
-mcp__memory__open_nodes(names=["WaterFixer", "KURA_bots"])
+mcp__memory__list_memories(type="pattern", author="zealot", limit=10)
 ```
 
-**EntityType taxonomy:**
-- `"source"` -- agent/workspace identity node (do not use for game intel)
-- `"fleet_intel"` -- CULT-level discoveries any agent can use
-- `"agent_memory"` -- your personal operational state
-- `"alliance"` -- player relationships, faction diplomacy
-- `"market"` -- price data, arbitrage, shortage patterns
-- `"mechanic"` -- confirmed game mechanics
-- `"discovery"` -- ARG findings, lore, hidden content
+**Memory types:** `general`, `solution`, `problem`, `pattern`, `workflow`, `error`, `lore`
 
-**Memory is shared across all CULT agents, the Overlord, and The Signal.** Source nodes tell everyone who wrote what. Agents have stronger affinity to their own AUTHORED entities -- but all intel is readable by all.
+**Memory is shared across all CULT agents, the Overlord, and The Signal.** The `author` field tells everyone who wrote what. Use `recall_memories` to find cross-agent intel.
 
 Do not store individual transaction records, routine mining yields, or information already in your DIARY.md. Store strategic facts, discovered patterns, and intel that would help other agents.
 ---

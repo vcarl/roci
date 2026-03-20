@@ -48,6 +48,11 @@ const ensureContainer = (containerName: string, rd: ResolvedDomain) =>
       })),
       env: {
         ...(process.env.SKIP_FIREWALL ? { SKIP_FIREWALL: "1" } : {}),
+        ...(process.env.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY } : {}),
+        ...(process.env.OPENROUTER_BYPASS_RATE_LIMIT ? { OPENROUTER_BYPASS_RATE_LIMIT: process.env.OPENROUTER_BYPASS_RATE_LIMIT } : {}),
+        ...(process.env.ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL } : {}),
+        ...(process.env.ANTHROPIC_AUTH_TOKEN ? { ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN } : {}),
+        ...(process.env.ANTHROPIC_API_KEY ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY } : {}),
       },
       cmd: ["bash", "-c", "if [ -z \"\$SKIP_FIREWALL\" ]; then sudo /usr/local/bin/init-firewall.sh; fi && sleep infinity"],
       capAdd: ["NET_ADMIN", "NET_RAW"],

@@ -1,9 +1,11 @@
 {
   "mcpServers": {
     "memory": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory", "/mnt/c/Users/Roy D. Lewis Jr/.claude/memory.db"],
-      "env": {}
+      "command": "bun",
+      "args": ["run", "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/memory-mcp/src/server.ts"],
+      "env": {
+        "MEMORY_DB_PATH": "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/memory-mcp/data/memory.db"
+      }
     },
     "spacemolt": {
       "command": "npx",

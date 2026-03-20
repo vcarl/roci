@@ -1,4 +1,5 @@
 import * as path from "node:path"
+import * as process from "node:process"
 import { Effect } from "effect"
 import { Claude } from "../../../services/Claude.js"
 import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs.js"
@@ -90,9 +91,12 @@ export const dream = {
       const diaryPrompt = yield* loadTemplate(path.join(PROMPTS_DIR, diaryTemplateFile[dreamType]))
       const diaryInput = `${diaryPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="secrets">\n${secrets}\n</context>\n\n${diary}`
 
+      // Use configured model: OPENROUTER_DREAM_MODEL or BRAIN_MODEL fallback, default "haiku"
+      const dreamModel = process.env.OPENROUTER_DREAM_MODEL || process.env.BRAIN_MODEL || "haiku"
+
       const compressedDiary = yield* claude.invoke({
         prompt: diaryInput,
-        model: "nvidia/nemotron-3-super-120b-a12b:free",
+        model: dreamModel as any,
         outputFormat: "text",
         maxTurns: 1,
       })
@@ -116,7 +120,7 @@ export const dream = {
 
       const compressedSecrets = yield* claude.invoke({
         prompt: secretsInput,
-        model: "nvidia/nemotron-3-super-120b-a12b:free",
+        model: dreamModel, // reuse same model
         outputFormat: "text",
         maxTurns: 1,
       })

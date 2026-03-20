@@ -2,21 +2,23 @@
  * Memory Bridge — CULT-specific
  *
  * After dream compression, extract high-signal facts from the compressed diary
- * and store them in the shared Memory MCP for cross-agent retrieval.
+ * and store them in the shared Signal Memory DB for cross-agent retrieval.
  *
- * This runs on the host side (after `dream.execute()`), using Claude to extract
- * structured facts from the compressed diary text, then storing them via the
- * Memory MCP server configured in `.claude/settings.json`.
+ * This runs on the host side (after `dream.execute()`), writing directly to the
+ * Signal Memory MCP's SQLite database via better-sqlite3.
  *
- * Usage:
- *   const bridge = new MemoryBridge(claudeInvoke)
- *   await bridge.extractAndStore(agentName, compressedDiary, background)
+ * The `memories` table schema matches the Signal Memory MCP server (memory.ts):
+ *   id, type, title, content, tags (JSON), importance, session, author,
+ *   pinned, access_count, last_accessed, created_at, updated_at, embedding
  */
+
+import Database from "better-sqlite3"
+import { randomUUID } from "node:crypto"
 
 export interface MemoryEntry {
   title: string
   content: string
-  type: "solution" | "pattern" | "error" | "workflow"
+  type: "solution" | "pattern" | "error" | "workflow" | "lore" | "general"
   importance: number
   tags: string[]
 }
@@ -29,10 +31,97 @@ export interface MemoryBridgeConfig {
 }
 
 /**
+ * Write extracted memories to the Signal Memory DB.
+ * Uses upsert on title to avoid duplicates across dream cycles.
+ * Non-fatal — returns results, never throws.
+ */
+export function writeMemoriesToDb(
+  agentName: string,
+  entries: MemoryEntry[],
+  dbPath: string,
+): { written: number; errors: string[] } {
+  const errors: string[] = []
+  let written = 0
+  const now = Date.now()
+
+  let db: InstanceType<typeof Database> | undefined
+  try {
+    db = new Database(dbPath)
+    db.pragma("journal_mode = WAL")
+
+    // Ensure the memories table exists (the MCP server creates it, but be safe)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS memories (
+        id           TEXT    PRIMARY KEY,
+        type         TEXT    NOT NULL DEFAULT 'general',
+        title        TEXT,
+        content      TEXT    NOT NULL,
+        tags         TEXT    NOT NULL DEFAULT '[]',
+        importance   REAL    NOT NULL DEFAULT 0.5,
+        session      TEXT,
+        author       TEXT,
+        pinned       BOOL    NOT NULL DEFAULT 0,
+        access_count INT     NOT NULL DEFAULT 0,
+        last_accessed INT,
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER NOT NULL,
+        embedding    BLOB
+      )
+    `)
+
+    const insertStmt = db.prepare(`
+      INSERT INTO memories (id, type, title, content, tags, importance, session, author, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    const findByTitle = db.prepare(`
+      SELECT id FROM memories WHERE title = ? AND author = ? LIMIT 1
+    `)
+
+    const updateStmt = db.prepare(`
+      UPDATE memories SET content = ?, tags = ?, importance = MAX(importance, ?), updated_at = ?
+      WHERE id = ?
+    `)
+
+    const txn = db.transaction(() => {
+      for (const entry of entries) {
+        try {
+          const author = agentName.toLowerCase()
+          const existing = findByTitle.get(entry.title, author) as { id: string } | undefined
+
+          if (existing) {
+            // Update existing memory with fresh content
+            updateStmt.run(entry.content, JSON.stringify(entry.tags), entry.importance, now, existing.id)
+          } else {
+            // Insert new memory
+            const id = randomUUID().replace(/-/g, "").slice(0, 16)
+            insertStmt.run(
+              id, entry.type, entry.title, entry.content,
+              JSON.stringify(entry.tags), entry.importance,
+              "dream", author, now, now,
+            )
+          }
+          written++
+        } catch (e: unknown) {
+          errors.push(`Failed to write "${entry.title}": ${e}`)
+        }
+      }
+    })
+
+    txn()
+  } catch (e: unknown) {
+    errors.push(`Database error: ${e}`)
+  } finally {
+    db?.close()
+  }
+
+  return { written, errors }
+}
+
+/**
  * Extracts high-signal facts from a compressed diary using a simple heuristic parser.
  * Looks for sections that indicate strategic intel: Beliefs, Accomplishments, Relationships.
  *
- * In production, this would be replaced by a Claude invoke call to do semantic extraction.
  * The heuristic approach avoids an extra API call during dream processing.
  */
 export function extractMemoriesFromDiary(

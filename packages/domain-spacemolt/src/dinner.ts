@@ -1,4 +1,5 @@
 import * as path from "node:path"
+import * as process from "node:process"
 import { Effect } from "effect"
 import { FileSystem } from "@effect/platform"
 import { Claude } from "@signal/core/services/Claude.js"
@@ -60,9 +61,12 @@ export const dinner = {
         VALUES: values,
       })
 
+      // Use configured model: OPENROUTER_DINNER_MODEL or BRAIN_MODEL fallback, default "haiku"
+      const dinnerModel = process.env.OPENROUTER_DINNER_MODEL || process.env.BRAIN_MODEL || "haiku"
+
       const updatedDiary = yield* claude.invoke({
         prompt,
-        model: "nvidia/nemotron-3-super-120b-a12b:free",
+        model: dinnerModel as any,
         maxTurns: 1,
       })
 

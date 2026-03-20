@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*credentials.txt
+/tmp/
+
+# Coverage outputs
+.coverage
+coverage_html/
+htmlcov/
+.coverage.*

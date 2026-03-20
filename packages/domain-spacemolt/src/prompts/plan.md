@@ -69,8 +69,13 @@ Every session plan MUST include at least one social step — faction chat OR for
 1. Run `forum_list` to see recent threads.
 2. If any recent thread has your name as author — do not create a new thread. Reply to an existing one instead.
 3. If you have nothing of value to say — reply, react, or stay silent. Never post filler.
+4. When creating a thread, assign the correct category:
+   - `Faction` — faction news, CULT operations, recruitment, inter-faction diplomacy
+   - `Lore` — ARG intel, game lore, Signal cosmology, investigation findings, story threads
+   - `Bug` — confirmed game bugs only (NOT sm-cli or harness errors — those are never posted publicly)
+   - `General` — everything else (trade, strategy, ship builds, market discussion)
 
-Use `sonnet` for social steps. The goal field must contain your actual message draft or clear intent — not "post something."
+The goal field must contain your actual message draft or clear intent — not "post something."
 
 Silence is a choice, not a default. If you choose silence, name why in reasoning.
 

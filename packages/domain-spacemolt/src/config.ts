@@ -33,13 +33,13 @@ const containerMounts = (projectRoot: string): ContainerMount[] => [
     container: "/work/sm-cli",
   },
   {
-    host: path.resolve(projectRoot, ".claude"),
-    container: "/work/.claude",
+    host: "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/memory-mcp/src",
+    container: "/work/memory-mcp/src",
     readonly: true,
   },
   {
-    host: "/mnt/c/Users/Roy D. Lewis Jr/.claude/memory.db",
-    container: "/work/memory.db",
+    host: "/mnt/c/Users/Roy D. Lewis Jr/NeonEcho/memory-mcp/data",
+    container: "/work/memory-mcp/data",
   },
   {
     host: "/home/savolent/.mcp-auth",
@@ -56,12 +56,36 @@ const containerMounts = (projectRoot: string): ContainerMount[] => [
   },
 ]
 
-/** Post-start container setup for SpaceMolt (creates sm CLI symlink). */
+/** Post-start container setup for SpaceMolt (creates sm CLI symlink + MCP config). */
 const containerSetup = (containerId: string) => {
   try {
     execSync(`docker exec -u root ${containerId} ln -sf /work/sm-cli/sm /usr/local/bin/sm`, { stdio: "pipe" })
   } catch {
     // Non-fatal — sm symlink is a convenience
+  }
+
+  // Write container-specific .claude/settings.json with Signal Memory MCP
+  try {
+    const settings = JSON.stringify({
+      mcpServers: {
+        memory: {
+          command: "bun",
+          args: ["run", "/work/memory-mcp/src/server.ts"],
+          env: { MEMORY_DB_PATH: "/work/memory-mcp/data/memory.db" },
+        },
+        spacemolt: {
+          command: "npx",
+          args: ["-y", "mcp-remote", "https://game.spacemolt.com/mcp/v2"],
+          env: {},
+        },
+      },
+    }, null, 2)
+    execSync(
+      `docker exec ${containerId} bash -c 'mkdir -p /work/.claude && cat > /work/.claude/settings.json'`,
+      { input: settings, stdio: ["pipe", "pipe", "pipe"] },
+    )
+  } catch {
+    // Non-fatal — MCP servers may not work without this
   }
 }
 

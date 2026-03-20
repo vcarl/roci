@@ -8,7 +8,7 @@ import { OAuthToken } from "./OAuthToken.js"
 
 export type ClaudeModel = "opus" | "sonnet" | "haiku"
 
-/** Any model string — Anthropic models or OpenRouter model IDs (e.g. "nvidia/nemotron-3-super-120b-a12b:free"). */
+/** Any model string — Anthropic models or OpenRouter model IDs (e.g. "nvidia/nemotron-3-nano-30b-a3b:free"). */
 export type AnyModel = ClaudeModel | (string & Record<never, never>)
 
 export const ANTHROPIC_MODELS = new Set(["opus", "sonnet", "haiku"])

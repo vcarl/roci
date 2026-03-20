@@ -25,7 +25,7 @@ export interface DeepContextResult {
   formatted: string
 }
 
-const OFFICER_NAMES = new Set(["neonecho", "zealot", "savolent"])
+const OFFICER_NAMES = new Set(["neonecho", "zealot", "savolent", "blackjack"])
 
 export function isOfficer(agentName: string): boolean {
   return OFFICER_NAMES.has(agentName.toLowerCase())
