@@ -77,6 +77,10 @@ export const runStateMachine = (config: StateMachineConfig) =>
     const procedureTargetsRef = yield* Ref.make<string[]>([])
     const procedureStartStateRef = yield* Ref.make<Record<string, unknown> | null>(null)
 
+    // --- Failure cap refs ---
+    const consecutiveFailuresRef = yield* Ref.make(0)
+    const replanBlockedUntilTickRef = yield* Ref.make(0)
+
     // --- Domain state ---
     const gameStateRef = yield* Ref.make<DomainState>(config.initialState)
     const chatContextRef = yield* Ref.make<Array<{ channel: string; sender: string; content: string }>>([])
@@ -142,9 +146,40 @@ export const runStateMachine = (config: StateMachineConfig) =>
       })
     }
 
-    /** Plan + spawn cycle with manual approval gates. */
+    /** Track step outcomes for failure cap. */
+    const trackStepOutcome = () =>
+      Effect.gen(function* () {
+        const plan = yield* Ref.get(planRef)
+        // If plan was just cleared (null) and we had a previous failure, increment counter
+        if (plan === null) {
+          const pf = yield* Ref.get(previousFailureRef)
+          if (pf !== null) {
+            const failures = yield* Ref.updateAndGet(consecutiveFailuresRef, (n) => n + 1)
+            if (failures >= 5) {
+              const tick = yield* Ref.get(tickCountRef)
+              const blockTicks = Math.min(failures * 4, 60)
+              yield* Ref.set(replanBlockedUntilTickRef, tick + blockTicks)
+              yield* logToConsole(
+                config.char.name,
+                "monitor",
+                `Failure cap: ${failures} consecutive failures — blocking replan for ${blockTicks} ticks`,
+              )
+            }
+          }
+        } else {
+          // Plan exists (success or first plan) — reset counter
+          yield* Ref.set(consecutiveFailuresRef, 0)
+        }
+      })
+
+    /** Plan + spawn cycle with manual approval gates and failure cap. */
     const planAndSpawn = (state: DomainState, summary: SituationSummary) =>
       Effect.gen(function* () {
+        // Failure cap: skip planning if blocked due to consecutive failures
+        const tick = yield* Ref.get(tickCountRef)
+        const blockedUntil = yield* Ref.get(replanBlockedUntilTickRef)
+        if (tick < blockedUntil) return
+
         // Check if planning will happen (same condition as maybeRequestPlan)
         const plan = yield* Ref.get(planRef)
         const step = yield* Ref.get(stepRef)
@@ -387,6 +422,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           const poll = yield* Fiber.poll(currentFiber)
           if (poll._tag === "Some") {
             yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, state)
+            yield* trackStepOutcome()
             yield* maybeCompleteProcedure()
           }
         }
@@ -412,6 +448,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           const poll = yield* Fiber.poll(currentFiber)
           if (poll._tag === "Some") {
             yield* evaluateCompletedSubagent(subagentRefs, planRefs, timingRefs, evalServices, state)
+            yield* trackStepOutcome()
             yield* maybeCompleteProcedure()
           }
         }
@@ -432,6 +469,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         yield* Ref.set(modeRef, "select")
         yield* Ref.set(investigationReportRef, null)
         yield* Ref.set(procedureTargetsRef, [])
+        yield* Ref.set(consecutiveFailuresRef, 0)
+        yield* Ref.set(replanBlockedUntilTickRef, 0)
       })
 
     // --- Event loop ---
