@@ -10,6 +10,7 @@
  * `services/Claude.ts` instead — that runs on the host.
  */
 
+import * as path from "node:path"
 import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
@@ -18,6 +19,7 @@ import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
+import { writeWindDown } from "../../../operator/wind-down-file.js"
 
 /**
  * Shell-safe literal using $'...' ANSI-C quoting.
@@ -72,6 +74,8 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
 
       // Accumulate text output from assistant messages
       const textAccumulator = yield* Ref.make<string[]>([])
+      // Track rate limit rejection from stream events
+      const rateLimitRef = yield* Ref.make<number | null>(null)
 
       // Build claude flags — use stream-json for real-time output
       const claudeArgs: string[] = [
@@ -159,6 +163,22 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
 
             const event = parseStreamJson(line)
             if (event) {
+              // Detect rate limit rejection — capture resetsAt for wind-down
+              if (event.type === "rate_limit_event") {
+                const info = event.rate_limit_info as Record<string, unknown> | undefined
+                if (info?.status === "rejected" && typeof info.resetsAt === "number") {
+                  yield* Ref.set(rateLimitRef, info.resetsAt)
+                } else if (
+                  info?.status === "allowed_warning" &&
+                  typeof info.resetsAt === "number" &&
+                  typeof info.utilization === "number" &&
+                  info.utilization > 0.75
+                ) {
+                  yield* logToConsole(config.char.name, config.role,
+                    `Rate limit warning (utilization=${(info.utilization as number * 100).toFixed(0)}%) — triggering wind-down`)
+                  yield* Ref.set(rateLimitRef, info.resetsAt)
+                }
+              }
               yield* demuxEvent(config.char, line, event, source, textAccumulator)
             } else {
               printRaw(config.char.name, "raw", line)
@@ -215,8 +235,21 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
       const output = textParts.join("\n")
 
       const durationMs = Date.now() - start
+      const rateLimitResetsAt = yield* Ref.get(rateLimitRef)
 
-      return { output, timedOut, durationMs }
+      // Rate limit detected — write WIND_DOWN.json so the orchestrator
+      // can halt gracefully instead of spinning on failures.
+      if (rateLimitResetsAt !== null) {
+        const playersDir = path.resolve(config.char.dir, "../..")
+        const sessionEndTime = new Date(rateLimitResetsAt * 1000).toISOString()
+        yield* logToConsole(config.char.name, config.role,
+          `Rate limit detected — writing WIND_DOWN (resetsAt=${sessionEndTime})`)
+        yield* Effect.sync(() =>
+          writeWindDown(playersDir, { reason: "rate_limit", sessionEndTime })
+        )
+      }
+
+      return { output, timedOut, durationMs, ...(rateLimitResetsAt !== null ? { rateLimitResetsAt } : {}) }
     }),
   ).pipe(
     Effect.mapError((e) =>

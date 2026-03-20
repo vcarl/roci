@@ -57,3 +57,12 @@ export type {
 	StepCompletionResult,
 	StepTiming,
 } from "./core/types.js";
+
+export type { WindDownSignal } from "./operator/wind-down-file.js";
+export {
+	writeWindDown,
+	readWindDown,
+	clearWindDown,
+	isWindDownStale,
+	startWindDownWatcher,
+} from "./operator/wind-down-file.js";
