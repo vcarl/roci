@@ -27,6 +27,8 @@ export interface TurnResult {
   output: string
   timedOut: boolean
   durationMs: number
+  /** If a rate limit was detected during the turn, the epoch seconds when it resets. */
+  rateLimitResetsAt?: number
 }
 
 /** Configuration for a full brain/body cycle. */
