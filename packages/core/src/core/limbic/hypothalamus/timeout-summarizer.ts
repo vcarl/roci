@@ -1,9 +1,11 @@
+import * as process from "node:process"
 import { Effect } from "effect"
 import { Claude, ClaudeError } from "../../../services/Claude.js"
 
 /**
- * When a turn times out, generate a short summary of what was accomplished
- * using a quick haiku call.
+ * When a turn times out, generate a short summary of what was accomplished.
+ * Model is configurable via TIMEOUT_SUMMARIZER_MODEL env var (default "haiku").
+ * Set to an OpenRouter model ID (e.g. "nvidia/nemotron-3-nano-30b-a3b:free") for zero-cost summarization.
  */
 export const summarizeTimeout = (
   partialOutput: string,
@@ -28,9 +30,11 @@ export const summarizeTimeout = (
       `Summarize in 2-3 sentences: what was accomplished, what was in progress, and what remains to be done.`,
     ].join("\n")
 
+    const model = process.env.TIMEOUT_SUMMARIZER_MODEL || "haiku"
+
     const summary = yield* claude.invoke({
       prompt,
-      model: "haiku",
+      model,
       maxTurns: 1,
     })
 

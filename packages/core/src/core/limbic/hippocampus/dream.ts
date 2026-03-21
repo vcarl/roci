@@ -1,4 +1,5 @@
 import * as path from "node:path"
+import * as process from "node:process"
 import { Effect } from "effect"
 import { Claude } from "../../../services/Claude.js"
 import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs.js"
@@ -90,9 +91,12 @@ export const dream = {
       const diaryPrompt = yield* loadTemplate(path.join(PROMPTS_DIR, diaryTemplateFile[dreamType]))
       const diaryInput = `${diaryPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="secrets">\n${secrets}\n</context>\n\n${diary}`
 
+      // Use configured model: DREAM_MODEL env var, default "haiku"
+      const dreamModel = process.env.DREAM_MODEL || "haiku"
+
       const compressedDiary = yield* claude.invoke({
         prompt: diaryInput,
-        model: "opus",
+        model: dreamModel,
         outputFormat: "text",
         maxTurns: 1,
       })
@@ -116,7 +120,7 @@ export const dream = {
 
       const compressedSecrets = yield* claude.invoke({
         prompt: secretsInput,
-        model: "opus",
+        model: dreamModel,
         outputFormat: "text",
         maxTurns: 1,
       })

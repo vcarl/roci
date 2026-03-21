@@ -18,6 +18,7 @@ import type { TimingRefs } from "./step-tracker.js"
 import { recordStepTiming, recordStepOutcome } from "./step-tracker.js"
 import { brainEvaluate } from "./brain.js"
 import { runTurn } from "../../limbic/hypothalamus/process-runner.js"
+import type { AnyModel } from "../../../services/Claude.js"
 import { PromptBuilderTag } from "../../prompt-builder.js"
 
 export interface SubagentRefs {
@@ -55,6 +56,8 @@ interface EvaluateServices {
   readonly addDirs?: string[]
   readonly modeRef?: Ref.Ref<BrainMode>
   readonly investigationReportRef?: Ref.Ref<string | null>
+  /** Override model for eval turns. Defaults to "haiku". */
+  readonly evalModel?: AnyModel
 }
 
 /** Check if a completed subagent's step succeeded. Advance or replan. */
@@ -142,6 +145,7 @@ export const evaluateCompletedSubagent = (
           char: services.char,
           containerEnv: services.containerEnv,
           addDirs: services.addDirs,
+          model: services.evalModel,
         }).pipe(
           Effect.catchTag("ClaudeError", (e) =>
             Effect.succeed({
@@ -247,6 +251,14 @@ interface SpawnSubagentConfig {
   readonly addDirs?: string[]
   readonly tickIntervalSec: number
   readonly modeRef?: Ref.Ref<BrainMode>
+  /** Model to use for "sonnet" complexity steps. Defaults to "sonnet". */
+  readonly sonnetModel?: AnyModel
+  /** Model to use for "haiku" complexity steps. Defaults to "haiku". */
+  readonly haikuModel?: AnyModel
+  /** Fallback model when the primary is overloaded. */
+  readonly fallbackModel?: string
+  /** Per-turn USD budget cap. */
+  readonly maxBudgetUsd?: number
 }
 
 interface SpawnSubagentServices {
@@ -311,17 +323,30 @@ export const maybeSpawnSubagent = (
           model: finalStep.model,
         })
 
+        // Map "haiku"/"sonnet" to actual configured models when using OpenRouter
+        const stepModel: AnyModel = (() => {
+          const rawModel = finalStep.model
+          if (rawModel === "sonnet") {
+            return smConfig.sonnetModel ?? "sonnet"
+          } else if (rawModel === "haiku") {
+            return smConfig.haikuModel ?? "haiku"
+          }
+          return rawModel
+        })()
+
         const result = yield* runTurn({
           char: smConfig.char,
           containerId: smConfig.containerId,
           playerName: smConfig.playerName,
           systemPrompt,
           prompt,
-          model: finalStep.model,
+          model: stepModel,
           timeoutMs: finalStep.timeoutTicks * smConfig.tickIntervalSec * 1000,
           env: smConfig.containerEnv,
           addDirs: smConfig.addDirs,
-          role: "brain",
+          role: "body",
+          fallbackModel: smConfig.fallbackModel,
+          maxBudgetUsd: smConfig.maxBudgetUsd,
         })
 
         yield* log.action(smConfig.char, {
