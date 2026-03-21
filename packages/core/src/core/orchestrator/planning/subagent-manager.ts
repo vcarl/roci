@@ -194,6 +194,15 @@ export const evaluateCompletedSubagent = (
       }
     }
 
+    // Fire afterBodyTurn hook for observe-only tasks (memory extraction, logging, etc.)
+    if (services.hooks?.afterBodyTurn && plan && step < plan.steps.length) {
+      const currentStep = plan.steps[step]
+      const report = yield* Ref.get(subagentRefs.report)
+      yield* services.hooks.afterBodyTurn(step, currentStep.task, report).pipe(
+        Effect.catchAll(() => Effect.void),
+      )
+    }
+
     yield* Ref.set(subagentRefs.fiber, null)
     yield* Ref.set(subagentRefs.report, "")
     yield* Ref.set(subagentRefs.spawnState, null)

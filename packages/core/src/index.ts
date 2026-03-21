@@ -57,3 +57,10 @@ export type {
 	StepCompletionResult,
 	StepTiming,
 } from "./core/types.js";
+
+export { parseHarnessState, applyHarnessState, parseSocialReport } from "./core/orchestrator/harness-state.js";
+export type { HarnessStateTag } from "./core/orchestrator/harness-state.js";
+export type { SocialBrainConfig, SocialBrainState } from "./core/orchestrator/social-brain.js";
+export { shouldRunSocial, runSocialTurn } from "./core/orchestrator/social-brain.js";
+export type { SocialState, TeamStatus, TeamAgent } from "./operator/workspace.js";
+export { readSocialState, writeSocialState, updateTeamStatus } from "./operator/workspace.js";
