@@ -128,6 +128,18 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
         claudeArgs.push("--system-prompt", shellEscape(config.systemPrompt))
       }
 
+      if (config.fallbackModel && config.fallbackModel !== config.model) {
+        claudeArgs.push("--fallback-model", config.fallbackModel)
+      }
+
+      if (config.jsonSchema) {
+        claudeArgs.push("--json-schema", shellEscape(config.jsonSchema))
+      }
+
+      if (config.maxBudgetUsd !== undefined) {
+        claudeArgs.push("--max-budget-usd", String(config.maxBudgetUsd))
+      }
+
       const innerCmd = `claude ${claudeArgs.join(" ")}`
       const promptStream = Stream.encodeText(Stream.make(config.prompt))
 

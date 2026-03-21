@@ -22,10 +22,46 @@ export interface BrainContainerContext {
   model?: AnyModel
 }
 
+// ── JSON Schemas for structured output ──────────────────────
+
+const PLAN_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    reasoning: { type: "string" },
+    steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          task: { type: "string" },
+          goal: { type: "string" },
+          model: { type: "string", enum: ["haiku", "sonnet"] },
+          successCondition: { type: "string" },
+          timeoutTicks: { type: "number" },
+        },
+        required: ["task", "goal"],
+      },
+    },
+    procedure: { type: "string" },
+    targets: { type: "array", items: { type: "string" } },
+  },
+  required: ["reasoning", "steps"],
+})
+
+const EVAL_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    complete: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["complete", "reason"],
+})
+
 // ── Plan parsing ────────────────────────────────────────────
 
 function parsePlan(output: string, validProcedures?: string[]): Plan {
   let json = output.trim()
+  // Fallback: strip markdown fences if present (legacy or non-schema path)
   const fenceMatch = json.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
   if (fenceMatch) {
     json = fenceMatch[1]
@@ -75,6 +111,7 @@ export const brainPlan: AiFunction<PlanPromptContext & BrainContainerContext, Pl
         env: input.containerEnv,
         addDirs: input.addDirs,
         role: "brain",
+        jsonSchema: PLAN_SCHEMA,
       })
 
       if (result.timedOut || !result.output.trim()) {
@@ -112,6 +149,7 @@ export const brainInterrupt: AiFunction<InterruptPromptContext & BrainContainerC
         env: input.containerEnv,
         addDirs: input.addDirs,
         role: "brain",
+        jsonSchema: PLAN_SCHEMA,
       })
 
       if (result.timedOut || !result.output.trim()) {
@@ -150,6 +188,7 @@ export const brainEvaluate: AiFunction<EvaluatePromptContext & BrainContainerCon
         env: input.containerEnv,
         addDirs: input.addDirs,
         role: "brain",
+        jsonSchema: EVAL_SCHEMA,
       })
 
       if (result.timedOut || !result.output.trim()) {

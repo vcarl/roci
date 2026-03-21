@@ -20,6 +20,12 @@ export interface TurnConfig {
   allowedTools?: string[]
   /** If set, block these tools via --disallowedTools. */
   disallowedTools?: string[]
+  /** JSON schema for structured output (passed as --json-schema). */
+  jsonSchema?: string
+  /** Fallback model if the primary model is overloaded. */
+  fallbackModel?: string
+  /** Per-turn USD budget cap (--max-budget-usd). */
+  maxBudgetUsd?: number
 }
 
 /** Result of a completed (or timed-out) turn. */

@@ -255,6 +255,10 @@ interface SpawnSubagentConfig {
   readonly sonnetModel?: AnyModel
   /** Model to use for "haiku" complexity steps. Defaults to "haiku". */
   readonly haikuModel?: AnyModel
+  /** Fallback model when the primary is overloaded. */
+  readonly fallbackModel?: string
+  /** Per-turn USD budget cap. */
+  readonly maxBudgetUsd?: number
 }
 
 interface SpawnSubagentServices {
@@ -340,7 +344,9 @@ export const maybeSpawnSubagent = (
           timeoutMs: finalStep.timeoutTicks * smConfig.tickIntervalSec * 1000,
           env: smConfig.containerEnv,
           addDirs: smConfig.addDirs,
-          role: "brain",
+          role: "body",
+          fallbackModel: smConfig.fallbackModel,
+          maxBudgetUsd: smConfig.maxBudgetUsd,
         })
 
         yield* log.action(smConfig.char, {
