@@ -60,3 +60,4 @@ export type {
 
 export type { AgentStatusSnapshot } from "./server/status-reporter.js";
 export { reportStatus } from "./server/status-reporter.js";
+export { startStatusServer } from "./server/status-server.js";
