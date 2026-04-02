@@ -64,7 +64,6 @@ export const dinner = {
         prompt,
         model: "opus",
         outputFormat: "text",
-        maxTurns: 1,
       })
 
       yield* charFs.writeDiary(input.char, updatedDiary)

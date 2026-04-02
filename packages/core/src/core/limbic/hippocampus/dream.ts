@@ -94,7 +94,6 @@ export const dream = {
         prompt: diaryInput,
         model: "opus",
         outputFormat: "text",
-        maxTurns: 1,
       })
 
       yield* charFs.writeDiary(input.char, compressedDiary)
@@ -118,7 +117,6 @@ export const dream = {
         prompt: secretsInput,
         model: "opus",
         outputFormat: "text",
-        maxTurns: 1,
       })
 
       yield* charFs.writeSecrets(input.char, compressedSecrets)

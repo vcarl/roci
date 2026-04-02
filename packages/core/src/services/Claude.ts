@@ -8,6 +8,14 @@ import { OAuthToken } from "./OAuthToken.js"
 
 export type ClaudeModel = "opus" | "sonnet" | "haiku"
 
+/**
+ * Base `claude -p` args that every invocation must include.
+ * Ensures bare mode (no hooks/LSP/CLAUDE.md) and bypassed permissions.
+ */
+export function claudeBaseArgs(model: ClaudeModel): string[] {
+  return ["-p", "--bare", "--permission-mode", "bypassPermissions", "--model", model]
+}
+
 export class ClaudeError {
   readonly _tag = "ClaudeError"
   constructor(readonly message: string, readonly cause?: unknown) {}
@@ -36,7 +44,6 @@ export class Claude extends Context.Tag("Claude")<
       model: ClaudeModel
       systemPrompt?: string
       outputFormat?: "text" | "json" | "stream-json"
-      maxTurns?: number
     }) => Effect.Effect<string, ClaudeError>
   }
 >() {}
@@ -95,19 +102,13 @@ export const ClaudeLive = Layer.effect(
             const { token } = yield* oauthToken.getToken
 
             const args: string[] = [
-              "--model", opts.model,
+              ...claudeBaseArgs(opts.model),
               "--output-format", opts.outputFormat ?? "text",
-              "--dangerously-skip-permissions",
-              "--no-session-persistence",
             ]
 
             // Disable thinking for non-opus models
             if (opts.model !== "opus") {
               args.push("--effort", "low")
-            }
-
-            if (opts.maxTurns) {
-              args.push("--max-turns", String(opts.maxTurns))
             }
 
             // Build the shell command: pipe prompt via stdin

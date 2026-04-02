@@ -13,7 +13,7 @@
 import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
-import { ClaudeError } from "../../../services/Claude.js"
+import { ClaudeError, claudeBaseArgs } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
@@ -75,10 +75,8 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
 
       // Build claude flags — use stream-json for real-time output
       const claudeArgs: string[] = [
-        "-p",
-        "--permission-mode", "bypassPermissions",
-        "--no-session-persistence",
-        "--model", config.model,
+        ...claudeBaseArgs(config.model),
+        "--fallback-model", "sonnet",
         "--output-format", "stream-json",
         "--verbose",
       ]
@@ -95,6 +93,10 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
 
       if (config.disallowedTools && config.disallowedTools.length > 0) {
         claudeArgs.push("--disallowedTools", config.disallowedTools.join(","))
+      }
+
+      if (config.maxBudgetUsd) {
+        claudeArgs.push("--max-budget-usd", String(config.maxBudgetUsd))
       }
 
       if (config.addDirs) {
