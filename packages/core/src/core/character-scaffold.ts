@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import * as path from "node:path"
+import { claudeBaseArgs } from "../services/Claude.js"
 
 const BACKGROUND_TEMPLATE = `# Background
 
@@ -58,14 +59,9 @@ Write the character's working values and principles. These should be concrete, a
 Output ONLY the two sections with the delimiters. No preamble, no commentary.`
 
   try {
-    const output = execFileSync("claude", [
-      "-p",
-      prompt,
-      "--model", "sonnet",
-      "--dangerously-skip-permissions",
-      "--no-session-persistence",
-    ], {
+    const output = execFileSync("claude", claudeBaseArgs("sonnet"), {
       encoding: "utf-8",
+      input: prompt,
       timeout: 120_000,
       env: { ...process.env, CLAUDECODE: undefined },
       stdio: ["pipe", "pipe", "pipe"],
@@ -95,14 +91,9 @@ function generateSummaryWithClaude(characterName: string, background: string): s
   const prompt = `Here is the background document for an AI character named "${characterName}":\n\n${background}\n\nWrite exactly 4 sentences summarizing this character's identity, personality, and motivations. Be concise and vivid. Output ONLY the summary, no preamble.`
 
   try {
-    const output = execFileSync("claude", [
-      "-p",
-      prompt,
-      "--model", "haiku",
-      "--dangerously-skip-permissions",
-      "--no-session-persistence",
-    ], {
+    const output = execFileSync("claude", claudeBaseArgs("haiku"), {
       encoding: "utf-8",
+      input: prompt,
       timeout: 30_000,
       env: { ...process.env, CLAUDECODE: undefined },
       stdio: ["pipe", "pipe", "pipe"],

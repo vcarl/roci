@@ -31,7 +31,6 @@ export const summarizeTimeout = (
     const summary = yield* claude.invoke({
       prompt,
       model: "haiku",
-      maxTurns: 1,
     })
 
     return summary.trim()

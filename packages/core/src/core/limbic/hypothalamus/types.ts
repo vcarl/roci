@@ -20,6 +20,8 @@ export interface TurnConfig {
   allowedTools?: string[]
   /** If set, block these tools via --disallowedTools. */
   disallowedTools?: string[]
+  /** If set, cap spend for this turn via --max-budget-usd. */
+  maxBudgetUsd?: number
 }
 
 /** Result of a completed (or timed-out) turn. */
