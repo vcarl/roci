@@ -69,6 +69,7 @@ for domain in \
   "api.anthropic.com" \
   "claude.ai" \
   "platform.claude.com" \
+  "openrouter.ai" \
   "sentry.io" \
   "statsig.anthropic.com" \
   "statsig.com" \
