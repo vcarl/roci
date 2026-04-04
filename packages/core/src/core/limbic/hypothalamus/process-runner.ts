@@ -13,10 +13,12 @@
 import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
-import { ClaudeError, claudeBaseArgs, type ClaudeModel } from "../../../services/Claude.js"
+import { ClaudeError } from "../../../services/Claude.js"
+import { runtimeBinary, runtimeBaseArgs } from "./runtime.js"
+import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
+import { demuxEvents, printRaw } from "../../../logging/log-demux.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
-import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
 
 /**
@@ -73,31 +75,39 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
       // Accumulate text output from assistant messages
       const textAccumulator = yield* Ref.make<string[]>([])
 
-      // Build claude flags — use stream-json for real-time output
-      // TODO(Task 4): replace claudeBaseArgs with runtimeBaseArgs once process-runner is runtime-aware
-      const claudeArgs: string[] = [
-        ...claudeBaseArgs(config.model as ClaudeModel),
-        "--fallback-model", "sonnet",
-        "--output-format", "stream-json",
-        "--verbose",
-      ]
+      // Build runtime-aware flags
+      const runtime = config.runtime ?? runtimeBinary(config.model)
+      const claudeArgs: string[] = [...runtimeBaseArgs(runtime, config.model)]
 
-      // Brain (opus) uses full effort; body needs normal effort for multi-step
-      // workflows; only apply low effort to non-body, non-opus roles (old subagents)
-      if (config.model !== "opus" && config.role !== "body") {
-        claudeArgs.push("--effort", "low")
+      if (runtime === "claude") {
+        claudeArgs.push("--fallback-model", "sonnet")
+        claudeArgs.push("--output-format", "stream-json")
+        claudeArgs.push("--verbose")
+
+        // Brain (opus) uses full effort; body needs normal effort for multi-step
+        // workflows; only apply low effort to non-body, non-opus roles (old subagents)
+        if (config.model !== "opus" && config.role !== "body") {
+          claudeArgs.push("--effort", "low")
+        }
+
+        if (config.maxBudgetUsd) {
+          claudeArgs.push("--max-budget-usd", String(config.maxBudgetUsd))
+        }
       }
 
-      if (config.allowedTools && config.allowedTools.length > 0) {
-        claudeArgs.push("--allowedTools", config.allowedTools.join(","))
-      }
-
-      if (config.disallowedTools && config.disallowedTools.length > 0) {
-        claudeArgs.push("--disallowedTools", config.disallowedTools.join(","))
-      }
-
-      if (config.maxBudgetUsd) {
-        claudeArgs.push("--max-budget-usd", String(config.maxBudgetUsd))
+      // Tool access control
+      if (config.noTools) {
+        if (runtime === "claude") {
+          claudeArgs.push("--allowedTools", "")
+        }
+        // OpenCode: no tools by default in run mode unless explicitly declared
+      } else {
+        if (config.allowedTools && config.allowedTools.length > 0) {
+          claudeArgs.push("--allowedTools", config.allowedTools.join(","))
+        }
+        if (config.disallowedTools && config.disallowedTools.length > 0) {
+          claudeArgs.push("--disallowedTools", config.disallowedTools.join(","))
+        }
       }
 
       if (config.addDirs) {
@@ -107,10 +117,14 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
       }
 
       if (config.systemPrompt) {
-        claudeArgs.push("--system-prompt", shellEscape(config.systemPrompt))
+        if (runtime === "claude") {
+          claudeArgs.push("--system-prompt", shellEscape(config.systemPrompt))
+        }
+        // OpenCode: system prompt handling TBD — for now, prepend to prompt
       }
 
-      const innerCmd = `claude ${claudeArgs.join(" ")}`
+      const binary = runtime === "claude" ? "claude" : "opencode"
+      const innerCmd = `${binary} ${claudeArgs.join(" ")}`
       const promptStream = Stream.encodeText(Stream.make(config.prompt))
 
       // Build docker exec args
@@ -151,6 +165,8 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
       const source = config.role as "brain" | "body"
       const log = yield* CharacterLog
 
+      const normalize = runtime === "opencode" ? normalizeOpenCode : normalizeClaude
+
       const streamFiber = yield* process.stdout.pipe(
         Stream.decodeText(),
         Stream.splitLines,
@@ -160,9 +176,10 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
             // Raw capture to stream.jsonl
             yield* log.raw(config.char, line)
 
-            const event = parseStreamJson(line)
-            if (event) {
-              yield* demuxEvent(config.char, line, event, source, textAccumulator)
+            const raw = parseStreamJson(line)
+            if (raw) {
+              const events = normalize(raw)
+              yield* demuxEvents(config.char, events, source, textAccumulator)
             } else {
               printRaw(config.char.name, "raw", line)
             }
