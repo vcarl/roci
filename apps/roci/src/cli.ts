@@ -7,7 +7,6 @@ import { createGitHubApp } from "@roci/domain-github/create-app.js"
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs"
 import { Docker, DockerLive } from "@roci/core/services/Docker.js"
 import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
-import { ClaudeLive } from "@roci/core/services/Claude.js"
 import { CharacterLogLive } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { runOrchestrator } from "./orchestrator.js"
@@ -567,7 +566,6 @@ const oauthTokenLayer = OAuthTokenLive.pipe(Layer.provide(projectRootLayer))
 const serviceLayer = Layer.mergeAll(
   DockerLive,
   oauthTokenLayer,
-  ClaudeLive.pipe(Layer.provide(oauthTokenLayer)),
   CharacterFsLive,
   projectRootLayer,
   CharacterLogLive.pipe(Layer.provide(projectRootLayer)),
