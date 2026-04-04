@@ -100,11 +100,13 @@ export const runGuidedSetup = (projectRoot: string) =>
         yield* logToConsole("setup", "cli", `\nScaffolding ${name}...`)
 
         // Scaffold generic identity files
+        // TODO: containerId must be provided once the setup flow spins up a temporary container
         const { results: _scaffoldResults, summary } = yield* scaffoldCharacter({
           projectRoot,
           characterName: name,
           identityTemplate: domainConfig.identityTemplate,
           characterDescription: charDescription.trim() || undefined,
+          containerId: "",
         })
         if (summary) {
           yield* logToConsole("setup", "cli", summary)
