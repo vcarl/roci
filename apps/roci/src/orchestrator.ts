@@ -125,8 +125,11 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
     if (firstContainerId) {
       const valid = yield* oauthService.validateInContainer(firstContainerId)
       if (!valid) {
-        yield* logToConsole("orchestrator", "main", "OAuth token is not valid inside container — aborting")
-        return
+        yield* logToConsole("orchestrator", "main", "OAuth token is not valid inside container — stopping containers and aborting")
+        for (const [domainName] of containerIds) {
+          yield* docker.stop(`roci-${domainName}`).pipe(Effect.catchAll(() => Effect.void))
+        }
+        return yield* Effect.fail(new DockerError("OAuth token is not valid inside container. Run 'claude setup-token' and update .oauth-token"))
       }
     }
 
