@@ -22,6 +22,14 @@ ENV PATH="/home/node/.bun/bin:${PATH}"
 ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
+# Install OpenCode
+ARG OPENCODE_VERSION=latest
+RUN npm install -g opencode-ai@${OPENCODE_VERSION}
+
+# Pre-seed opencode config for permission bypass
+RUN mkdir -p /home/node/.opencode && \
+    echo '{"permission":{"*":"allow"}}' > /home/node/.opencode/config.json
+
 # Pre-seed claude config
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
