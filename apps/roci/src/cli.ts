@@ -26,17 +26,14 @@ const PROJECT_ROOT = isDev
 // Shared options
 const tickInterval = Options.integer("tick-interval").pipe(
   Options.withDefault(30),
-  Options.withDescription("Seconds between monitor ticks"),
 )
 
 const domainOption = Options.text("domain").pipe(
   Options.repeated,
-  Options.withDescription("Domain(s) to run (e.g. spacemolt, github). If omitted, runs all from config.json."),
 )
 
 const manualApproval = Options.boolean("manual-approval").pipe(
-  Options.withDefault(false),
-  Options.withDescription("Pause for manual approval before each plan/subagent step (rings terminal bell)"),
+  Options.optional,
 )
 
 // --- start command ---
@@ -67,7 +64,7 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
       }
     }
 
-    yield* runOrchestrator(resolved, args.tickInterval, args.manualApproval)
+    yield* runOrchestrator(resolved, args.tickInterval, Option.getOrElse(args.manualApproval, () => false))
   }),
 ).pipe(Command.withDescription("Start character(s) running"))
 
@@ -483,17 +480,14 @@ const defaultCharacters = Args.text({ name: "characters" }).pipe(Args.repeated)
 
 const defaultTickInterval = Options.integer("tick-interval").pipe(
   Options.withDefault(30),
-  Options.withDescription("Seconds between monitor ticks"),
 )
 
 const defaultDomainOption = Options.text("domain").pipe(
   Options.repeated,
-  Options.withDescription("Domain(s) to run (e.g. spacemolt, github). If omitted, runs all from config.json."),
 )
 
 const defaultManualApproval = Options.boolean("manual-approval").pipe(
-  Options.withDefault(false),
-  Options.withDescription("Pause for manual approval before each plan/subagent step (rings terminal bell)"),
+  Options.optional,
 )
 
 /**
@@ -504,7 +498,7 @@ const runAutoDetect = (args: {
   characters: ReadonlyArray<string>
   tickInterval: number
   domain: ReadonlyArray<string>
-  manualApproval: boolean
+  manualApproval: Option.Option<boolean>
 }) =>
   Effect.gen(function* () {
     const configPath = path.resolve(PROJECT_ROOT, "config.json")
@@ -535,7 +529,7 @@ const runAutoDetect = (args: {
     }
 
     // 4. Validate and start
-    yield* validateAndStart(PROJECT_ROOT, resolved, args.tickInterval, args.manualApproval)
+    yield* validateAndStart(PROJECT_ROOT, resolved, args.tickInterval, Option.getOrElse(args.manualApproval, () => false))
   })
 
 // --- root command ---
