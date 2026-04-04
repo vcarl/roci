@@ -1,6 +1,5 @@
 import { Context, Effect, Layer, Ref } from "effect"
 import { spawnSync } from "node:child_process"
-import * as process from "node:process"
 
 import { ProjectRoot } from "./ProjectRoot.js"
 import { DockerError } from "./Docker.js"
@@ -18,8 +17,10 @@ export class OAuthToken extends Context.Tag("OAuthToken")<
   {
     /** Read the current token from the Ref. Returns { token, version }. */
     readonly getToken: Effect.Effect<{ token: string; version: number }>
-    /** Refresh the token. Takes the stale version — if already refreshed by another fiber, returns current without re-acquiring. */
+    /** Refresh the token. Takes the stale version �� if already refreshed by another fiber, returns current without re-acquiring. */
     readonly refreshToken: (staleVersion: number) => Effect.Effect<string, DockerError>
+    /** Validate the token by running a ping inside a Docker container. Returns true if valid. */
+    readonly validateInContainer: (containerId: string) => Effect.Effect<boolean>
   }
 >() {}
 
@@ -59,17 +60,22 @@ function acquireToken(projectRoot: string) {
 }
 
 /**
- * Validate a token by running a quick `claude -p` ping.
- * Returns true if the token is valid, false otherwise.
+ * Validate a token by running `claude -p "ping"` inside a Docker container.
+ * This matches production usage — the same binary, same env, same network.
  */
-function validateToken(token: string): boolean {
+function validateTokenInContainer(token: string, containerId: string): boolean {
   const result = spawnSync(
-    "claude",
-    ["-p", "--max-turns", "1", "--dangerously-skip-permissions", "--output-format", "text", "ping"],
+    "docker",
+    [
+      "exec",
+      "-e", `CLAUDE_CODE_OAUTH_TOKEN=${token}`,
+      containerId,
+      "claude", "-p", "--bare", "--permission-mode", "bypassPermissions",
+      "--output-format", "text", "ping",
+    ],
     {
-      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token },
       encoding: "utf-8",
-      timeout: 15000,
+      timeout: 30000,
     },
   )
   return result.status === 0
@@ -80,23 +86,14 @@ export const OAuthTokenLive = Layer.effect(
   Effect.gen(function* () {
     const projectRoot = yield* ProjectRoot
 
-    // Step 1: Try to load a saved token
+    // Step 1: Try to load a saved token, acquire if missing
     let token = loadSavedToken(projectRoot)
-
-    // Step 2: If no saved token, acquire one
     if (!token) {
       token = yield* acquireToken(projectRoot)
     }
+    yield* logToConsole("orchestrator", "main", `OAuth token loaded. len=${token.length} prefix=${token.slice(0, 15)}... suffix=...${token.slice(-10)}`)
 
-    // Step 3: Validate the token
-    if (!validateToken(token)) {
-      yield* logToConsole("orchestrator", "main", "Saved token invalid, re-acquiring...")
-      token = yield* acquireToken(projectRoot)
-    } else {
-      yield* logToConsole("orchestrator", "main", `OAuth token validated. len=${token.length} prefix=${token.slice(0, 15)}... suffix=...${token.slice(-10)}`)
-    }
-
-    // Step 4: Create Ref and Semaphore
+    // Step 2: Create Ref and Semaphore (validation deferred to validateInContainer)
     const tokenRef = yield* Ref.make({ token, version: 0 })
     const semaphore = yield* Effect.makeSemaphore(1)
 
@@ -134,6 +131,43 @@ export const OAuthTokenLive = Layer.effect(
             return newToken
           }),
         ),
+
+      validateInContainer: (containerId: string) =>
+        Effect.gen(function* () {
+          const { token: currentToken } = yield* Ref.get(tokenRef)
+          yield* logToConsole("orchestrator", "main", "Validating OAuth token inside container...")
+          const valid = validateTokenInContainer(currentToken, containerId)
+          if (valid) {
+            yield* logToConsole("orchestrator", "main", "Token validated successfully in container")
+            return true
+          }
+
+          // Token failed — try refreshing and re-validating
+          yield* logToConsole("orchestrator", "main", "Token invalid in container — refreshing...")
+          const { status, stdout } = runSetupToken()
+          if (status !== 0) {
+            yield* logToConsole("orchestrator", "main", "Token refresh failed")
+            return false
+          }
+
+          const newToken = extractTokenFromOutput(stdout)
+          if (!newToken) {
+            yield* logToConsole("orchestrator", "main", "Could not extract token after refresh")
+            return false
+          }
+
+          saveToken(projectRoot, newToken)
+          const current = yield* Ref.get(tokenRef)
+          yield* Ref.set(tokenRef, { token: newToken, version: current.version + 1 })
+
+          const retryValid = validateTokenInContainer(newToken, containerId)
+          if (retryValid) {
+            yield* logToConsole("orchestrator", "main", "Refreshed token validated in container")
+          } else {
+            yield* logToConsole("orchestrator", "main", "Refreshed token also failed in container")
+          }
+          return retryValid
+        }),
     })
   }),
 )

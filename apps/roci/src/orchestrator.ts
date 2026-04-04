@@ -120,6 +120,16 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       containerIds.set(rd.name, containerId)
     }
 
+    // Validate token inside first container — catches auth issues before any character starts
+    const firstContainerId = containerIds.values().next().value
+    if (firstContainerId) {
+      const valid = yield* oauthService.validateInContainer(firstContainerId)
+      if (!valid) {
+        yield* logToConsole("orchestrator", "main", "OAuth token is not valid inside container — aborting")
+        return
+      }
+    }
+
     const containerEnv: Record<string, string> = {}
 
     // Fork character fibers
