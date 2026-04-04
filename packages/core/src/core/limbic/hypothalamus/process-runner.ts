@@ -60,7 +60,7 @@ function isAuthError(text: string): boolean {
  * Collects text blocks as the final output string.
  * On timeout, interrupts and returns whatever text was accumulated.
  */
-export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
+export const runTurn = (config: TurnConfig): Effect.Effect<
   TurnResult,
   ClaudeError,
   CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
@@ -70,7 +70,7 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
       const executor = yield* CommandExecutor.CommandExecutor
       const start = Date.now()
       const oauthToken = yield* OAuthToken
-      const { token, version: tokenVersion } = yield* oauthToken.getToken
+      const { token } = yield* oauthToken.getToken
 
       // Accumulate text output from assistant messages
       const textAccumulator = yield* Ref.make<string[]>([])
@@ -223,10 +223,9 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
         if (stderr && stderr.trim()) {
           yield* logToConsole(config.char.name, config.role, `stderr: ${stderr.trim().slice(0, 500)}`)
         }
-        if (!_retrying && exitCode !== 0 && isAuthError(stderr)) {
-          yield* logToConsole(config.char.name, config.role, "Auth error detected — refreshing token and retrying...")
-          yield* oauthToken.refreshToken(tokenVersion)
-          return yield* runTurn(config, true)
+        if (exitCode !== 0 && isAuthError(stderr)) {
+          yield* logToConsole(config.char.name, config.role, "Auth error — token is invalid. Run 'claude setup-token' and update .oauth-token")
+          return yield* Effect.fail(new ClaudeError("OAuth token rejected by Claude. Run 'claude setup-token' and update .oauth-token"))
         }
       }
 
