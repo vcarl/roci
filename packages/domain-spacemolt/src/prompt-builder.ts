@@ -1,6 +1,6 @@
-import { fileURLToPath } from "node:url"
 import * as path from "node:path"
-import { Effect, Layer } from "effect"
+import { readFileSync } from "node:fs"
+import { Layer } from "effect"
 import type {
   PromptBuilder,
   PlanPromptContext,
@@ -9,11 +9,11 @@ import type {
 import { PromptBuilderTag } from "@roci/core/core/prompt-builder.js"
 import type { GameState, Situation } from "./types.js"
 import { snapshot } from "./state-renderer.js"
-import { loadTemplate, renderTemplate } from "@roci/core/core/template.js"
+import { stripFrontmatter, renderTemplate } from "@roci/core/core/template.js"
 
 // ── Template loading ────────────────────────────────────────
 
-const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "prompts")
+const PROMPTS_DIR = path.join(import.meta.dirname, "prompts")
 
 // ── Context assembly helpers ────────────────────────────────
 
@@ -151,18 +151,22 @@ const makePromptBuilder = (templates: Record<string, string>): Omit<PromptBuilde
 
 const TEMPLATE_NAMES = ["plan", "interrupt", "evaluate", "subagent"] as const
 
+function loadTemplateSync(filePath: string): string {
+  return stripFrontmatter(readFileSync(filePath, "utf-8"))
+}
+
 /** Layer providing the SpaceMolt prompt builder. Templates are loaded eagerly at construction. */
-export const SpaceMoltPromptBuilderLive = Layer.effect(
+export const SpaceMoltPromptBuilderLive = Layer.succeed(
   PromptBuilderTag,
-  Effect.gen(function* () {
+  (() => {
     const templates: Record<string, string> = {}
     for (const name of TEMPLATE_NAMES) {
-      templates[name] = yield* loadTemplate(path.join(PROMPTS_DIR, `${name}.md`))
+      templates[name] = loadTemplateSync(path.join(PROMPTS_DIR, `${name}.md`))
     }
-    const inGameClaudeMd = yield* loadTemplate(path.join(PROMPTS_DIR, "in-game-claude.md"))
+    const inGameClaudeMd = loadTemplateSync(path.join(PROMPTS_DIR, "in-game-claude.md"))
     return {
       ...makePromptBuilder(templates),
       systemPrompt: (_mode: string, _task: string) => inGameClaudeMd,
     }
-  }),
+  })(),
 )
