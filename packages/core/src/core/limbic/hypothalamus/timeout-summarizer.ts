@@ -1,5 +1,10 @@
 import { Effect } from "effect"
-import { Claude, ClaudeError } from "../../../services/Claude.js"
+import { CommandExecutor } from "@effect/platform"
+import { ClaudeError } from "../../../services/Claude.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
+import { CharacterLog } from "../../../logging/log-writer.js"
+import { runTurn } from "./process-runner.js"
+import type { CharacterConfig } from "../../../services/CharacterFs.js"
 
 /**
  * When a turn times out, generate a short summary of what was accomplished
@@ -8,10 +13,15 @@ import { Claude, ClaudeError } from "../../../services/Claude.js"
 export const summarizeTimeout = (
   partialOutput: string,
   role: "brain" | "body",
-): Effect.Effect<string, ClaudeError, Claude> =>
+  turnContext: {
+    containerId: string
+    playerName: string
+    char: CharacterConfig
+    addDirs?: string[]
+    env?: Record<string, string>
+  },
+): Effect.Effect<string, ClaudeError, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
   Effect.gen(function* () {
-    const claude = yield* Claude
-
     // Truncate very long outputs to avoid blowing up the summary call
     const truncated = partialOutput.length > 8000
       ? partialOutput.slice(0, 4000) + "\n\n... (truncated) ...\n\n" + partialOutput.slice(-4000)
@@ -28,10 +38,19 @@ export const summarizeTimeout = (
       `Summarize in 2-3 sentences: what was accomplished, what was in progress, and what remains to be done.`,
     ].join("\n")
 
-    const summary = yield* claude.invoke({
+    const result = yield* runTurn({
+      containerId: turnContext.containerId,
+      playerName: turnContext.playerName,
+      char: turnContext.char,
       prompt,
+      systemPrompt: "",
       model: "haiku",
+      timeoutMs: 30_000,
+      role: "brain",
+      noTools: true,
+      addDirs: turnContext.addDirs,
+      env: turnContext.env,
     })
 
-    return summary.trim()
+    return result.output.trim()
   })
