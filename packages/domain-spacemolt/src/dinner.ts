@@ -1,14 +1,20 @@
 import * as path from "node:path"
 import { Effect } from "effect"
-import { FileSystem } from "@effect/platform"
-import { Claude } from "@roci/core/services/Claude.js"
+import { FileSystem, CommandExecutor } from "@effect/platform"
+import { ClaudeError } from "@roci/core/services/Claude.js"
 import { CharacterFs, type CharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { renderTemplate, loadTemplate } from "@roci/core/core/template.js"
+import { runTurn } from "@roci/core/core/limbic/hypothalamus/process-runner.js"
+import { OAuthToken } from "@roci/core/services/OAuthToken.js"
 
 export interface DinnerInput {
   char: CharacterConfig
+  containerId: string
+  playerName: string
+  addDirs?: string[]
+  env?: Record<string, string>
 }
 
 export interface DinnerOutput {
@@ -21,7 +27,6 @@ export const dinner = {
   name: "dinner" as const,
   execute: (input: DinnerInput) =>
     Effect.gen(function* () {
-      const claude = yield* Claude
       const charFs = yield* CharacterFs
       const log = yield* CharacterLog
       const fs = yield* FileSystem.FileSystem
@@ -60,11 +65,20 @@ export const dinner = {
         VALUES: values,
       })
 
-      const updatedDiary = yield* claude.invoke({
+      const result = yield* runTurn({
+        containerId: input.containerId,
+        playerName: input.playerName,
+        char: input.char,
         prompt,
+        systemPrompt: "",
         model: "opus",
-        outputFormat: "text",
+        timeoutMs: 120_000,
+        role: "brain",
+        noTools: true,
+        addDirs: input.addDirs,
+        env: input.env,
       })
+      const updatedDiary = result.output
 
       yield* charFs.writeDiary(input.char, updatedDiary)
 

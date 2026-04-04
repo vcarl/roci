@@ -239,7 +239,13 @@ const socialPhase = {
     Effect.gen(function* () {
       yield* logToConsole(context.char.name, "orchestrator", "Dinner time — reflecting on the session...")
 
-      yield* dinner.execute({ char: context.char }).pipe(
+      yield* dinner.execute({
+        char: context.char,
+        containerId: context.containerId,
+        playerName: context.char.name,
+        addDirs: context.containerAddDirs,
+        env: context.containerEnv,
+      }).pipe(
         Effect.catchAll((e) =>
           logToConsole(context.char.name, "orchestrator", `Dinner failed: ${e}`),
         ),
