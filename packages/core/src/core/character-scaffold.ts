@@ -35,8 +35,9 @@ function generateIdentityWithClaude(opts: {
   characterName: string
   characterDescription: string
   identityTemplate?: { backgroundHints: string; valuesHints: string }
+  containerId: string
 }): { background: string; values: string } | null {
-  const { characterName, characterDescription, identityTemplate } = opts
+  const { characterName, characterDescription, identityTemplate, containerId } = opts
 
   const domainContext = identityTemplate
     ? `\nDomain context for the background: ${identityTemplate.backgroundHints}\nDomain context for values: ${identityTemplate.valuesHints}\n`
@@ -59,11 +60,13 @@ Write the character's working values and principles. These should be concrete, a
 Output ONLY the two sections with the delimiters. No preamble, no commentary.`
 
   try {
-    const output = execFileSync("claude", claudeBaseArgs("sonnet"), {
+    const output = execFileSync("docker", [
+      "exec", "-i", containerId,
+      "claude", ...claudeBaseArgs("sonnet"),
+    ], {
       encoding: "utf-8",
       input: prompt,
       timeout: 120_000,
-      env: { ...process.env, CLAUDECODE: undefined },
       stdio: ["pipe", "pipe", "pipe"],
     })
 
@@ -87,15 +90,17 @@ Output ONLY the two sections with the delimiters. No preamble, no commentary.`
  * Generate a brief summary of a character's identity using Claude CLI.
  * Returns a 4-sentence summary string, or null on failure.
  */
-function generateSummaryWithClaude(characterName: string, background: string): string | null {
+function generateSummaryWithClaude(characterName: string, background: string, containerId: string): string | null {
   const prompt = `Here is the background document for an AI character named "${characterName}":\n\n${background}\n\nWrite exactly 4 sentences summarizing this character's identity, personality, and motivations. Be concise and vivid. Output ONLY the summary, no preamble.`
 
   try {
-    const output = execFileSync("claude", claudeBaseArgs("haiku"), {
+    const output = execFileSync("docker", [
+      "exec", "-i", containerId,
+      "claude", ...claudeBaseArgs("haiku"),
+    ], {
       encoding: "utf-8",
       input: prompt,
       timeout: 30_000,
-      env: { ...process.env, CLAUDECODE: undefined },
       stdio: ["pipe", "pipe", "pipe"],
     })
 
@@ -128,9 +133,10 @@ export const scaffoldCharacter = (opts: {
     valuesHints: string
   }
   characterDescription?: string
+  containerId: string
 }): Effect.Effect<{ results: string[], summary?: string }, never, never> =>
   Effect.sync(() => {
-    const { projectRoot, characterName, identityTemplate, characterDescription } = opts
+    const { projectRoot, characterName, identityTemplate, characterDescription, containerId } = opts
     const charDir = path.resolve(projectRoot, "players", characterName, "me")
     const results: string[] = []
 
@@ -148,6 +154,7 @@ export const scaffoldCharacter = (opts: {
         characterName,
         characterDescription,
         identityTemplate,
+        containerId,
       })
       if (generated) {
         results.push(`AI-generated background and values for ${characterName}`)
@@ -189,7 +196,7 @@ export const scaffoldCharacter = (opts: {
     // Generate a brief summary if AI generation succeeded
     let summary: string | undefined
     if (generated) {
-      summary = generateSummaryWithClaude(characterName, generated.background) ?? undefined
+      summary = generateSummaryWithClaude(characterName, generated.background, containerId) ?? undefined
     }
 
     return { results, summary }

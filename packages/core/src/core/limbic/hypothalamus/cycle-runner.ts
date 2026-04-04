@@ -3,7 +3,7 @@ import { CommandExecutor } from "@effect/platform"
 import type { CycleConfig, CycleResult } from "./types.js"
 import { runTurn } from "./process-runner.js"
 import { summarizeTimeout } from "./timeout-summarizer.js"
-import { Claude, ClaudeError } from "../../../services/Claude.js"
+import { ClaudeError } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { logToConsole } from "../../../logging/console-renderer.js"
@@ -19,7 +19,7 @@ import { logToConsole } from "../../../logging/console-renderer.js"
  */
 export const runCycle = (
   config: CycleConfig,
-): Effect.Effect<CycleResult, ClaudeError | Error, Claude | CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
+): Effect.Effect<CycleResult, ClaudeError | Error, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
   Effect.gen(function* () {
     const playerName = config.playerName
 
@@ -54,7 +54,13 @@ export const runCycle = (
     )
 
     if (brainResult.timedOut) {
-      brainSummary = yield* summarizeTimeout(brainOutput, "brain").pipe(
+      brainSummary = yield* summarizeTimeout(brainOutput, "brain", {
+        containerId: config.containerId,
+        playerName: config.playerName,
+        char: config.char,
+        addDirs: config.addDirs,
+        env: config.env,
+      }).pipe(
         Effect.catchAll((e) => {
           return Effect.logWarning(`Brain summary failed: ${e.message}`).pipe(
             Effect.map(() => "(brain timed out, summary unavailable)"),
@@ -90,7 +96,13 @@ export const runCycle = (
     )
 
     if (bodyResult.timedOut) {
-      bodySummary = yield* summarizeTimeout(bodyResult.output, "body").pipe(
+      bodySummary = yield* summarizeTimeout(bodyResult.output, "body", {
+        containerId: config.containerId,
+        playerName: config.playerName,
+        char: config.char,
+        addDirs: config.addDirs,
+        env: config.env,
+      }).pipe(
         Effect.catchAll((e) => {
           return Effect.logWarning(`Body summary failed: ${e.message}`).pipe(
             Effect.map(() => "(body timed out, summary unavailable)"),
