@@ -1,4 +1,4 @@
-import type { ClaudeModel } from "../../../services/Claude.js"
+import type { AgentRuntime, AnyModel } from "./runtime.js"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
 
 /** Configuration for a single brain or body turn. */
@@ -7,7 +7,7 @@ export interface TurnConfig {
   playerName: string
   systemPrompt: string
   prompt: string
-  model: ClaudeModel
+  model: AnyModel
   timeoutMs: number
   env?: Record<string, string>
   /** Container --add-dir paths for claude subagent. */
@@ -22,6 +22,10 @@ export interface TurnConfig {
   disallowedTools?: string[]
   /** If set, cap spend for this turn via --max-budget-usd. */
   maxBudgetUsd?: number
+  /** If true, run the agent with no tools available. */
+  noTools?: boolean
+  /** Override which runtime binary to use; defaults to auto-detected from model. */
+  runtime?: AgentRuntime
 }
 
 /** Result of a completed (or timed-out) turn. */
@@ -37,8 +41,8 @@ export interface CycleConfig {
   playerName: string
   brainSystemPrompt: string
   bodySystemPrompt: string
-  brainModel: ClaudeModel
-  bodyModel: ClaudeModel
+  brainModel: AnyModel
+  bodyModel: AnyModel
   brainTimeoutMs: number
   bodyTimeoutMs: number
   env?: Record<string, string>
