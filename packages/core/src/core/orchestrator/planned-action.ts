@@ -2,7 +2,7 @@ import { Effect, Queue, Option } from "effect"
 import type { CharacterConfig } from "../../services/CharacterFs.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { CharacterLog } from "../../logging/log-writer.js"
-import { Claude, type ClaudeModel } from "../../services/Claude.js"
+import type { ClaudeModel } from "../../services/Claude.js"
 import { CommandExecutor } from "@effect/platform"
 import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
@@ -55,6 +55,9 @@ export type BreakResult =
 export const runReflection = (
   char: CharacterConfig,
   dreamThreshold: number,
+  containerId: string,
+  addDirs?: string[],
+  env?: Record<string, string>,
 ) =>
   Effect.gen(function* () {
     const charFs = yield* CharacterFs
@@ -63,7 +66,7 @@ export const runReflection = (
 
     if (diaryLines > dreamThreshold) {
       yield* logToConsole(char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-      yield* dream.execute({ char }).pipe(
+      yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env }).pipe(
         Effect.catchAll((e) =>
           logToConsole(char.name, "error", `Dream failed: ${e}`),
         ),

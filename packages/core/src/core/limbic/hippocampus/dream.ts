@@ -1,14 +1,21 @@
 import * as path from "node:path"
 import { Effect } from "effect"
-import { Claude } from "../../../services/Claude.js"
 import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
+import { ClaudeError } from "../../../services/Claude.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
+import { CommandExecutor } from "@effect/platform"
 import { loadTemplate } from "../../template.js"
+import { runTurn } from "../hypothalamus/process-runner.js"
 
 export type DreamType = "normal" | "good" | "nightmare"
 
 export interface DreamInput {
   char: CharacterConfig
+  containerId: string
+  playerName: string
+  addDirs?: string[]
+  env?: Record<string, string>
 }
 
 export interface DreamOutput {
@@ -54,7 +61,6 @@ export const dream = {
   name: "dream" as const,
   execute: (input: DreamInput) =>
     Effect.gen(function* () {
-      const claude = yield* Claude
       const charFs = yield* CharacterFs
       const log = yield* CharacterLog
 
@@ -90,11 +96,19 @@ export const dream = {
       const diaryPrompt = yield* loadTemplate(path.join(PROMPTS_DIR, diaryTemplateFile[dreamType]))
       const diaryInput = `${diaryPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="secrets">\n${secrets}\n</context>\n\n${diary}`
 
-      const compressedDiary = yield* claude.invoke({
+      const compressedDiary = yield* runTurn({
+        containerId: input.containerId,
+        playerName: input.playerName,
+        char: input.char,
         prompt: diaryInput,
+        systemPrompt: "",
         model: "opus",
-        outputFormat: "text",
-      })
+        timeoutMs: 120_000,
+        role: "brain",
+        noTools: true,
+        addDirs: input.addDirs,
+        env: input.env,
+      }).pipe(Effect.map((r) => r.output))
 
       yield* charFs.writeDiary(input.char, compressedDiary)
 
@@ -113,11 +127,19 @@ export const dream = {
       const secretsPrompt = yield* loadTemplate(path.join(PROMPTS_DIR, secretsTemplateFile[dreamType]))
       const secretsInput = `${secretsPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="diary">\n${compressedDiary}\n</context>\n\n${secrets}`
 
-      const compressedSecrets = yield* claude.invoke({
+      const compressedSecrets = yield* runTurn({
+        containerId: input.containerId,
+        playerName: input.playerName,
+        char: input.char,
         prompt: secretsInput,
+        systemPrompt: "",
         model: "opus",
-        outputFormat: "text",
-      })
+        timeoutMs: 120_000,
+        role: "brain",
+        noTools: true,
+        addDirs: input.addDirs,
+        env: input.env,
+      }).pipe(Effect.map((r) => r.output))
 
       yield* charFs.writeSecrets(input.char, compressedSecrets)
 

@@ -144,7 +144,7 @@ const startupPhase = {
           `Connected via WebSocket as ${initialState.player.username}`,
         )
 
-        yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
+        yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, context.containerAddDirs, context.containerEnv)
 
         const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
         return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -161,7 +161,7 @@ const startupPhase = {
       )
 
       // Dream if diary is long
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, context.containerAddDirs, context.containerEnv)
 
       const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
       return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -262,7 +262,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD)
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, context.containerAddDirs, context.containerEnv)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }
