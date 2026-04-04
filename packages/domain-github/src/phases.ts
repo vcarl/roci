@@ -323,7 +323,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, tempo.dreamThreshold)
+      yield* runReflection(context.char, tempo.dreamThreshold, context.containerId, context.containerAddDirs, context.containerEnv)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }

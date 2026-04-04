@@ -75,11 +75,15 @@ describe("demuxEvents", () => {
       await run(demuxEvents(testChar, events, "brain"))
 
       expect(mockThought).toHaveBeenCalledOnce()
-      const entry = mockThought.mock.calls[0][1]
-      expect(entry.type).toBe("text")
-      expect(entry.text).toBe("some thought")
-      expect(entry.source).toBe("brain")
-      expect(entry.character).toBe("testchar")
+      expect(mockThought).toHaveBeenCalledWith(
+        testChar,
+        expect.objectContaining({
+          type: "text",
+          text: "some thought",
+          source: "brain",
+          character: "testchar",
+        }),
+      )
     })
   })
 
@@ -92,10 +96,14 @@ describe("demuxEvents", () => {
       await run(demuxEvents(testChar, events, "body"))
 
       expect(mockAction).toHaveBeenCalledOnce()
-      const entry = mockAction.mock.calls[0][1]
-      expect(entry.type).toBe("tool_use")
-      expect(entry.tool).toBe("Bash")
-      expect(entry.input).toEqual({ command: "ls -la" })
+      expect(mockAction).toHaveBeenCalledWith(
+        testChar,
+        expect.objectContaining({
+          type: "tool_use",
+          tool: "Bash",
+          input: { command: "ls -la" },
+        }),
+      )
     })
 
     it("logs social commands to word log", async () => {
@@ -140,9 +148,13 @@ describe("demuxEvents", () => {
       await run(demuxEvents(testChar, events, "body"))
 
       expect(mockAction).toHaveBeenCalledOnce()
-      const entry = mockAction.mock.calls[0][1]
-      expect(entry.type).toBe("tool_result")
-      expect(entry.content).toBe("output here")
+      expect(mockAction).toHaveBeenCalledWith(
+        testChar,
+        expect.objectContaining({
+          type: "tool_result",
+          content: "output here",
+        }),
+      )
     })
   })
 
