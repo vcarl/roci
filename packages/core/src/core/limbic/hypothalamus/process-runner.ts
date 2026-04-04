@@ -13,7 +13,7 @@
 import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
-import { ClaudeError, claudeBaseArgs } from "../../../services/Claude.js"
+import { ClaudeError, claudeBaseArgs, type ClaudeModel } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { demuxEvent, printRaw } from "../../../logging/log-demux.js"
@@ -74,8 +74,9 @@ export const runTurn = (config: TurnConfig, _retrying = false): Effect.Effect<
       const textAccumulator = yield* Ref.make<string[]>([])
 
       // Build claude flags — use stream-json for real-time output
+      // TODO(Task 4): replace claudeBaseArgs with runtimeBaseArgs once process-runner is runtime-aware
       const claudeArgs: string[] = [
-        ...claudeBaseArgs(config.model),
+        ...claudeBaseArgs(config.model as ClaudeModel),
         "--fallback-model", "sonnet",
         "--output-format", "stream-json",
         "--verbose",
