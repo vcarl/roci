@@ -15,12 +15,13 @@ export function runtimeBinary(model: AnyModel): AgentRuntime {
 
 /**
  * Base CLI args for the selected runtime.
- * Claude: `claude -p --bare --permission-mode bypassPermissions --model <model>`
+ * Claude: `claude -p --permission-mode bypassPermissions --model <model>`
  * OpenCode: `opencode run --format json --model <model>`
+ * Note: --bare is NOT used because it disables OAuth token resolution.
  */
 export function runtimeBaseArgs(runtime: AgentRuntime, model: AnyModel): string[] {
   if (runtime === "claude") {
-    return ["-p", "--bare", "--permission-mode", "bypassPermissions", "--model", model]
+    return ["-p", "--permission-mode", "bypassPermissions", "--model", model]
   }
   return ["run", "--format", "json", "--model", model]
 }
