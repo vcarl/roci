@@ -2,10 +2,10 @@ export type ClaudeModel = "opus" | "sonnet" | "haiku"
 
 /**
  * Base `claude -p` args that every invocation must include.
- * Ensures bare mode (no hooks/LSP/CLAUDE.md) and bypassed permissions.
+ * Note: --bare is NOT used because it disables OAuth token resolution.
  */
 export function claudeBaseArgs(model: ClaudeModel): string[] {
-  return ["-p", "--bare", "--permission-mode", "bypassPermissions", "--model", model]
+  return ["-p", "--permission-mode", "bypassPermissions", "--model", model]
 }
 
 export class ClaudeError {

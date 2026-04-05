@@ -27,7 +27,7 @@ function validateTokenInContainer(token: string, containerId: string): boolean {
       "exec",
       "-e", `CLAUDE_CODE_OAUTH_TOKEN=${token}`,
       containerId,
-      "claude", "-p", "--bare", "--permission-mode", "bypassPermissions",
+      "claude", "-p", "--permission-mode", "bypassPermissions",
       "--output-format", "text", "ping",
     ],
     {

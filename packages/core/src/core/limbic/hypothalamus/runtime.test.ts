@@ -18,7 +18,7 @@ describe("runtimeBaseArgs", () => {
   it("returns claude base args for claude runtime", () => {
     const args = runtimeBaseArgs("claude", "opus")
     expect(args).toContain("-p")
-    expect(args).toContain("--bare")
+    expect(args).not.toContain("--bare")
     expect(args).toContain("--permission-mode")
     expect(args).toContain("bypassPermissions")
     expect(args).toContain("--model")
