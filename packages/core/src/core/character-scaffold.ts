@@ -1,8 +1,14 @@
 import { Effect } from "effect"
+import { CommandExecutor } from "@effect/platform"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
-import { execFileSync } from "node:child_process"
+import { execSync } from "node:child_process"
 import * as path from "node:path"
-import { claudeBaseArgs, type ClaudeModel } from "../services/Claude.js"
+import { Docker } from "../services/Docker.js"
+import { OAuthToken } from "../services/OAuthToken.js"
+import { CharacterLog } from "../logging/log-writer.js"
+import { makeCharacterConfig } from "../services/CharacterFs.js"
+import { runTurn } from "./limbic/hypothalamus/process-runner.js"
+import type { DomainConfig } from "./domain-bundle.js"
 import { DEFAULT_MODEL_CONFIG, resolveModel, type ModelConfig } from "./model-config.js"
 
 const BACKGROUND_TEMPLATE = `# Background
@@ -24,28 +30,21 @@ const DIARY_TEMPLATE = `# Diary
 const SECRETS_TEMPLATE = `# Secrets
 `
 
-/**
- * Generate background.md and VALUES.md content using Claude CLI.
- *
- * Spawns `claude -p` as a subprocess with a prompt that includes the
- * character name, user description, and domain identity hints. Returns
- * the generated content split into { background, values }, or null if
- * generation fails for any reason.
- */
-function generateIdentityWithClaude(opts: {
-  characterName: string
-  characterDescription: string
-  identityTemplate?: { backgroundHints: string; valuesHints: string }
-  containerId: string
-  model: ClaudeModel
-}): { background: string; values: string } | null {
-  const { characterName, characterDescription, identityTemplate, containerId, model } = opts
+interface IdentityResult {
+  background: string
+  values: string
+}
 
+const buildIdentityPrompt = (
+  characterName: string,
+  characterDescription: string,
+  identityTemplate?: { backgroundHints: string; valuesHints: string },
+): string => {
   const domainContext = identityTemplate
     ? `\nDomain context for the background: ${identityTemplate.backgroundHints}\nDomain context for values: ${identityTemplate.valuesHints}\n`
     : ""
 
-  const prompt = `You are generating identity files for an AI character named "${characterName}".
+  return `You are generating identity files for an AI character named "${characterName}".
 
 The user described this character as: ${characterDescription}
 ${domainContext}
@@ -60,56 +59,15 @@ Write the character's working values and principles. These should be concrete, a
 ---END---
 
 Output ONLY the two sections with the delimiters. No preamble, no commentary.`
-
-  try {
-    const output = execFileSync("docker", [
-      "exec", "-i", containerId,
-      "claude", ...claudeBaseArgs(model),
-    ], {
-      encoding: "utf-8",
-      input: prompt,
-      timeout: 120_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    })
-
-    const bgMatch = output.match(/---BACKGROUND---\s*([\s\S]*?)\s*---VALUES---/)
-    const valMatch = output.match(/---VALUES---\s*([\s\S]*?)\s*---END---/)
-
-    if (!bgMatch?.[1]?.trim() || !valMatch?.[1]?.trim()) {
-      return null
-    }
-
-    return {
-      background: bgMatch[1].trim() + "\n",
-      values: valMatch[1].trim() + "\n",
-    }
-  } catch {
-    return null
-  }
 }
 
-/**
- * Generate a brief summary of a character's identity using Claude CLI.
- * Returns a 4-sentence summary string, or null on failure.
- */
-function generateSummaryWithClaude(characterName: string, background: string, containerId: string, model: ClaudeModel): string | null {
-  const prompt = `Here is the background document for an AI character named "${characterName}":\n\n${background}\n\nWrite exactly 4 sentences summarizing this character's identity, personality, and motivations. Be concise and vivid. Output ONLY the summary, no preamble.`
-
-  try {
-    const output = execFileSync("docker", [
-      "exec", "-i", containerId,
-      "claude", ...claudeBaseArgs(model),
-    ], {
-      encoding: "utf-8",
-      input: prompt,
-      timeout: 30_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    })
-
-    const trimmed = output.trim()
-    return trimmed || null
-  } catch {
-    return null
+const parseIdentityOutput = (output: string): IdentityResult | null => {
+  const bgMatch = output.match(/---BACKGROUND---\s*([\s\S]*?)\s*---VALUES---/)
+  const valMatch = output.match(/---VALUES---\s*([\s\S]*?)\s*---END---/)
+  if (!bgMatch?.[1]?.trim() || !valMatch?.[1]?.trim()) return null
+  return {
+    background: bgMatch[1].trim() + "\n",
+    values: valMatch[1].trim() + "\n",
   }
 }
 
@@ -118,14 +76,12 @@ function generateSummaryWithClaude(characterName: string, background: string, co
  *
  * Creates `players/<name>/me/` and writes the four standard files
  * (background.md, VALUES.md, DIARY.md, SECRETS.md). Existing files are
- * never overwritten — they are skipped and noted in the returned list
- * with a "skipped:" prefix.
+ * never overwritten.
  *
- * When a characterDescription is provided, uses Claude to generate
- * rich background and values content. Falls back to placeholder
- * templates if generation fails.
- *
- * @returns object with results (file creation messages) and optional summary
+ * When a characterDescription is provided, spins up a temporary Docker
+ * container, calls runTurn to generate rich background/values content,
+ * then tears the container down. Falls back to placeholder templates if
+ * generation fails for any reason (graceful degradation).
  */
 export const scaffoldCharacter = (opts: {
   projectRoot: string
@@ -135,44 +91,139 @@ export const scaffoldCharacter = (opts: {
     valuesHints: string
   }
   characterDescription?: string
-  containerId: string
   models?: ModelConfig
-}): Effect.Effect<{ results: string[], summary?: string }, never, never> =>
-  Effect.sync(() => {
-    const { projectRoot, characterName, identityTemplate, characterDescription, containerId } = opts
+  domainConfig: DomainConfig
+}): Effect.Effect<
+  { results: string[]; summary?: string },
+  unknown,
+  Docker | CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
+> =>
+  Effect.gen(function* () {
+    const { projectRoot, characterName, identityTemplate, characterDescription, domainConfig } = opts
     const models = opts.models ?? DEFAULT_MODEL_CONFIG
-    // Note: scaffold uses claude CLI directly. Non-Claude tier values
-    // will be passed through and may fail at exec time.
-    const identityModel = resolveModel(models, "scaffoldIdentity", "smart") as ClaudeModel
-    const summaryModel = resolveModel(models, "scaffoldSummary", "fast") as ClaudeModel
+    const identityModel = resolveModel(models, "scaffoldIdentity", "smart")
+    const summaryModel = resolveModel(models, "scaffoldSummary", "fast")
     const charDir = path.resolve(projectRoot, "players", characterName, "me")
     const results: string[] = []
 
-    // Ensure directory exists
     if (!existsSync(charDir)) {
       mkdirSync(charDir, { recursive: true })
       results.push(`created directory: ${charDir}`)
     }
 
-    // Try AI generation if a description was provided
-    let generated: { background: string; values: string } | null = null
+    let generated: IdentityResult | null = null
+    let summary: string | undefined
+
     if (characterDescription) {
-      results.push(`generating identity with Claude...`)
-      generated = generateIdentityWithClaude({
-        characterName,
-        characterDescription,
-        identityTemplate,
-        containerId,
-        model: identityModel,
-      })
-      if (generated) {
+      results.push(`generating identity with AI...`)
+
+      const aiResult = yield* Effect.acquireUseRelease(
+        // acquire: build image (if needed), create + start temp container
+        Effect.gen(function* () {
+          const docker = yield* Docker
+          if (domainConfig.dockerfilePath && domainConfig.dockerContext) {
+            yield* docker.build(
+              domainConfig.imageName,
+              domainConfig.dockerfilePath,
+              domainConfig.dockerContext,
+            )
+          }
+          const containerName = `roci-scaffold-${characterName}-${Date.now()}`
+          const containerId = yield* docker.create({
+            name: containerName,
+            image: domainConfig.imageName,
+            mounts: domainConfig.containerMounts.map((m) => ({
+              host: m.host,
+              container: m.container,
+              readonly: m.readonly,
+            })),
+            env: {
+              ...(process.env.SKIP_FIREWALL ? { SKIP_FIREWALL: "1" } : {}),
+            },
+            cmd: [
+              "bash",
+              "-c",
+              "if [ -z \"$SKIP_FIREWALL\" ]; then sudo /usr/local/bin/init-firewall.sh; fi && sleep infinity",
+            ],
+            capAdd: ["NET_ADMIN", "NET_RAW"],
+          })
+          yield* Effect.try({
+            try: () => execSync(`docker start ${containerId}`, { stdio: "pipe" }),
+            catch: (e) => new Error(`Failed to start scaffold container: ${e}`),
+          })
+          if (domainConfig.containerSetup) {
+            try {
+              domainConfig.containerSetup(containerId)
+            } catch {
+              // Non-fatal — scaffold should keep going.
+            }
+          }
+          return containerId
+        }),
+        // use: do AI calls via runTurn; on failure return null for graceful fallback
+        (containerId) =>
+          Effect.gen(function* () {
+            const char = makeCharacterConfig(projectRoot, characterName)
+            const identityPrompt = buildIdentityPrompt(
+              characterName,
+              characterDescription,
+              identityTemplate,
+            )
+
+            const identityTurn = yield* runTurn({
+              containerId,
+              playerName: characterName,
+              char,
+              prompt: identityPrompt,
+              systemPrompt: "",
+              model: identityModel,
+              timeoutMs: 120_000,
+              role: "brain",
+              noTools: true,
+              addDirs: domainConfig.containerAddDirs,
+            }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+            if (!identityTurn) return null
+
+            const parsed = parseIdentityOutput(identityTurn.output)
+            if (!parsed) return null
+
+            const summaryPrompt = `Here is the background document for an AI character named "${characterName}":\n\n${parsed.background}\n\nWrite exactly 4 sentences summarizing this character's identity, personality, and motivations. Be concise and vivid. Output ONLY the summary, no preamble.`
+
+            const summaryTurn = yield* runTurn({
+              containerId,
+              playerName: characterName,
+              char,
+              prompt: summaryPrompt,
+              systemPrompt: "",
+              model: summaryModel,
+              timeoutMs: 30_000,
+              role: "brain",
+              noTools: true,
+              addDirs: domainConfig.containerAddDirs,
+            }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+            const summaryText = summaryTurn?.output.trim() || undefined
+            return { identity: parsed, summary: summaryText }
+          }),
+        // release: stop + remove temp container
+        (containerId) =>
+          Effect.gen(function* () {
+            const docker = yield* Docker
+            yield* docker.stop(containerId).pipe(Effect.catchAll(() => Effect.void))
+            yield* docker.remove(containerId).pipe(Effect.catchAll(() => Effect.void))
+          }),
+      ).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+      if (aiResult) {
+        generated = aiResult.identity
+        summary = aiResult.summary
         results.push(`AI-generated background and values for ${characterName}`)
       } else {
         results.push(`AI generation failed, using templates`)
       }
     }
 
-    // Build file contents
     const backgroundContent = generated
       ? generated.background
       : identityTemplate
@@ -200,12 +251,6 @@ export const scaffoldCharacter = (opts: {
         writeFileSync(filePath, file.content)
         results.push(`created: ${filePath}`)
       }
-    }
-
-    // Generate a brief summary if AI generation succeeded
-    let summary: string | undefined
-    if (generated) {
-      summary = generateSummaryWithClaude(characterName, generated.background, containerId, summaryModel) ?? undefined
     }
 
     return { results, summary }
