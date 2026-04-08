@@ -74,7 +74,7 @@ const ensureContainer = (containerName: string, rd: ResolvedDomain) =>
  * Multi-domain orchestrator. Builds images, ensures per-domain containers,
  * spawns a Fiber per character, and waits for all to complete (or be interrupted).
  */
-export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalSeconds: number, manualApproval = false, models: ModelConfig) =>
+export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalSeconds: number, models: ModelConfig, manualApproval = false) =>
   Effect.gen(function* () {
     const projectRoot = yield* ProjectRoot
     const docker = yield* Docker

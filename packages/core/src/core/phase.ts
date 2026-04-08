@@ -1,6 +1,7 @@
 import { Context, Effect, Queue } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import type { DomainBundle } from "./domain-bundle.js"
+import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "./model-config.js"
 
 /**
  * Connection state threaded between phases.
@@ -28,6 +29,11 @@ export interface PhaseContext<S = unknown, Evt = unknown> {
   readonly phaseData?: Record<string, unknown>
   /** Domain service layers for the state machine. */
   readonly domainBundle?: DomainBundle
+}
+
+/** Read the ModelConfig from a phase context's phaseData, falling back to defaults. */
+export function getModels(context: PhaseContext): ModelConfig {
+  return (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG
 }
 
 /**
