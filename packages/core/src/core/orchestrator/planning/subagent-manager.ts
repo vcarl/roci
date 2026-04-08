@@ -19,6 +19,8 @@ import { recordStepTiming, recordStepOutcome } from "./step-tracker.js"
 import { brainEvaluate } from "./brain.js"
 import { runTurn } from "../../limbic/hypothalamus/process-runner.js"
 import { PromptBuilderTag } from "../../prompt-builder.js"
+import type { ModelConfig } from "../../model-config.js"
+import { resolveModel } from "../../model-config.js"
 
 export interface SubagentRefs {
   readonly fiber: Ref.Ref<Fiber.RuntimeFiber<string, unknown> | null>
@@ -55,6 +57,7 @@ interface EvaluateServices {
   readonly addDirs?: string[]
   readonly modeRef?: Ref.Ref<BrainMode>
   readonly investigationReportRef?: Ref.Ref<string | null>
+  readonly models: ModelConfig
 }
 
 /** Check if a completed subagent's step succeeded. Advance or replan. */
@@ -142,6 +145,7 @@ export const evaluateCompletedSubagent = (
           char: services.char,
           containerEnv: services.containerEnv,
           addDirs: services.addDirs,
+          model: resolveModel(services.models, "brainEvaluate", "reasoning"),
         }).pipe(
           Effect.catchTag("ClaudeError", (e) =>
             Effect.succeed({
@@ -247,6 +251,7 @@ interface SpawnSubagentConfig {
   readonly addDirs?: string[]
   readonly tickIntervalSec: number
   readonly modeRef?: Ref.Ref<BrainMode>
+  readonly models: ModelConfig
 }
 
 interface SpawnSubagentServices {
@@ -300,6 +305,8 @@ export const maybeSpawnSubagent = (
 
       const log = yield* CharacterLog
 
+      const subagentModel = smConfig.models.tiers[finalStep.tier]
+
       const fiber = yield* Effect.gen(function* () {
         yield* log.action(smConfig.char, {
           timestamp: new Date().toISOString(),
@@ -308,7 +315,7 @@ export const maybeSpawnSubagent = (
           type: "subagent_spawn",
           task: finalStep.task,
           goal: finalStep.goal,
-          model: finalStep.model,
+          model: subagentModel,
         })
 
         const result = yield* runTurn({
@@ -317,7 +324,7 @@ export const maybeSpawnSubagent = (
           playerName: smConfig.playerName,
           systemPrompt,
           prompt,
-          model: finalStep.model,
+          model: subagentModel,
           timeoutMs: finalStep.timeoutTicks * smConfig.tickIntervalSec * 1000,
           env: smConfig.containerEnv,
           addDirs: smConfig.addDirs,

@@ -69,7 +69,7 @@ export const logPlanTransition = (
   Effect.sync(() => {
     const step = plan.steps[stepIndex]
     const c = colorFor(character)
-    console.log(`${c}>> subagent start${RESET} — Step ${stepIndex + 1}/${plan.steps.length}: [${step.task}] ${step.goal} (${step.model})`)
+    console.log(`${c}>> subagent start${RESET} — Step ${stepIndex + 1}/${plan.steps.length}: [${step.task}] ${step.goal} (${step.tier})`)
   })
 
 /** Step completion result. */

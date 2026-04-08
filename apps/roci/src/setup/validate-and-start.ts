@@ -6,6 +6,7 @@ import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { CharacterFs, makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { runOrchestrator } from "../orchestrator.js"
 import { logToConsole } from "@roci/core/logging/console-renderer.js"
+import type { ModelConfig } from "@roci/core/core/model-config.js"
 
 /** Log a ProcedureMessage to console with appropriate prefix. */
 export const logProcMsg = (msg: ProcedureMessage) => {
@@ -22,6 +23,7 @@ export const validateAndStart = (
   resolved: ResolvedDomain[],
   tickInterval: number,
   manualApproval: boolean,
+  models: ModelConfig,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
@@ -94,5 +96,5 @@ export const validateAndStart = (
       }
     }
 
-    yield* runOrchestrator(resolved, tickInterval, manualApproval)
+    yield* runOrchestrator(resolved, tickInterval, manualApproval, models)
   })

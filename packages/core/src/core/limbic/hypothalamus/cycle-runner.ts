@@ -60,6 +60,7 @@ export const runCycle = (
         char: config.char,
         addDirs: config.addDirs,
         env: config.env,
+        models: config.models,
       }).pipe(
         Effect.catchAll((e) => {
           return Effect.logWarning(`Brain summary failed: ${e.message}`).pipe(
@@ -102,6 +103,7 @@ export const runCycle = (
         char: config.char,
         addDirs: config.addDirs,
         env: config.env,
+        models: config.models,
       }).pipe(
         Effect.catchAll((e) => {
           return Effect.logWarning(`Body summary failed: ${e.message}`).pipe(

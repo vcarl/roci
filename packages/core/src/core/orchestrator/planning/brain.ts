@@ -10,6 +10,7 @@ import { StateRendererTag } from "../../state-renderer.js"
 import type { Plan, StepCompletionResult } from "../../types.js"
 import { runTurn } from "../../limbic/hypothalamus/process-runner.js"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
+import type { AnyModel } from "../../limbic/hypothalamus/runtime.js"
 
 /** Container context needed by brain functions to run in-container via runTurn. */
 export interface BrainContainerContext {
@@ -18,6 +19,8 @@ export interface BrainContainerContext {
   char: CharacterConfig
   containerEnv?: Record<string, string>
   addDirs?: string[]
+  /** Resolved model for this brain call (caller resolves via resolveModel + ModelConfig). */
+  model: AnyModel
 }
 
 // ── Plan parsing ────────────────────────────────────────────
@@ -35,7 +38,7 @@ function parsePlan(output: string, validProcedures?: string[]): Plan {
       ? parsed.steps.map((s: Record<string, unknown>) => ({
           task: (s.task as string) ?? "explore",
           goal: (s.goal as string) ?? "",
-          model: (s.model as "haiku" | "sonnet") ?? "haiku",
+          tier: (s.tier as "fast" | "smart") ?? "fast",
           successCondition: (s.successCondition as string) ?? "",
           timeoutTicks: (s.timeoutTicks as number) ?? 10,
         }))
@@ -68,7 +71,7 @@ export const brainPlan: AiFunction<PlanPromptContext & BrainContainerContext, Pl
         char: input.char,
         systemPrompt: "",
         prompt,
-        model: "opus",
+        model: input.model,
         timeoutMs: 180_000,
         env: input.containerEnv,
         addDirs: input.addDirs,
@@ -105,7 +108,7 @@ export const brainInterrupt: AiFunction<InterruptPromptContext & BrainContainerC
         char: input.char,
         systemPrompt: "",
         prompt,
-        model: "opus",
+        model: input.model,
         timeoutMs: 180_000,
         env: input.containerEnv,
         addDirs: input.addDirs,
@@ -143,7 +146,7 @@ export const brainEvaluate: AiFunction<EvaluatePromptContext & BrainContainerCon
         char: input.char,
         systemPrompt: "",
         prompt,
-        model: "opus",
+        model: input.model,
         timeoutMs: 120_000,
         env: input.containerEnv,
         addDirs: input.addDirs,

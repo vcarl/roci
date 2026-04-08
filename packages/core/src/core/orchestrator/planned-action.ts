@@ -14,6 +14,7 @@ import { runCycle } from "../limbic/hypothalamus/cycle-runner.js"
 import { dream } from "../limbic/hippocampus/dream.js"
 import type { Alert } from "../types.js"
 import { logToConsole } from "../../logging/console-renderer.js"
+import type { ModelConfig } from "../model-config.js"
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ export interface PlannedActionConfig {
   brainTimeoutMs: number
   bodyTimeoutMs: number
   brainDisallowedTools?: string[]
+  models: ModelConfig
 }
 
 export type PlannedActionResult =
@@ -56,6 +58,7 @@ export const runReflection = (
   char: CharacterConfig,
   dreamThreshold: number,
   containerId: string,
+  models: ModelConfig,
   addDirs?: string[],
   env?: Record<string, string>,
 ) =>
@@ -66,7 +69,7 @@ export const runReflection = (
 
     if (diaryLines > dreamThreshold) {
       yield* logToConsole(char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-      yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env }).pipe(
+      yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
         Effect.catchAll((e) =>
           logToConsole(char.name, "error", `Dream failed: ${e}`),
         ),
@@ -276,6 +279,7 @@ export const runPlannedAction = (config: PlannedActionConfig) =>
         char: config.char,
         buildBrainPrompt: () => brainPromptString,
         brainDisallowedTools: config.brainDisallowedTools,
+        models: config.models,
       })
 
       // 9. Log cycle completion

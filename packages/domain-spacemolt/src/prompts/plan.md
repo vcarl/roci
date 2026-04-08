@@ -10,7 +10,7 @@ Your output must be ONLY valid JSON matching this schema:
     {
       "task": "{{taskList}}",
       "goal": "string — natural language goal for the agent executing this step",
-      "model": "haiku|sonnet",
+      "tier": "fast|smart",
       "successCondition": "string — how to verify this step is done, checked against game state",
       "timeoutTicks": number
     }
@@ -18,8 +18,8 @@ Your output must be ONLY valid JSON matching this schema:
 }
 
 Guidelines:
-- Use "haiku" for routine tasks (mining, traveling, selling, docking, refueling)
-- Use "sonnet" for tasks requiring judgment (combat, social interaction, complex trading)
+- Use "fast" for routine tasks (mining, traveling, selling, docking, refueling)
+- Use "smart" for tasks requiring judgment (combat, social interaction, complex trading)
 - Keep plans 2-6 steps long. Don't over-plan.
 - Success conditions should be observable from game state (e.g., "cargo_used > 90% of capacity", "docked_at_base is not null", "current_system == X")
 - 1 tick ≈ {{tickIntervalSec}}s (from server tick_rate). Set realistic timeoutTicks based on task complexity and recent step performance.

@@ -8,6 +8,8 @@ import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { renderTemplate, loadTemplate } from "@roci/core/core/template.js"
 import { runTurn } from "@roci/core/core/limbic/hypothalamus/process-runner.js"
 import { OAuthToken } from "@roci/core/services/OAuthToken.js"
+import type { ModelConfig } from "@roci/core/core/model-config.js"
+import { resolveModel } from "@roci/core/core/model-config.js"
 
 export interface DinnerInput {
   char: CharacterConfig
@@ -15,6 +17,7 @@ export interface DinnerInput {
   playerName: string
   addDirs?: string[]
   env?: Record<string, string>
+  models: ModelConfig
 }
 
 export interface DinnerOutput {
@@ -71,7 +74,7 @@ export const dinner = {
         char: input.char,
         prompt,
         systemPrompt: "",
-        model: "opus",
+        model: resolveModel(input.models, "dinner", "smart"),
         timeoutMs: 120_000,
         role: "brain",
         noTools: true,

@@ -7,6 +7,7 @@ import { makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { execSync } from "node:child_process"
 import type { ResolvedDomain } from "./domains/registry.js"
 import { OAuthToken } from "@roci/core/services/OAuthToken.js"
+import type { ModelConfig } from "@roci/core/core/model-config.js"
 
 /**
  * Ensure a domain container exists and is running.
@@ -73,7 +74,7 @@ const ensureContainer = (containerName: string, rd: ResolvedDomain) =>
  * Multi-domain orchestrator. Builds images, ensures per-domain containers,
  * spawns a Fiber per character, and waits for all to complete (or be interrupted).
  */
-export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalSeconds: number, manualApproval = false) =>
+export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalSeconds: number, manualApproval = false, models: ModelConfig) =>
   Effect.gen(function* () {
     const projectRoot = yield* ProjectRoot
     const docker = yield* Docker
@@ -156,7 +157,10 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
                 containerEnv,
                 containerAddDirs: rd.config.containerAddDirs,
                 domainBundle: rd.config.bundle,
-                phaseData: manualApproval ? { manualApproval: true } : undefined,
+                phaseData: {
+                  ...(manualApproval ? { manualApproval: true } : {}),
+                  models,
+                },
               },
               rd.config.phaseRegistry,
             )

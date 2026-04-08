@@ -7,6 +7,7 @@ import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter } from "@roci/core/core/character-scaffold.js"
 import { logToConsole } from "@roci/core/logging/console-renderer.js"
 import { validateAndStart } from "./validate-and-start.js"
+import { DEFAULT_MODEL_CONFIG } from "@roci/core/core/model-config.js"
 import { ensureOAuthTokenInteractive } from "./oauth-token.js"
 
 /** Log a ProcedureMessage to console with appropriate prefix. */
@@ -166,7 +167,7 @@ export const runGuidedSetup = (projectRoot: string) =>
 
     if (startNow) {
       const resolved = resolveConfigs(projectRoot, [], [])
-      yield* validateAndStart(projectRoot, resolved, 30, false)
+      yield* validateAndStart(projectRoot, resolved, 30, false, DEFAULT_MODEL_CONFIG)
     } else {
       yield* logToConsole("setup", "cli", "Setup complete. Run 'roci' or 'roci start' to begin.")
     }

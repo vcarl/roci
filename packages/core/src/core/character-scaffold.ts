@@ -2,7 +2,8 @@ import { Effect } from "effect"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import * as path from "node:path"
-import { claudeBaseArgs } from "../services/Claude.js"
+import { claudeBaseArgs, type ClaudeModel } from "../services/Claude.js"
+import { DEFAULT_MODEL_CONFIG, resolveModel, type ModelConfig } from "./model-config.js"
 
 const BACKGROUND_TEMPLATE = `# Background
 
@@ -36,8 +37,9 @@ function generateIdentityWithClaude(opts: {
   characterDescription: string
   identityTemplate?: { backgroundHints: string; valuesHints: string }
   containerId: string
+  model: ClaudeModel
 }): { background: string; values: string } | null {
-  const { characterName, characterDescription, identityTemplate, containerId } = opts
+  const { characterName, characterDescription, identityTemplate, containerId, model } = opts
 
   const domainContext = identityTemplate
     ? `\nDomain context for the background: ${identityTemplate.backgroundHints}\nDomain context for values: ${identityTemplate.valuesHints}\n`
@@ -62,7 +64,7 @@ Output ONLY the two sections with the delimiters. No preamble, no commentary.`
   try {
     const output = execFileSync("docker", [
       "exec", "-i", containerId,
-      "claude", ...claudeBaseArgs("sonnet"),
+      "claude", ...claudeBaseArgs(model),
     ], {
       encoding: "utf-8",
       input: prompt,
@@ -90,13 +92,13 @@ Output ONLY the two sections with the delimiters. No preamble, no commentary.`
  * Generate a brief summary of a character's identity using Claude CLI.
  * Returns a 4-sentence summary string, or null on failure.
  */
-function generateSummaryWithClaude(characterName: string, background: string, containerId: string): string | null {
+function generateSummaryWithClaude(characterName: string, background: string, containerId: string, model: ClaudeModel): string | null {
   const prompt = `Here is the background document for an AI character named "${characterName}":\n\n${background}\n\nWrite exactly 4 sentences summarizing this character's identity, personality, and motivations. Be concise and vivid. Output ONLY the summary, no preamble.`
 
   try {
     const output = execFileSync("docker", [
       "exec", "-i", containerId,
-      "claude", ...claudeBaseArgs("haiku"),
+      "claude", ...claudeBaseArgs(model),
     ], {
       encoding: "utf-8",
       input: prompt,
@@ -134,9 +136,15 @@ export const scaffoldCharacter = (opts: {
   }
   characterDescription?: string
   containerId: string
+  models?: ModelConfig
 }): Effect.Effect<{ results: string[], summary?: string }, never, never> =>
   Effect.sync(() => {
     const { projectRoot, characterName, identityTemplate, characterDescription, containerId } = opts
+    const models = opts.models ?? DEFAULT_MODEL_CONFIG
+    // Note: scaffold uses claude CLI directly. Non-Claude tier values
+    // will be passed through and may fail at exec time.
+    const identityModel = resolveModel(models, "scaffoldIdentity", "smart") as ClaudeModel
+    const summaryModel = resolveModel(models, "scaffoldSummary", "fast") as ClaudeModel
     const charDir = path.resolve(projectRoot, "players", characterName, "me")
     const results: string[] = []
 
@@ -155,6 +163,7 @@ export const scaffoldCharacter = (opts: {
         characterDescription,
         identityTemplate,
         containerId,
+        model: identityModel,
       })
       if (generated) {
         results.push(`AI-generated background and values for ${characterName}`)
@@ -196,7 +205,7 @@ export const scaffoldCharacter = (opts: {
     // Generate a brief summary if AI generation succeeded
     let summary: string | undefined
     if (generated) {
-      summary = generateSummaryWithClaude(characterName, generated.background, containerId) ?? undefined
+      summary = generateSummaryWithClaude(characterName, generated.background, containerId, summaryModel) ?? undefined
     }
 
     return { results, summary }

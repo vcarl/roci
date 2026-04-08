@@ -15,7 +15,7 @@ export interface Plan {
 export interface PlanStep {
   task: string       // e.g. "mine", "travel", "sell", "dock", "refuel", "chat", "explore"
   goal: string       // NL goal for the subagent
-  model: "haiku" | "sonnet"
+  tier: "fast" | "smart"  // tier name; resolved to a concrete model at spawn time
   successCondition: string  // checked against game state
   timeoutTicks: number
 }

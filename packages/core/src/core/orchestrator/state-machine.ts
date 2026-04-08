@@ -22,6 +22,8 @@ import { killSubagent, evaluateCompletedSubagent, checkMidRun, maybeSpawnSubagen
 import { maybeRequestPlan } from "./planning/planning-cycle.js"
 import { runTurn } from "../limbic/hypothalamus/process-runner.js"
 import { PromptBuilderTag } from "../prompt-builder.js"
+import type { ModelConfig } from "../model-config.js"
+import { resolveModel } from "../model-config.js"
 
 export interface StateMachineConfig {
   char: CharacterConfig
@@ -38,6 +40,8 @@ export interface StateMachineConfig {
   hooks?: LifecycleHooks
   /** Pause for manual approval before plan/subagent steps. */
   manualApproval?: boolean
+  /** Tier-based model config; threaded into planning, spawn, and evaluation services. */
+  models: ModelConfig
 }
 
 /**
@@ -100,7 +104,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       procedureTargets: procedureTargetsRef,
       procedureStartState: procedureStartStateRef,
     }
-    const planningServices = { char: config.char, containerId: config.containerId, playerName: config.playerName, containerEnv: config.containerEnv, addDirs: config.addDirs, tickIntervalSec: config.tickIntervalSec, hooks, renderer }
+    const planningServices = { char: config.char, containerId: config.containerId, playerName: config.playerName, containerEnv: config.containerEnv, addDirs: config.addDirs, tickIntervalSec: config.tickIntervalSec, hooks, renderer, models: config.models }
     const evalServices = {
       renderer,
       classifier,
@@ -114,6 +118,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       addDirs: config.addDirs,
       modeRef,
       investigationReportRef,
+      models: config.models,
     }
     const spawnConfig = {
       char: config.char,
@@ -123,6 +128,7 @@ export const runStateMachine = (config: StateMachineConfig) =>
       addDirs: config.addDirs,
       tickIntervalSec: config.tickIntervalSec,
       modeRef,
+      models: config.models,
     }
     const spawnServices = { renderer, hooks }
 
@@ -223,7 +229,8 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
         const state = yield* Ref.get(gameStateRef)
         const procedureSummary = classifier.summarize(state)
 
-        const diaryStep = { task: "diary" as const, goal: diaryPrompt, model: "haiku" as const, successCondition: "diary updated", timeoutTicks: 3 }
+        const diaryModel = resolveModel(config.models, "diarySubagent", "fast")
+        const diaryStep = { task: "diary" as const, goal: diaryPrompt, tier: "fast" as const, successCondition: "diary updated", timeoutTicks: 3 }
         const diaryTurnPrompt = promptBuilder.subagentPrompt({
           step: diaryStep,
           state,
@@ -242,7 +249,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           playerName: config.playerName,
           systemPrompt: systemPromptText,
           prompt: diaryTurnPrompt,
-          model: "haiku",
+          model: diaryModel,
           timeoutMs: 60_000,
           env: config.containerEnv,
           addDirs: config.addDirs,
@@ -301,6 +308,7 @@ Write a brief diary entry summarizing outcomes and lessons learned. Append to th
           char: config.char,
           containerEnv: config.containerEnv,
           addDirs: config.addDirs,
+          model: resolveModel(config.models, "brainInterrupt", "reasoning"),
         })
 
         yield* log.thought(config.char, {

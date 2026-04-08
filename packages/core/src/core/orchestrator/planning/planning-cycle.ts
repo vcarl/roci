@@ -10,6 +10,8 @@ import type { StateRenderer } from "../../state-renderer.js"
 import type { BrainMode, Plan, StepTiming, Alert } from "../../types.js"
 import type { LifecycleHooks, PlanContext } from "../lifecycle.js"
 import { brainPlan } from "./brain.js"
+import type { ModelConfig } from "../../model-config.js"
+import { resolveModel } from "../../model-config.js"
 
 export interface PlanningRefs {
   readonly plan: Ref.Ref<Plan | null>
@@ -36,6 +38,7 @@ interface PlanningServices {
   readonly tickIntervalSec: number
   readonly hooks?: LifecycleHooks
   readonly renderer?: StateRenderer
+  readonly models: ModelConfig
 }
 
 /** Request a new plan from the brain if idle and no plan exists. */
@@ -126,6 +129,7 @@ export const maybeRequestPlan = (
         char: services.char,
         containerEnv: services.containerEnv,
         addDirs: services.addDirs,
+        model: resolveModel(services.models, "brainPlan", "reasoning"),
       })
 
       yield* Ref.set(refs.previousFailure, null)

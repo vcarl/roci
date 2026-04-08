@@ -1,5 +1,6 @@
 import type { AgentRuntime, AnyModel } from "./runtime.js"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
+import type { ModelConfig } from "../../model-config.js"
 
 /** Configuration for a single brain or body turn. */
 export interface TurnConfig {
@@ -56,6 +57,8 @@ export interface CycleConfig {
   brainAllowedTools?: string[]
   /** If set, block these tools from the brain via --disallowedTools. */
   brainDisallowedTools?: string[]
+  /** Tier-based model config used by orchestrator-internal calls. */
+  models: ModelConfig
 }
 
 /** Result of a full brain/body cycle. */

@@ -17,16 +17,60 @@ import { scaffoldCharacter } from "@roci/core/core/character-scaffold.js"
 import { runGuidedSetup } from "./setup/guided-setup.js"
 import { validateAndStart } from "./setup/validate-and-start.js"
 import { OAuthTokenLive } from "@roci/core/services/OAuthToken.js"
+import {
+  DEFAULT_MODEL_CONFIG,
+  mergeModelConfig,
+  type ModelConfig,
+  type Tier,
+} from "@roci/core/core/model-config.js"
+import type { AnyModel } from "@roci/core/core/limbic/hypothalamus/runtime.js"
 
 const isDev = import.meta.url.endsWith(".ts")
 const PROJECT_ROOT = isDev
   ? path.resolve(import.meta.dirname, "../..")  // dev: orchestrator/src/ -> repo root
   : process.cwd()                                // published: user runs from project root
 
+/**
+ * Load .roci/models.json if present and merge with defaults + CLI overrides.
+ * CLI overrides take precedence over the file; the file takes precedence over defaults.
+ */
+function loadModelConfig(opts: {
+  tierFast: Option.Option<string>
+  tierSmart: Option.Option<string>
+  tierReasoning: Option.Option<string>
+}): ModelConfig {
+  let merged: ModelConfig = DEFAULT_MODEL_CONFIG
+
+  const filePath = path.resolve(PROJECT_ROOT, ".roci", "models.json")
+  if (existsSync(filePath)) {
+    try {
+      const raw = readFileSync(filePath, "utf-8")
+      const parsed = JSON.parse(raw) as Partial<ModelConfig>
+      merged = mergeModelConfig(merged, parsed)
+    } catch (e) {
+      console.error(`[roci] failed to parse .roci/models.json: ${e}`)
+    }
+  }
+
+  const cliTiers: Partial<Record<Tier, AnyModel>> = {}
+  if (Option.isSome(opts.tierFast)) cliTiers.fast = opts.tierFast.value
+  if (Option.isSome(opts.tierSmart)) cliTiers.smart = opts.tierSmart.value
+  if (Option.isSome(opts.tierReasoning)) cliTiers.reasoning = opts.tierReasoning.value
+  if (Object.keys(cliTiers).length > 0) {
+    merged = mergeModelConfig(merged, { tiers: cliTiers })
+  }
+
+  return merged
+}
+
 // Shared options
 const tickInterval = Options.integer("tick-interval").pipe(
   Options.withDefault(30),
 )
+
+const tierFast = Options.text("tier-fast").pipe(Options.optional)
+const tierSmart = Options.text("tier-smart").pipe(Options.optional)
+const tierReasoning = Options.text("tier-reasoning").pipe(Options.optional)
 
 const domainOption = Options.text("domain").pipe(
   Options.repeated,
@@ -39,10 +83,15 @@ const manualApproval = Options.boolean("manual-approval").pipe(
 // --- start command ---
 const startCharacters = Args.text({ name: "characters" }).pipe(Args.repeated)
 
-const startCommand = Command.make("start", { characters: startCharacters, tickInterval, domain: domainOption, manualApproval }, (args) =>
+const startCommand = Command.make("start", { characters: startCharacters, tickInterval, domain: domainOption, manualApproval, tierFast, tierSmart, tierReasoning }, (args) =>
   Effect.gen(function* () {
     const domains = [...args.domain]
     const characters = [...args.characters]
+    const models = loadModelConfig({
+      tierFast: args.tierFast,
+      tierSmart: args.tierSmart,
+      tierReasoning: args.tierReasoning,
+    })
 
     const resolved = resolveConfigs(PROJECT_ROOT, domains, characters)
 
@@ -64,7 +113,7 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
       }
     }
 
-    yield* runOrchestrator(resolved, args.tickInterval, Option.getOrElse(args.manualApproval, () => false))
+    yield* runOrchestrator(resolved, args.tickInterval, Option.getOrElse(args.manualApproval, () => false), models)
   }),
 ).pipe(Command.withDescription("Start character(s) running"))
 
@@ -365,6 +414,7 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
         characterName: charName,
         identityTemplate: domainConfig.identityTemplate,
         containerId: "",
+        models: DEFAULT_MODEL_CONFIG,
       })
       if (summary) {
         yield* logToConsole("setup", "cli", summary)
@@ -499,6 +549,9 @@ const runAutoDetect = (args: {
   tickInterval: number
   domain: ReadonlyArray<string>
   manualApproval: Option.Option<boolean>
+  tierFast: Option.Option<string>
+  tierSmart: Option.Option<string>
+  tierReasoning: Option.Option<string>
 }) =>
   Effect.gen(function* () {
     const configPath = path.resolve(PROJECT_ROOT, "config.json")
@@ -528,14 +581,20 @@ const runAutoDetect = (args: {
       return
     }
 
+    const models = loadModelConfig({
+      tierFast: args.tierFast,
+      tierSmart: args.tierSmart,
+      tierReasoning: args.tierReasoning,
+    })
+
     // 4. Validate and start
-    yield* validateAndStart(PROJECT_ROOT, resolved, args.tickInterval, Option.getOrElse(args.manualApproval, () => false))
+    yield* validateAndStart(PROJECT_ROOT, resolved, args.tickInterval, Option.getOrElse(args.manualApproval, () => false), models)
   })
 
 // --- root command ---
 const rociCommand = Command.make(
   "roci",
-  { characters: defaultCharacters, tickInterval: defaultTickInterval, domain: defaultDomainOption, manualApproval: defaultManualApproval },
+  { characters: defaultCharacters, tickInterval: defaultTickInterval, domain: defaultDomainOption, manualApproval: defaultManualApproval, tierFast, tierSmart, tierReasoning },
   (args) => runAutoDetect(args),
 ).pipe(
   Command.withSubcommands([
