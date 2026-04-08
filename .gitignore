@@ -3,6 +3,7 @@ dist/
 .nx/
 coverage/
 *.tsbuildinfo
+*.tgz
 .ds_store
 __pycache__/
 .env
