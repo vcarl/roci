@@ -96,5 +96,5 @@ export const validateAndStart = (
       }
     }
 
-    yield* runOrchestrator(resolved, tickInterval, manualApproval, models)
+    yield* runOrchestrator(resolved, tickInterval, models, manualApproval)
   })

@@ -113,7 +113,7 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
       }
     }
 
-    yield* runOrchestrator(resolved, args.tickInterval, Option.getOrElse(args.manualApproval, () => false), models)
+    yield* runOrchestrator(resolved, args.tickInterval, models, Option.getOrElse(args.manualApproval, () => false))
   }),
 ).pipe(Command.withDescription("Start character(s) running"))
 

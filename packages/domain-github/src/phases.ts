@@ -5,14 +5,13 @@ import * as path from "node:path"
 import type { GitHubCharacterConfig } from "./types.js"
 import type { GitHubState } from "./types.js"
 import type { GitHubEvent } from "./types.js"
-import type { Phase, PhaseContext, PhaseResult, PhaseRegistry, ConnectionState } from "@roci/core/core/phase.js"
+import { getModels, type Phase, type PhaseContext, type PhaseResult, type PhaseRegistry, type ConnectionState } from "@roci/core/core/phase.js"
 import { Docker } from "@roci/core/services/Docker.js"
 import { logToConsole } from "@roci/core/logging/console-renderer.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { GitHubClientTag } from "./github-client.js"
 import { runPlannedAction, runBreak, runReflection } from "@roci/core/core/orchestrator/planned-action.js"
 import type { PlannedActionTempo } from "@roci/core/core/limbic/hypothalamus/tempo.js"
-import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "@roci/core/core/model-config.js"
 
 const tempo: PlannedActionTempo = {
   _tag: "PlannedAction",
@@ -277,7 +276,7 @@ const activePhase = {
           "NotebookEdit",
           "Edit",
         ],
-        models: (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG,
+        models: getModels(context),
       }).pipe(Effect.provide(context.domainBundle!))
 
       const updatedConnection = { ...conn, initialState: result.finalState }
@@ -325,7 +324,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, tempo.dreamThreshold, context.containerId, (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG, context.containerAddDirs, context.containerEnv)
+      yield* runReflection(context.char, tempo.dreamThreshold, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }
