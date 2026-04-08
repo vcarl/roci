@@ -408,13 +408,13 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
       const charDir = path.resolve(PROJECT_ROOT, "players", charName, "me")
 
       // Scaffold generic identity files (background.md, VALUES.md, DIARY.md, SECRETS.md)
-      // TODO: containerId must be provided once the setup flow spins up a temporary container
+      // Spins up a temporary container internally for AI identity generation.
       const { summary } = yield* scaffoldCharacter({
         projectRoot: PROJECT_ROOT,
         characterName: charName,
         identityTemplate: domainConfig.identityTemplate,
-        containerId: "",
         models: DEFAULT_MODEL_CONFIG,
+        domainConfig,
       })
       if (summary) {
         yield* logToConsole("setup", "cli", summary)
