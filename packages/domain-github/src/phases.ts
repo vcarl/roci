@@ -12,6 +12,7 @@ import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { GitHubClientTag } from "./github-client.js"
 import { runPlannedAction, runBreak, runReflection } from "@roci/core/core/orchestrator/planned-action.js"
 import type { PlannedActionTempo } from "@roci/core/core/limbic/hypothalamus/tempo.js"
+import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "@roci/core/core/model-config.js"
 
 const tempo: PlannedActionTempo = {
   _tag: "PlannedAction",
@@ -276,6 +277,7 @@ const activePhase = {
           "NotebookEdit",
           "Edit",
         ],
+        models: (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG,
       }).pipe(Effect.provide(context.domainBundle!))
 
       const updatedConnection = { ...conn, initialState: result.finalState }
@@ -323,7 +325,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, tempo.dreamThreshold, context.containerId, context.containerAddDirs, context.containerEnv)
+      yield* runReflection(context.char, tempo.dreamThreshold, context.containerId, (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG, context.containerAddDirs, context.containerEnv)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }

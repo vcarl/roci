@@ -36,7 +36,7 @@ Respond with JSON:
       "task": "code",
       "goal": "Create branch, implement fix for #N in owner/repo",
       "successCondition": "PR created for #N",
-      "model": "sonnet",
+      "tier": "smart",
       "timeoutTicks": 10
     }
   ]

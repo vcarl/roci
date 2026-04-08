@@ -5,6 +5,8 @@ import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { runTurn } from "./process-runner.js"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
+import type { ModelConfig } from "../../model-config.js"
+import { resolveModel } from "../../model-config.js"
 
 /**
  * When a turn times out, generate a short summary of what was accomplished
@@ -19,6 +21,7 @@ export const summarizeTimeout = (
     char: CharacterConfig
     addDirs?: string[]
     env?: Record<string, string>
+    models: ModelConfig
   },
 ): Effect.Effect<string, ClaudeError, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
   Effect.gen(function* () {
@@ -44,7 +47,7 @@ export const summarizeTimeout = (
       char: turnContext.char,
       prompt,
       systemPrompt: "",
-      model: "haiku",
+      model: resolveModel(turnContext.models, "timeoutSummary", "fast"),
       timeoutMs: 30_000,
       role: "brain",
       noTools: true,

@@ -7,6 +7,8 @@ import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CommandExecutor } from "@effect/platform"
 import { loadTemplate } from "../../template.js"
 import { runTurn } from "../hypothalamus/process-runner.js"
+import type { ModelConfig } from "../../model-config.js"
+import { resolveModel } from "../../model-config.js"
 
 export type DreamType = "normal" | "good" | "nightmare"
 
@@ -16,6 +18,7 @@ export interface DreamInput {
   playerName: string
   addDirs?: string[]
   env?: Record<string, string>
+  models: ModelConfig
 }
 
 export interface DreamOutput {
@@ -68,6 +71,8 @@ export const dream = {
       const secrets = yield* charFs.readSecrets(input.char)
       const background = yield* charFs.readBackground(input.char)
 
+      const dreamModel = resolveModel(input.models, "dreamCompression", "smart")
+
       const secretsLines = secrets.split("\n").filter((l) => l.trim()).length
       const selection = selectDreamType(secretsLines)
       const { dreamType } = selection
@@ -102,7 +107,7 @@ export const dream = {
         char: input.char,
         prompt: diaryInput,
         systemPrompt: "",
-        model: "opus",
+        model: dreamModel,
         timeoutMs: 120_000,
         role: "brain",
         noTools: true,
@@ -133,7 +138,7 @@ export const dream = {
         char: input.char,
         prompt: secretsInput,
         systemPrompt: "",
-        model: "opus",
+        model: dreamModel,
         timeoutMs: 120_000,
         role: "brain",
         noTools: true,

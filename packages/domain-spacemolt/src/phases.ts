@@ -15,6 +15,7 @@ import { logToConsole } from "@roci/core/logging/console-renderer.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
 import { askUser } from "@roci/core/util/prompt.js"
+import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "@roci/core/core/model-config.js"
 
 /** Ticks in the active game loop before transitioning to social phase. At 30s/tick, 100 ticks ~ 50 min. */
 const ACTIVE_SESSION_TURNS = 100
@@ -144,7 +145,7 @@ const startupPhase = {
           `Connected via WebSocket as ${initialState.player.username}`,
         )
 
-        yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, context.containerAddDirs, context.containerEnv)
+        yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG, context.containerAddDirs, context.containerEnv)
 
         const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
         return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -161,7 +162,7 @@ const startupPhase = {
       )
 
       // Dream if diary is long
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, context.containerAddDirs, context.containerEnv)
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG, context.containerAddDirs, context.containerEnv)
 
       const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
       return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -209,6 +210,7 @@ const activePhase = {
       }
 
       const manualApproval = context.phaseData?.manualApproval as boolean | undefined
+      const models = (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG
 
       yield* runStateMachine({
         char: context.char,
@@ -223,6 +225,7 @@ const activePhase = {
         exitSignal,
         hooks,
         manualApproval,
+        models,
       }).pipe(Effect.provide(context.domainBundle))
 
       // When the state machine exits, transition to social phase
@@ -239,12 +242,14 @@ const socialPhase = {
     Effect.gen(function* () {
       yield* logToConsole(context.char.name, "orchestrator", "Dinner time — reflecting on the session...")
 
+      const socialModels = (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG
       yield* dinner.execute({
         char: context.char,
         containerId: context.containerId,
         playerName: context.char.name,
         addDirs: context.containerAddDirs,
         env: context.containerEnv,
+        models: socialModels,
       }).pipe(
         Effect.catchAll((e) =>
           logToConsole(context.char.name, "orchestrator", `Dinner failed: ${e}`),
@@ -262,7 +267,7 @@ const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, context.containerAddDirs, context.containerEnv)
+      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, (context.phaseData?.models as ModelConfig | undefined) ?? DEFAULT_MODEL_CONFIG, context.containerAddDirs, context.containerEnv)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }
