@@ -57,3 +57,18 @@ export type {
 	StepCompletionResult,
 	StepTiming,
 } from "./core/types.js";
+
+export { PrayerManager, parsePrayerScript, buildPrayerSummary } from "./prayer/prayer-manager.js";
+export type {
+	PrayerFullState,
+	PrayerPollResult,
+	PrayerSnapshot,
+	PrayerThreat,
+} from "./prayer/prayer-manager.js";
+export { PrayerClient } from "./prayer/prayer-client.js";
+export type {
+	PrayerApiStats,
+	PrayerEconomyDeal,
+	PrayerPoiResource,
+	PrayerRoute,
+} from "./prayer/prayer-client.js";
