@@ -31,6 +31,8 @@ export interface LifecycleHooks {
   readonly beforeStep?: (stepIndex: number, step: PlanStep) => Effect.Effect<PlanStep>
   /** Called after a step has been evaluated (success or failure). Returns (possibly modified) result. */
   readonly afterStep?: (stepIndex: number, result: StepCompletionResult) => Effect.Effect<StepCompletionResult>
+  /** Called after a body turn completes with the raw report. Observe-only (for memory extraction, logging). */
+  readonly afterBodyTurn?: (stepIndex: number, task: string, report: string) => Effect.Effect<void>
   /** Called when an interrupt is processed. Observe-only. */
   readonly onInterrupt?: (alerts: Array<{ priority: string; message: string }>) => Effect.Effect<void>
   /** Called when a reset event is processed (e.g. character death). Observe-only. */
