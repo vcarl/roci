@@ -7,7 +7,9 @@ import type {
   WelcomeEvent,
 } from "./ws-types.js"
 import { parseGameEvent } from "./ws-types.js"
-import { tag } from "@roci/core/logging/console-renderer.js"
+import { CharacterLog } from "@roci/core/logging/log-writer.js"
+import { eventBase } from "@roci/core/logging/events.js"
+import type { CharacterConfig } from "@roci/core/services/CharacterFs.js"
 
 const WS_URL = "wss://game.spacemolt.com/ws"
 const HEALTH_URL = "https://game.spacemolt.com/health"
@@ -55,7 +57,7 @@ export class GameSocket extends Context.Tag("GameSocket")<
     readonly connect: (
       creds: Credentials,
       characterName: string,
-    ) => Effect.Effect<GameSocketConnection, GameSocketError, Scope.Scope>
+    ) => Effect.Effect<GameSocketConnection, GameSocketError, Scope.Scope | CharacterLog>
   }
 >() {}
 
@@ -86,6 +88,15 @@ export const makeGameSocketLive = () =>
     GameSocket.of({
       connect: (creds, characterName) =>
         Effect.gen(function* () {
+          const log = yield* CharacterLog
+          const char: CharacterConfig = { name: characterName, dir: "" }
+          const emitWs = (kind: "system" | "error", message: string) =>
+            log.emit(char, {
+              ...eventBase(characterName, "orchestrator", "ws"),
+              kind,
+              message,
+            } as any).pipe(Effect.catchAll(() => Effect.void))
+
           const events = yield* Queue.bounded<GameEvent>(QUEUE_CAPACITY)
 
           // Capture the current runtime so WebSocket callbacks can run effects
@@ -119,9 +130,7 @@ export const makeGameSocketLive = () =>
           let serverTick = 0 // Synced from /health endpoint
 
           const connectAndLogin = Effect.gen(function* () {
-            yield* Effect.sync(() =>
-              console.log(`${tag(characterName, "ws")} Connecting to ${WS_URL}...`),
-            )
+            yield* emitWs("system", `Connecting to ${WS_URL}...`)
 
             const socket = yield* Effect.async<WebSocket, GameSocketError>((resume) => {
               const sock = new WebSocket(WS_URL)
@@ -181,7 +190,7 @@ export const makeGameSocketLive = () =>
                       runFork(
                         Queue.offer(events, synthetic).pipe(
                           Effect.catchAll(() =>
-                            Effect.sync(() => console.warn(`[${characterName}:ws] Event queue full — dropping state_update event`))
+                            emitWs("error", "Event queue full — dropping state_update event")
                           ),
                         ),
                       )
@@ -193,12 +202,12 @@ export const makeGameSocketLive = () =>
                   runFork(
                     Queue.offer(events, event).pipe(
                       Effect.catchAll(() =>
-                        Effect.sync(() => console.warn(`[${characterName}:ws] Event queue full — dropping ${event.type} event`))
+                        emitWs("error", `Event queue full — dropping ${event.type} event`)
                       ),
                     ),
                   )
                 } catch (err) {
-                  console.error(`${tag(characterName, "ws")} Failed to parse message: ${err}`)
+                  runFork(emitWs("error", `Failed to parse message: ${err}`))
                 }
               } // end for chunks
             })
@@ -230,9 +239,7 @@ export const makeGameSocketLive = () =>
             })
 
             const currentTickInterval = yield* Ref.get(tickIntervalRef)
-            yield* Effect.sync(() =>
-              console.log(`${tag(characterName, "ws")} Received welcome (tick_rate=${currentTickInterval}s), sending login...`),
-            )
+            yield* emitWs("system", `Received welcome (tick_rate=${currentTickInterval}s), sending login...`)
 
             // Send login
             yield* Effect.try({
@@ -249,7 +256,7 @@ export const makeGameSocketLive = () =>
             // Set up reconnect handler
             socket.on("close", (code: number, reason: Buffer) => {
               const reasonStr = reason?.length ? `, reason=${reason.toString()}` : ""
-              console.log(`${tag(characterName, "ws")} Connection closed (code=${code}${reasonStr})`)
+              runFork(emitWs("system", `Connection closed (code=${code}${reasonStr})`))
               ws = null
 
               // Reconnect if not intentionally closed
@@ -258,11 +265,7 @@ export const makeGameSocketLive = () =>
                   const isClosed = yield* Ref.get(closed)
                   if (isClosed) return
 
-                  yield* Effect.sync(() =>
-                    console.log(
-                      `${tag(characterName, "ws")} Reconnecting in ${RECONNECT_DELAY_MS}ms...`,
-                    ),
-                  )
+                  yield* emitWs("system", `Reconnecting in ${RECONNECT_DELAY_MS}ms...`)
                   yield* Effect.sleep(RECONNECT_DELAY_MS)
 
                   const stillClosed = yield* Ref.get(closed)
@@ -270,11 +273,7 @@ export const makeGameSocketLive = () =>
 
                   yield* connectAndLogin.pipe(
                     Effect.catchAll((e) =>
-                      Effect.sync(() =>
-                        console.error(
-                          `${tag(characterName, "ws")} Reconnect failed: ${e.message}`,
-                        ),
-                      ),
+                      emitWs("error", `Reconnect failed: ${e.message}`)
                     ),
                   )
                 }),
@@ -282,7 +281,7 @@ export const makeGameSocketLive = () =>
             })
 
             socket.on("error", (err) => {
-              console.error(`${tag(characterName, "ws")} Error: ${err.message}`)
+              runFork(emitWs("error", `Error: ${err.message}`))
             })
           })
 
@@ -297,11 +296,7 @@ export const makeGameSocketLive = () =>
             }),
           )
 
-          yield* Effect.sync(() =>
-            console.log(
-              `${tag(characterName, "ws")} Logged in as ${initialState.player.username} in ${initialState.system?.name ?? initialState.player.current_system}`,
-            ),
-          )
+          yield* emitWs("system", `Logged in as ${initialState.player.username} in ${initialState.system?.name ?? initialState.player.current_system}`)
 
           // Start polling fiber — sends get_status periodically to synthesize state_update events
           // The server doesn't push state_update to idle players, so we poll instead.
@@ -338,9 +333,7 @@ export const makeGameSocketLive = () =>
                 }
               })
               yield* Queue.shutdown(events)
-              yield* Effect.sync(() =>
-                console.log(`${tag(characterName, "ws")} Connection closed (finalized)`),
-              )
+              yield* emitWs("system", "Connection closed (finalized)")
             }),
           )
 
