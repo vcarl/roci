@@ -7,7 +7,7 @@
  * events via `pushEvent`, be awaited via `join`, or be terminated via `interrupt`.
  */
 
-import { Effect, Stream, Chunk, Fiber } from "effect"
+import { Effect, Stream, Chunk, Fiber, Scope } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { SessionConfig, SessionResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
@@ -65,8 +65,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
   ClaudeError,
   CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
 > =>
-  Effect.scoped(
-    Effect.gen(function* () {
+  Effect.gen(function* () {
       const executor = yield* CommandExecutor.CommandExecutor
       const start = Date.now()
       const oauthToken = yield* OAuthToken
@@ -97,17 +96,19 @@ export const runSession = (config: SessionConfig): Effect.Effect<
       const setupCmd = `echo '${escapedMcp}' > ${playerDir}/.mcp.json && rm -f ${playerDir}/session-result.json`
 
       const setupArgs = ["exec", config.containerId, "sh", "-c", setupCmd]
-      const setupProcess = yield* executor.start(Command.make("docker", ...setupArgs))
-      const setupExit = yield* setupProcess.exitCode.pipe(Effect.catchAll(() => Effect.succeed(1 as CommandExecutor.ExitCode)))
-      if (Number(setupExit) !== 0) {
-        const setupStderr = yield* setupProcess.stderr.pipe(
-          Stream.decodeText(),
-          Stream.runCollect,
-          Effect.map(Chunk.join("")),
-          Effect.catchAll(() => Effect.succeed("")),
-        )
-        yield* logToConsole(config.char.name, "session", `Failed to write .mcp.json: ${setupStderr.trim()}`)
-      }
+      yield* Effect.scoped(Effect.gen(function* () {
+        const setupProcess = yield* executor.start(Command.make("docker", ...setupArgs))
+        const setupExit = yield* setupProcess.exitCode.pipe(Effect.catchAll(() => Effect.succeed(1 as CommandExecutor.ExitCode)))
+        if (Number(setupExit) !== 0) {
+          const setupStderr = yield* setupProcess.stderr.pipe(
+            Stream.decodeText(),
+            Stream.runCollect,
+            Effect.map(Chunk.join("")),
+            Effect.catchAll(() => Effect.succeed("")),
+          )
+          yield* logToConsole(config.char.name, "session", `Failed to write .mcp.json: ${setupStderr.trim()}`)
+        }
+      }))
 
       // ── Step 2: Build claude --channels args ───────────────────────────────
 
@@ -118,7 +119,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
         "--output-format", "stream-json",
         "--verbose",
         "--model", config.model,
-        "--system-prompt", shellEscape(config.systemPrompt),
+        "--system-prompt", config.systemPrompt,
       ]
 
       if (config.addDirs) {
@@ -147,8 +148,11 @@ export const runSession = (config: SessionConfig): Effect.Effect<
       yield* logToConsole(config.char.name, "session", `docker ${redactedArgs.join(" ")}`)
 
       // No stdin pipe — persistent sessions receive input via channel events
+      // Provide an open scope: the process lifetime is managed by fiber interruption
+      // and Docker container lifecycle, not by Effect scope finalizers.
       const cmd = Command.make("docker", ...execArgs)
-      const process = yield* executor.start(cmd)
+      const openScope = yield* Scope.make()
+      const process = yield* Effect.provideService(executor.start(cmd), Scope.Scope, openScope)
 
       // ── Step 4: Fork fibers ───────────────────────────────────────────────
 
@@ -275,10 +279,12 @@ export const runSession = (config: SessionConfig): Effect.Effect<
               "-d", payload,
             )
             const curlExit = yield* Command.exitCode(curlCmd).pipe(
-              Effect.catchAll((e) => {
-                void logToConsole(config.char.name, "session", `pushEvent curl failed: ${e}`)
-                return Effect.succeed(1 as CommandExecutor.ExitCode)
-              }),
+              Effect.catchAll((e) =>
+                Effect.gen(function* () {
+                  yield* logToConsole(config.char.name, "session", `pushEvent curl failed: ${e}`)
+                  return 1 as CommandExecutor.ExitCode
+                }),
+              ),
             )
             if (Number(curlExit) !== 0) {
               yield* logToConsole(config.char.name, "session", `pushEvent: curl exited with code ${curlExit}`)
@@ -296,8 +302,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
       }
 
       return handle
-    }),
-  ).pipe(
+    }).pipe(
     Effect.mapError((e) =>
       e instanceof ClaudeError ? e : new ClaudeError("Session runner failed", e),
     ),
