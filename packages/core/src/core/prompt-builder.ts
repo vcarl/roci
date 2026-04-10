@@ -66,6 +66,23 @@ export interface SubagentPromptContext {
   mode: BrainMode
 }
 
+/** Context for building the initial task prompt sent to a channel session at startup. */
+export interface TaskPromptContext {
+  state: DomainState
+  summary: SituationSummary
+  diary: string
+  background: string
+  values: string
+}
+
+/** Context for a channel tick event payload pushed to a running session. */
+export interface ChannelEventContext {
+  summary: SituationSummary
+  stateDiff?: string
+  softAlerts?: Alert[]
+  tickNumber: number
+}
+
 /**
  * Assembles all prompts for the brain and subagent.
  */
@@ -78,6 +95,10 @@ export interface PromptBuilder {
   systemPrompt(mode: BrainMode, task: string): string
   /** Build the brain's input prompt for a planned-action cycle. */
   brainPrompt(ctx: PlannedActionBrainPromptContext): string
+  /** Build the initial task prompt injected at session start via channel event. */
+  taskPrompt?(ctx: TaskPromptContext): string
+  /** Build a tick/state-update event payload for the channel. */
+  channelEvent?(ctx: ChannelEventContext): string
 }
 
 /**
