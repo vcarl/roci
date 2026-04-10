@@ -12,8 +12,11 @@ import { Command, CommandExecutor } from "@effect/platform"
 import type { SessionConfig, SessionResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { normalizeClaude } from "../../../logging/stream-normalizer.js"
-import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
+import { toUnifiedEvents, eventBase, type UnifiedEvent } from "../../../logging/events.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
+import { ProjectRoot } from "../../../services/ProjectRoot.js"
+import * as path from "node:path"
+import * as nodeFs from "node:fs"
 import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
 
 /** Default channel port if not specified in config. */
@@ -62,7 +65,7 @@ export interface SessionHandle {
 export const runSession = (config: SessionConfig): Effect.Effect<
   SessionHandle,
   ClaudeError,
-  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
+  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken | ProjectRoot
 > =>
   Effect.gen(function* () {
       const executor = yield* CommandExecutor.CommandExecutor
@@ -70,6 +73,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
       const oauthToken = yield* OAuthToken
       const { token } = yield* oauthToken.getToken
       const log = yield* CharacterLog
+      const projectRoot = yield* ProjectRoot
 
       const channelPort = config.channelPort ?? DEFAULT_CHANNEL_PORT
       const playerDir = `/work/players/${config.playerName}`
@@ -188,6 +192,73 @@ export const runSession = (config: SessionConfig): Effect.Effect<
         Effect.catchAll(() => Effect.void),
       ).pipe(Effect.fork)
 
+      // ── Activity.log tail — captures subagent tool calls from hooks ──
+      const activityLogPath = path.resolve(
+        projectRoot,
+        "players",
+        config.playerName,
+        "logs",
+        "activity.log",
+      )
+
+      // Clear stale activity.log from previous sessions
+      try { nodeFs.writeFileSync(activityLogPath, "") } catch {}
+
+      let activityOffset = 0
+
+      const activityFiber = yield* Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep("2 seconds")
+
+          const newLines = yield* Effect.try(() => {
+            const stat = nodeFs.statSync(activityLogPath)
+            if (stat.size <= activityOffset) return []
+
+            const fd = nodeFs.openSync(activityLogPath, "r")
+            const buf = Buffer.alloc(stat.size - activityOffset)
+            nodeFs.readSync(fd, buf, 0, buf.length, activityOffset)
+            nodeFs.closeSync(fd)
+            activityOffset = stat.size
+
+            return buf.toString("utf-8").split("\n").filter(l => l.trim())
+          }).pipe(Effect.catchAll(() => Effect.succeed([] as string[])))
+
+          for (const line of newLines) {
+            const parsed = yield* Effect.try(() => JSON.parse(line) as Record<string, unknown>).pipe(
+              Effect.catchAll(() => Effect.succeed(null)),
+            )
+            if (!parsed) continue
+
+            let event: UnifiedEvent
+            if (parsed.event === "subagent_start") {
+              event = {
+                ...eventBase(config.playerName, "session", "claude"),
+                kind: "subagent_start",
+                description: String((parsed.data as Record<string, unknown>)?.description ?? ""),
+                data: parsed.data,
+              }
+            } else if (parsed.event === "subagent_stop") {
+              event = {
+                ...eventBase(config.playerName, "session", "claude"),
+                kind: "subagent_stop",
+                data: parsed.data,
+              }
+            } else {
+              // PreToolUse hook event — tool call from subagent
+              event = {
+                ...eventBase(config.playerName, "subagent", "claude"),
+                kind: "tool_use",
+                tool: String(parsed.tool ?? "unknown"),
+                id: "",
+                input: parsed.input ?? {},
+              }
+            }
+
+            yield* log.emit(config.char, event).pipe(Effect.catchAll(() => Effect.void))
+          }
+        }
+      }).pipe(Effect.catchAll(() => Effect.void), Effect.fork)
+
       // Wait for process exit (exitCode error channel is PlatformError; catch it)
       const exitFiber = yield* process.exitCode.pipe(
         Effect.catchAll(() => Effect.succeed(-1 as CommandExecutor.ExitCode)),
@@ -210,6 +281,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
           // Interrupt remaining I/O fibers
           yield* Fiber.interrupt(exitFiber).pipe(Effect.catchAll(() => Effect.void))
           yield* Fiber.interrupt(streamFiber).pipe(Effect.catchAll(() => Effect.void))
+          yield* Fiber.interrupt(activityFiber).pipe(Effect.catchAll(() => Effect.void))
           const stderr = yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.succeed("")))
           if (stderr && stderr.trim()) {
             yield* logToConsole(config.char.name, "session", `stderr: ${stderr.trim().slice(0, 500)}`)
@@ -305,6 +377,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
           yield* Fiber.interrupt(exitFiber).pipe(Effect.catchAll(() => Effect.void))
           yield* Fiber.interrupt(streamFiber).pipe(Effect.catchAll(() => Effect.void))
           yield* Fiber.interrupt(stderrFiber).pipe(Effect.catchAll(() => Effect.void))
+          yield* Fiber.interrupt(activityFiber).pipe(Effect.catchAll(() => Effect.void))
         }),
       }
 
