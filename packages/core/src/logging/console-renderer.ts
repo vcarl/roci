@@ -1,14 +1,9 @@
-import { Effect } from "effect"
-import type { Plan } from "../core/types.js"
-import type { StepCompletionResult } from "../core/types.js"
-
-// ── Per-player ANSI colors ───────────────────────────────
+import type { UnifiedEvent } from "./events.js"
 
 const RESET = "\x1b[0m"
 const DIM = "\x1b[2m"
 const BOLD = "\x1b[1m"
 
-/** Stable color palette — each player gets a distinct hue. */
 const PLAYER_COLORS: string[] = [
   "\x1b[36m",  // cyan
   "\x1b[33m",  // yellow
@@ -21,7 +16,7 @@ const PLAYER_COLORS: string[] = [
 const colorCache = new Map<string, string>()
 let nextColorIdx = 0
 
-function colorFor(character: string): string {
+export function colorFor(character: string): string {
   let c = colorCache.get(character)
   if (!c) {
     c = PLAYER_COLORS[nextColorIdx % PLAYER_COLORS.length]
@@ -31,137 +26,77 @@ function colorFor(character: string): string {
   return c
 }
 
-/** Colorized character tag: "[name:source]" — also usable from sync code. */
-export function tag(character: string, source: string): string {
+export function tag(character: string, subsystem: string): string {
   const c = colorFor(character)
-  return `${c}[${character}:${source}]${RESET}`
+  return `${c}[${character}:${subsystem}]${RESET}`
 }
 
-/** Colorized character name for narrative lines. */
-function name(character: string): string {
+function charName(character: string): string {
   const c = colorFor(character)
   return `${c}${BOLD}${character}${RESET}`
 }
 
-// ── System messages (monitor, brain, errors) ──────────────
+const SUPPRESS_RESULT_TOOLS = new Set(["Bash", "Read", "Glob", "Grep", "Write", "Edit"])
+const toolUseRegistry = new Map<string, string>()
+const MAX_HEAD = 5
+const MAX_TAIL = 3
 
-/** System/orchestrator message with bracket prefix. */
-export const logToConsole = (
-  character: string,
-  source: string,
-  message: string,
-) =>
-  Effect.sync(() => {
-    const prefix = tag(character, source)
-    for (const line of message.split("\n")) {
-      console.log(`${prefix} ${line}`)
+export function renderEvent(event: UnifiedEvent): string[] {
+  const t = tag(event.character, event.subsystem)
+
+  switch (event.kind) {
+    case "system":
+      return event.message.split("\n").map(line => `${t} ${line}`)
+
+    case "text": {
+      const lines = event.text.split("\n").filter(l => l.trim().length > 0)
+      const prefix = `${charName(event.character)}:`
+      return lines.map(line => `${prefix} ${line.trim()}`)
     }
-  })
 
-// ── Storytelling output (character voice) ─────────────────
-
-/** Step transition header when spawning a subagent. */
-export const logPlanTransition = (
-  character: string,
-  plan: Plan,
-  stepIndex: number,
-) =>
-  Effect.sync(() => {
-    const step = plan.steps[stepIndex]
-    const c = colorFor(character)
-    console.log(`${c}>> subagent start${RESET} — Step ${stepIndex + 1}/${plan.steps.length}: [${step.task}] ${step.goal} (${step.tier})`)
-  })
-
-/** Step completion result. */
-export const logStepResult = (
-  character: string,
-  stepIndex: number,
-  result: StepCompletionResult,
-) =>
-  Effect.sync(() => {
-    const c = colorFor(character)
-    const marker = result.complete ? `${c}OK${RESET}` : `\x1b[31mFAILED${RESET}`
-    console.log(`${c}<< subagent done${RESET} — [${marker}] Step ${stepIndex + 1}: ${result.reason}`)
-  })
-
-// ── Type-tagged stream event output (used by log-demux) ──
-
-/** Log a type-tagged stream event to console. */
-export const logStreamEvent = (
-  character: string,
-  source: string,
-  message: string,
-) =>
-  Effect.sync(() => {
-    const prefix = tag(character, source)
-    for (const line of message.split("\n")) {
-      console.log(`${prefix} ${line}`)
+    case "thinking": {
+      const lines = event.text.split("\n").filter(l => l.trim().length > 0)
+      const prefix = tag(event.character, "thinking")
+      return lines.map(line => `${prefix} ${DIM}${line.trim()}${RESET}`)
     }
-  })
 
-/** Log stderr lines — suppressed from stdout. */
-export const logStderr = (_character: string, _stderr: string) => Effect.void
-
-// ── Character narrative lines (used by log-demux) ────────
-
-/** Character thought — the LLM's voice IS the character. Full text shown. */
-export const logCharThought = (character: string, text: string, indent = "") =>
-  Effect.sync(() => {
-    const lines = text.split("\n").filter((l) => l.trim().length > 0)
-    if (lines.length > 0) {
-      const prefix = `${indent}${name(character)}:`
-      for (const line of lines) {
-        console.log(`${prefix} ${line.trim()}`)
-      }
+    case "tool_use": {
+      toolUseRegistry.set(event.id, event.tool)
+      const input = event.input as Record<string, unknown> | undefined
+      const desc = (input?.description as string) ?? (input?.command as string) ?? ""
+      const summary = desc.length > 120 ? desc.slice(0, 120) + "..." : desc
+      return [`${t} ${event.tool}: ${summary}`]
     }
-  })
 
-/** Extended thinking block from the LLM. */
-export const logThinking = (character: string, text: string, indent = "") =>
-  Effect.sync(() => {
-    const lines = text.split("\n").filter((l) => l.trim().length > 0)
-    if (lines.length > 0) {
-      const prefix = `${indent}${tag(character, "thinking")}`
-      for (const line of lines) {
-        console.log(`${prefix} ${DIM}${line.trim()}${RESET}`)
+    case "tool_result": {
+      const toolName = toolUseRegistry.get(event.toolUseId)
+      if (toolName && SUPPRESS_RESULT_TOOLS.has(toolName)) return []
+      const lines = event.text.split("\n").filter(l => l.trim().length > 0)
+      if (lines.length === 0) return []
+      const c = colorFor(event.character)
+      const prefix = `${c}  >${RESET}`
+      if (lines.length <= MAX_HEAD + MAX_TAIL) {
+        return lines.map(line => `${prefix} ${line}`)
       }
+      return [
+        ...lines.slice(0, MAX_HEAD).map(line => `${prefix} ${line}`),
+        `${prefix} ${DIM}... (${lines.length - MAX_HEAD - MAX_TAIL} lines omitted)${RESET}`,
+        ...lines.slice(-MAX_TAIL).map(line => `${prefix} ${line}`),
+      ]
     }
-  })
 
-/** Character action — suppressed from stdout. */
-export const logCharAction = (_character: string, _command: string) => Effect.void
-
-/** Tool result — first 10 + last 5 lines, with truncation indicator. */
-export const logCharResult = (character: string, text: string, indent = "") =>
-  Effect.sync(() => {
-    const lines = text.split("\n").filter((l) => l.trim().length > 0)
-    if (lines.length === 0) return
-
-    const MAX_HEAD = 5
-    const MAX_TAIL = 3
-    const c = colorFor(character)
-    const prefix = `${indent}${c}  >${RESET}`
-
-    if (lines.length <= MAX_HEAD + MAX_TAIL) {
-      for (const line of lines) {
-        console.log(`${prefix} ${line}`)
-      }
-    } else {
-      for (const line of lines.slice(0, MAX_HEAD)) {
-        console.log(`${prefix} ${line}`)
-      }
-      console.log(`${prefix} ${DIM}... (${lines.length - MAX_HEAD - MAX_TAIL} lines omitted)${RESET}`)
-      for (const line of lines.slice(-MAX_TAIL)) {
-        console.log(`${prefix} ${line}`)
-      }
+    case "subagent_start": {
+      const c = colorFor(event.character)
+      return [`${c}>> subagent start${RESET} — ${event.description}`]
     }
-  })
 
-/** Simple tick notification. */
-export const logTickReceived = (character: string, tick: number) =>
-  Effect.sync(() => {
-    console.log(`${tag(character, "tick")} ${tick}`)
-  })
+    case "subagent_stop":
+      return [`${colorFor(event.character)}<< subagent stop${RESET}`]
+
+    case "error":
+      return [`${t} ${DIM}error: ${event.message}${RESET}`]
+  }
+}
 
 /** Format an unknown error into a readable string. */
 export function formatError(e: unknown): string {

@@ -3,13 +3,9 @@ import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { ProjectRoot } from "../services/ProjectRoot.js"
-
-export interface LogEntry {
-  timestamp: string
-  source: "subagent" | "brain" | "body" | "monitor" | "dream" | "dinner" | "orchestrator" | "ws"
-  character: string
-  [key: string]: unknown
-}
+import type { UnifiedEvent } from "./events.js"
+import { eventBase } from "./events.js"
+import { renderEvent } from "./console-renderer.js"
 
 export class LogWriterError {
   readonly _tag = "LogWriterError"
@@ -20,11 +16,7 @@ export class LogWriterError {
 export class CharacterLog extends Context.Tag("CharacterLog")<
   CharacterLog,
   {
-    readonly thought: (char: CharacterConfig, entry: LogEntry) => Effect.Effect<void, LogWriterError>
-    readonly word: (char: CharacterConfig, entry: LogEntry) => Effect.Effect<void, LogWriterError>
-    readonly action: (char: CharacterConfig, entry: LogEntry) => Effect.Effect<void, LogWriterError>
-    /** Append a raw line (already a string) to stream.jsonl — no JSON.stringify wrapping. */
-    readonly raw: (char: CharacterConfig, line: string) => Effect.Effect<void, LogWriterError>
+    readonly emit: (char: CharacterConfig, event: UnifiedEvent) => Effect.Effect<void, LogWriterError>
   }
 >() {}
 
@@ -34,36 +26,44 @@ export const CharacterLogLive = Layer.effect(
     const fs = yield* FileSystem.FileSystem
     const projectRoot = yield* ProjectRoot
 
-    const appendLog = (char: CharacterConfig, logFile: string, entry: LogEntry) =>
-      Effect.gen(function* () {
-        const logDir = path.resolve(projectRoot, "players", char.name, "logs")
-        yield* fs.makeDirectory(logDir, { recursive: true }).pipe(
-          Effect.catchAll(() => Effect.void),
-        )
-        const filePath = path.join(logDir, logFile)
-        const line = JSON.stringify(entry) + "\n"
-        yield* fs.writeFileString(filePath, line, { flag: "a" }).pipe(
-          Effect.mapError((e) => new LogWriterError(`Failed to write to ${logFile}`, e)),
-        )
-      })
-
-    const appendRaw = (char: CharacterConfig, logFile: string, line: string) =>
-      Effect.gen(function* () {
-        const logDir = path.resolve(projectRoot, "players", char.name, "logs")
-        yield* fs.makeDirectory(logDir, { recursive: true }).pipe(
-          Effect.catchAll(() => Effect.void),
-        )
-        const filePath = path.join(logDir, logFile)
-        yield* fs.writeFileString(filePath, line + "\n", { flag: "a" }).pipe(
-          Effect.mapError((e) => new LogWriterError(`Failed to write to ${logFile}`, e)),
-        )
-      })
-
     return CharacterLog.of({
-      thought: (char, entry) => appendLog(char, "thoughts.jsonl", entry),
-      word: (char, entry) => appendLog(char, "words.jsonl", entry),
-      action: (char, entry) => appendLog(char, "actions.jsonl", entry),
-      raw: (char, line) => appendRaw(char, "stream.jsonl", line),
+      emit: (char, event) =>
+        Effect.gen(function* () {
+          // 1. Render to console
+          const lines = renderEvent(event)
+          for (const line of lines) {
+            console.log(line)
+          }
+
+          // 2. Append to events.jsonl
+          const logDir = path.resolve(projectRoot, "players", char.name, "logs")
+          yield* fs.makeDirectory(logDir, { recursive: true }).pipe(
+            Effect.catchAll(() => Effect.void),
+          )
+          const filePath = path.join(logDir, "events.jsonl")
+          const jsonLine = JSON.stringify(event) + "\n"
+          yield* fs.writeFileString(filePath, jsonLine, { flag: "a" }).pipe(
+            Effect.mapError((e) => new LogWriterError("Failed to write to events.jsonl", e)),
+          )
+        }),
     })
   }),
 )
+
+/**
+ * Convenience: build a system event and emit it.
+ * Drop-in replacement for the old logToConsole — same 3-arg signature.
+ * The `source` arg maps to both `system` and `subsystem` for backward compat.
+ */
+export const logToConsole = (
+  character: string,
+  source: string,
+  message: string,
+) =>
+  Effect.gen(function* () {
+    const log = yield* CharacterLog
+    yield* log.emit(
+      { name: character, dir: "" } as CharacterConfig,
+      { ...eventBase(character, source, source), kind: "system", message },
+    )
+  })
