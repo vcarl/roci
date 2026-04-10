@@ -8,6 +8,8 @@ import type {
   EvaluatePromptContext,
   SubagentPromptContext,
   PlannedActionBrainPromptContext,
+  TaskPromptContext,
+  ChannelEventContext,
 } from "@roci/core/core/prompt-builder.js"
 import { PromptBuilderTag } from "@roci/core/core/prompt-builder.js"
 import type { GitHubState } from "./types.js"
@@ -580,6 +582,57 @@ const gitHubPromptBuilder: PromptBuilder = {
   systemPrompt(mode: BrainMode, task: string): string {
     const promptFn = SYSTEM_PROMPT_BY_TASK[task] ?? SYSTEM_PROMPT_BY_MODE[mode] ?? SYSTEM_PROMPT_BY_MODE.select
     return promptFn(task)
+  },
+
+  taskPrompt(ctx: TaskPromptContext): string {
+    const sections: string[] = []
+
+    sections.push(`# Task\n\n${ctx.summary.headline}\n\n${ctx.summary.situation}`)
+
+    if (ctx.summary.sections.length > 0) {
+      sections.push(ctx.summary.sections.map(s => `## ${s.heading}\n\n${s.body}`).join("\n\n"))
+    }
+
+    if (ctx.diary) {
+      sections.push(`## Your Recent Diary\n\n${ctx.diary.slice(-2000)}`)
+    }
+
+    if (ctx.background) {
+      sections.push(`## Background\n\n${ctx.background}`)
+    }
+
+    if (ctx.values) {
+      sections.push(`## Your Values\n\n${ctx.values}`)
+    }
+
+    sections.push([
+      "## Instructions",
+      "",
+      "Work on the repositories assigned to you. Review open PRs, triage issues, implement improvements, and keep the codebase healthy.",
+      "- Use the `Agent` tool to spawn subagents for focused tasks (implement a feature, review a PR, etc.)",
+      "- You will receive state updates every 30 seconds via channel events",
+      "- When you have completed meaningful work or nothing actionable remains, call the `terminate` tool with a summary",
+    ].join("\n"))
+
+    return sections.join("\n\n")
+  },
+
+  channelEvent(ctx: ChannelEventContext): string {
+    const parts: string[] = [`## State Update (tick ${ctx.tickNumber})\n\n${ctx.summary.headline}`]
+
+    if (ctx.stateDiff && ctx.stateDiff.trim()) {
+      parts.push(`### Changes Since Last Update\n\n${ctx.stateDiff}`)
+    }
+
+    if (ctx.softAlerts && ctx.softAlerts.length > 0) {
+      parts.push(`### Alerts\n\n${ctx.softAlerts.map(a => `- ${a.message}`).join("\n")}`)
+    }
+
+    if (ctx.summary.sections.length > 0) {
+      parts.push(ctx.summary.sections.map(s => `### ${s.heading}\n\n${s.body}`).join("\n\n"))
+    }
+
+    return parts.join("\n\n")
   },
 
   brainPrompt(ctx: PlannedActionBrainPromptContext): string {

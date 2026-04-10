@@ -1,7 +1,5 @@
 import { Effect, Queue } from "effect"
 import { FileSystem } from "@effect/platform"
-import { readFileSync } from "node:fs"
-import * as path from "node:path"
 import type { GitHubCharacterConfig } from "./types.js"
 import type { GitHubState } from "./types.js"
 import type { GitHubEvent } from "./types.js"
@@ -10,7 +8,8 @@ import { Docker } from "@roci/core/services/Docker.js"
 import { logToConsole } from "@roci/core/logging/console-renderer.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { GitHubClientTag } from "./github-client.js"
-import { runPlannedAction, runBreak, runReflection } from "@roci/core/core/orchestrator/planned-action.js"
+import { runBreak, runReflection } from "@roci/core/core/orchestrator/planned-action.js"
+import { runChannelSession } from "@roci/core/core/orchestrator/channel-session.js"
 import type { PlannedActionTempo } from "@roci/core/core/limbic/hypothalamus/tempo.js"
 
 const tempo: PlannedActionTempo = {
@@ -21,12 +20,6 @@ const tempo: PlannedActionTempo = {
   breakPollIntervalSec: 5,
   dreamThreshold: 200,
 }
-
-/** Brain timeout in milliseconds (8 minutes). */
-const BRAIN_TIMEOUT_MS = 8 * 60 * 1000
-
-/** Body timeout in milliseconds (15 minutes). */
-const BODY_TIMEOUT_MS = 15 * 60 * 1000
 
 /** Shared clone path inside the container. */
 function sharedClonePath(owner: string, repo: string): string {
@@ -238,15 +231,7 @@ const activePhase = {
         GH_TOKEN: (context.phaseData?.ghToken as string) ?? "",
       }
 
-      // Load system prompts from .md files in this directory
-      const brainSystemPrompt = readFileSync(path.join(import.meta.dirname, "brain-system-prompt.md"), "utf-8")
-        .replace(/\{\{characterName\}\}/g, context.char.name)
-        .replace(/\{\{playerName\}\}/g, context.char.name)
-      const bodySystemPrompt = readFileSync(path.join(import.meta.dirname, "body-system-prompt.md"), "utf-8")
-        .replace(/\{\{characterName\}\}/g, context.char.name)
-        .replace(/\{\{playerName\}\}/g, context.char.name)
-
-      yield* logToConsole(context.char.name, "orchestrator", "Starting planned-action cycle...")
+      yield* logToConsole(context.char.name, "orchestrator", "Starting channel session...")
 
       yield* log.action(context.char, {
         timestamp: new Date().toISOString(),
@@ -256,27 +241,13 @@ const activePhase = {
         containerId: context.containerId,
       })
 
-      const result = yield* runPlannedAction({
+      const result = yield* runChannelSession({
         char: context.char,
         containerId: context.containerId,
         containerEnv,
         addDirs: context.containerAddDirs,
         events: conn.events as Queue.Queue<unknown>,
         initialState: conn.initialState as unknown,
-        tempo,
-        brainSystemPrompt,
-        bodySystemPrompt,
-        brainModel: "opus",
-        bodyModel: "sonnet",
-        brainTimeoutMs: BRAIN_TIMEOUT_MS,
-        bodyTimeoutMs: BODY_TIMEOUT_MS,
-        brainDisallowedTools: [
-          "ToolSearch", "MCPSearch",
-          "WebFetch", "WebSearch",
-          "NotebookEdit",
-          "Edit",
-        ],
-        models: getModels(context),
       }).pipe(Effect.provide(context.domainBundle!))
 
       const updatedConnection = { ...conn, initialState: result.finalState }
