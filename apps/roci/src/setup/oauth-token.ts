@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { Prompt } from "@effect/cli"
-import { logToConsole } from "@roci/core/logging/console-renderer.js"
+import { logToConsole } from "@roci/core/logging/log-writer.js"
 import {
   loadSavedToken,
   saveToken,

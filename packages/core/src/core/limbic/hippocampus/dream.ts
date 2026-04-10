@@ -2,6 +2,7 @@ import * as path from "node:path"
 import { Effect } from "effect"
 import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
+import { eventBase } from "../../../logging/events.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CommandExecutor } from "@effect/platform"
@@ -77,24 +78,16 @@ export const dream = {
       const selection = selectDreamType(secretsLines)
       const { dreamType } = selection
 
-      yield* log.thought(input.char, {
-        timestamp: new Date().toISOString(),
-        source: "dream",
-        character: input.char.name,
-        type: "dream_type_selection",
-        dreamType,
-        roll: selection.roll,
-        nightmareThreshold: selection.nightmareThreshold,
-        goodThreshold: selection.goodThreshold,
-        secretsLineCount: selection.secretsLineCount,
+      yield* log.emit(input.char, {
+        ...eventBase(input.char.name, "orchestrator", "dream"),
+        kind: "text",
+        text: `dream_type_selection: ${dreamType} (roll=${selection.roll}, nightmare<${selection.nightmareThreshold}, good>=${selection.goodThreshold}, secrets=${selection.secretsLineCount})`,
       })
 
-      yield* log.thought(input.char, {
-        timestamp: new Date().toISOString(),
-        source: "dream",
-        character: input.char.name,
-        type: "dream_start",
-        dreamType,
+      yield* log.emit(input.char, {
+        ...eventBase(input.char.name, "orchestrator", "dream"),
+        kind: "text",
+        text: `dream_start: ${dreamType}`,
       })
 
       // 1. Compress diary
@@ -117,15 +110,10 @@ export const dream = {
 
       yield* charFs.writeDiary(input.char, compressedDiary)
 
-      yield* log.thought(input.char, {
-        timestamp: new Date().toISOString(),
-        source: "dream",
-        character: input.char.name,
-        type: "dream_diary_compressed",
-        dreamType,
-        originalLength: diary.length,
-        compressedLength: compressedDiary.length,
-        content: compressedDiary.slice(0, 2000),
+      yield* log.emit(input.char, {
+        ...eventBase(input.char.name, "orchestrator", "dream"),
+        kind: "text",
+        text: `dream_diary_compressed: ${dreamType} (${diary.length} -> ${compressedDiary.length})`,
       })
 
       // 2. Compress secrets
@@ -148,25 +136,16 @@ export const dream = {
 
       yield* charFs.writeSecrets(input.char, compressedSecrets)
 
-      yield* log.thought(input.char, {
-        timestamp: new Date().toISOString(),
-        source: "dream",
-        character: input.char.name,
-        type: "dream_secrets_compressed",
-        dreamType,
-        originalLength: secrets.length,
-        compressedLength: compressedSecrets.length,
-        content: compressedSecrets.slice(0, 2000),
+      yield* log.emit(input.char, {
+        ...eventBase(input.char.name, "orchestrator", "dream"),
+        kind: "text",
+        text: `dream_secrets_compressed: ${dreamType} (${secrets.length} -> ${compressedSecrets.length})`,
       })
 
-      yield* log.thought(input.char, {
-        timestamp: new Date().toISOString(),
-        source: "dream",
-        character: input.char.name,
-        type: "dream_complete",
-        dreamType,
-        diaryCompressed: true,
-        secretsCompressed: true,
+      yield* log.emit(input.char, {
+        ...eventBase(input.char.name, "orchestrator", "dream"),
+        kind: "text",
+        text: `dream_complete: ${dreamType}`,
       })
 
       return { dreamType, diaryCompressed: true, secretsCompressed: true } as DreamOutput

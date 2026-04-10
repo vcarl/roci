@@ -2,7 +2,7 @@ import { Effect } from "effect"
 import { readFileSync, writeFileSync } from "node:fs"
 import { execFileSync, spawnSync } from "node:child_process"
 import * as path from "node:path"
-import { logToConsole } from "../logging/console-renderer.js"
+import { logToConsole } from "../logging/log-writer.js"
 import { DockerError } from "./Docker.js"
 
 export const TOKEN_FILENAME = ".oauth-token"

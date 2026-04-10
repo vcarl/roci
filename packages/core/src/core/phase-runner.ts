@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import type { PhaseContext, PhaseRegistry } from "./phase.js"
-import { logToConsole } from "../logging/console-renderer.js"
+import { logToConsole } from "../logging/log-writer.js"
 
 /**
  * Run phases in sequence according to the given registry.

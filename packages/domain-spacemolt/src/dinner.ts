@@ -4,6 +4,7 @@ import { FileSystem, CommandExecutor } from "@effect/platform"
 import { ClaudeError } from "@roci/core/services/Claude.js"
 import { CharacterFs, type CharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
+import { eventBase } from "@roci/core/logging/events.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { renderTemplate, loadTemplate } from "@roci/core/core/template.js"
 import { runTurn } from "@roci/core/core/limbic/hypothalamus/process-runner.js"
@@ -35,11 +36,10 @@ export const dinner = {
       const fs = yield* FileSystem.FileSystem
       const projectRoot = yield* ProjectRoot
 
-      yield* log.thought(input.char, {
-        timestamp: new Date().toISOString(),
-        source: "dinner",
-        character: input.char.name,
-        type: "dinner_start",
+      yield* log.emit(input.char, {
+        ...eventBase(input.char.name, "orchestrator", "dinner"),
+        kind: "text",
+        text: "dinner_start",
       })
 
       // Read recent thoughts log as session report
@@ -85,12 +85,10 @@ export const dinner = {
 
       yield* charFs.writeDiary(input.char, updatedDiary)
 
-      yield* log.thought(input.char, {
-        timestamp: new Date().toISOString(),
-        source: "dinner",
-        character: input.char.name,
-        type: "dinner_complete",
-        diaryUpdated: true,
+      yield* log.emit(input.char, {
+        ...eventBase(input.char.name, "orchestrator", "dinner"),
+        kind: "text",
+        text: "dinner_complete",
       })
 
       return { diaryUpdated: true } as DinnerOutput

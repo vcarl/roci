@@ -1,7 +1,7 @@
 import { Effect, Fiber, Layer } from "effect"
 import { Docker, DockerError } from "@roci/core/services/Docker.js"
 import { runPhases } from "@roci/core/core/phase-runner.js"
-import { logToConsole } from "@roci/core/logging/console-renderer.js"
+import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { execSync } from "node:child_process"

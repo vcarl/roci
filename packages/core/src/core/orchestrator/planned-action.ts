@@ -8,7 +8,7 @@ import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
 import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
 import { dream } from "../limbic/hippocampus/dream.js"
 import type { Alert } from "../types.js"
-import { logToConsole } from "../../logging/console-renderer.js"
+import { logToConsole } from "../../logging/log-writer.js"
 import type { ModelConfig } from "../model-config.js"
 
 // ── Types ────────────────────────────────────────────────────

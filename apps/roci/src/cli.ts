@@ -10,7 +10,7 @@ import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "@roci/core/se
 import { CharacterLogLive } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { runOrchestrator } from "./orchestrator.js"
-import { logToConsole } from "@roci/core/logging/console-renderer.js"
+import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter } from "@roci/core/core/character-scaffold.js"

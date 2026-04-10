@@ -5,7 +5,7 @@ import type { ResolvedDomain } from "../domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { CharacterFs, makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { runOrchestrator } from "../orchestrator.js"
-import { logToConsole } from "@roci/core/logging/console-renderer.js"
+import { logToConsole } from "@roci/core/logging/log-writer.js"
 import type { ModelConfig } from "@roci/core/core/model-config.js"
 
 /** Log a ProcedureMessage to console with appropriate prefix. */

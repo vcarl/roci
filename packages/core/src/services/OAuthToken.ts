@@ -6,7 +6,7 @@ import * as path from "node:path"
 import { ProjectRoot } from "./ProjectRoot.js"
 import { DockerError } from "./Docker.js"
 import { loadSavedToken, TOKEN_FILENAME } from "./oauth-token.js"
-import { logToConsole } from "../logging/console-renderer.js"
+import { logToConsole } from "../logging/log-writer.js"
 
 export class OAuthToken extends Context.Tag("OAuthToken")<
   OAuthToken,

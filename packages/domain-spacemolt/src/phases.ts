@@ -9,8 +9,8 @@ import { GameSocket } from "./game-socket.js"
 import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
 import { dinner } from "./dinner.js"
 import { runChannelSession } from "@roci/core/core/orchestrator/channel-session.js"
-import { logToConsole } from "@roci/core/logging/console-renderer.js"
-import { CharacterLog } from "@roci/core/logging/log-writer.js"
+import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
+import { eventBase } from "@roci/core/logging/events.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
 import { askUser } from "@roci/core/util/prompt.js"
 
@@ -184,12 +184,10 @@ const activePhase = {
 
       yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
 
-      yield* log.action(context.char, {
-        timestamp: new Date().toISOString(),
-        source: "orchestrator",
-        character: context.char.name,
-        type: "loop_start",
-        containerId: context.containerId,
+      yield* log.emit(context.char, {
+        ...eventBase(context.char.name, "orchestrator", "channel-session"),
+        kind: "system",
+        message: "loop_start",
       })
 
       if (!context.domainBundle) {

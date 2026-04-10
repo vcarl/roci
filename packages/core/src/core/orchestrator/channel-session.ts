@@ -10,8 +10,7 @@ import { StateRendererTag } from "../state-renderer.js"
 import { runSession } from "../limbic/hypothalamus/session-runner.js"
 import type { SessionHandle } from "../limbic/hypothalamus/session-runner.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
-import { CharacterLog } from "../../logging/log-writer.js"
-import { logToConsole } from "../../logging/console-renderer.js"
+import { CharacterLog, logToConsole } from "../../logging/log-writer.js"
 import type { Alert } from "../types.js"
 
 // ── Types ────────────────────────────────────────────────────
