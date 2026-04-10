@@ -49,7 +49,17 @@ mcp.tool(
       summary,
       timestamp: new Date().toISOString(),
     };
-    writeFileSync(join(PLAYER_DIR, "session-result.json"), JSON.stringify(result, null, 2));
+    try {
+      writeFileSync(join(PLAYER_DIR, "session-result.json"), JSON.stringify(result, null, 2));
+    } catch (err) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Failed to write session result: ${err instanceof Error ? err.message : String(err)}`,
+        }],
+        isError: true,
+      };
+    }
     return {
       content: [
         {
@@ -84,19 +94,26 @@ const server = Bun.serve({
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (mcp.server as any).notification({
-      method: "notifications/claude/channel",
-      params: {
-        content: body.content,
-        meta: body.meta ?? {},
-      },
-    });
+    try {
+      await (mcp.server as any).notification({
+        method: "notifications/claude/channel",
+        params: {
+          content: body.content,
+          meta: body.meta ?? {},
+        },
+      });
+    } catch (err) {
+      return new Response(
+        `Failed to send notification: ${err instanceof Error ? err.message : String(err)}`,
+        { status: 500 },
+      );
+    }
 
     return new Response("ok");
   },
 });
 
-process.on("SIGTERM", () => {
-  server.stop();
+process.on("SIGTERM", async () => {
+  await server.stop();
   process.exit(0);
 });
