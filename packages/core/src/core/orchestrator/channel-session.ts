@@ -1,4 +1,4 @@
-import { Effect, Queue, Option, Fiber } from "effect"
+import { Effect, Queue, Option } from "effect"
 import type { CharacterConfig } from "../../services/CharacterFs.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { CommandExecutor } from "@effect/platform"
@@ -12,7 +12,6 @@ import type { SessionHandle } from "../limbic/hypothalamus/session-runner.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 import { logToConsole } from "../../logging/console-renderer.js"
-import type { ModelConfig } from "../model-config.js"
 import type { Alert } from "../types.js"
 
 // ── Types ────────────────────────────────────────────────────
@@ -24,10 +23,10 @@ export interface ChannelSessionConfig {
   addDirs?: string[]
   events: Queue.Queue<unknown>
   initialState: unknown
+  /** Model to use for the persistent session (e.g. "sonnet", "opus"). Default: "sonnet". */
   sessionModel?: string
   sessionTimeoutMs?: number
   channelPort?: number
-  models: ModelConfig
 }
 
 export type ChannelSessionResult =
