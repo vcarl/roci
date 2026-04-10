@@ -98,6 +98,9 @@ RUN mkdir -p /home/node/.opencode && \
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
 
+# Enable channels support so --dangerously-load-development-channels works non-interactively
+RUN echo '{"channelsEnabled":true}' > /home/node/.claude/settings.json
+
 # Use iptables-legacy for WSL2 compatibility (nf_tables has limited kernel support)
 USER root
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \

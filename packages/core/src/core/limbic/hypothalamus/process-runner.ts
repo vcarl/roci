@@ -80,7 +80,9 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
       const claudeArgs: string[] = [...runtimeBaseArgs(runtime, config.model)]
 
       if (runtime === "claude") {
-        claudeArgs.push("--fallback-model", "sonnet")
+        if (config.model !== "sonnet") {
+          claudeArgs.push("--fallback-model", "sonnet")
+        }
         claudeArgs.push("--output-format", "stream-json")
         claudeArgs.push("--verbose")
 

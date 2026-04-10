@@ -247,8 +247,9 @@ export const makeGameSocketLive = () =>
             })
 
             // Set up reconnect handler
-            socket.on("close", () => {
-              console.log(`${tag(characterName, "ws")} Connection closed`)
+            socket.on("close", (code: number, reason: Buffer) => {
+              const reasonStr = reason?.length ? `, reason=${reason.toString()}` : ""
+              console.log(`${tag(characterName, "ws")} Connection closed (code=${code}${reasonStr})`)
               ws = null
 
               // Reconnect if not intentionally closed

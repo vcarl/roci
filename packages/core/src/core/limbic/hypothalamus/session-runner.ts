@@ -93,7 +93,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
       // Escape for use in sh -c "echo '...' > file" — replace embedded single
       // quotes with '\'' (end-quote, literal-quote, re-open-quote).
       const escapedMcp = mcpJson.replace(/'/g, `'\\''`)
-      const setupCmd = `echo '${escapedMcp}' > ${playerDir}/.mcp.json && rm -f ${playerDir}/session-result.json`
+      const setupCmd = `echo '${escapedMcp}' > ${playerDir}/.mcp.json && rm -f ${playerDir}/session-result.json && mkdir -p ${playerDir}/.claude && echo '{"channelsEnabled":true}' > ${playerDir}/.claude/settings.json`
 
       const setupArgs = ["exec", config.containerId, "sh", "-c", setupCmd]
       yield* Effect.scoped(Effect.gen(function* () {
@@ -114,10 +114,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
 
       const claudeArgs: string[] = [
         "--channels", "server:roci-channel",
-        "--dangerously-load-development-channels",
         "--permission-mode", "bypassPermissions",
-        "--output-format", "stream-json",
-        "--verbose",
         "--model", config.model,
         "--system-prompt", config.systemPrompt,
       ]
@@ -130,7 +127,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
 
       // ── Step 3: Build docker exec args ────────────────────────────────────
 
-      const execArgs: string[] = ["exec", "-w", playerDir]
+      const execArgs: string[] = ["exec", "-i", "-w", playerDir]
       if (config.env) {
         for (const [key, val] of Object.entries(config.env)) {
           if (key === "CLAUDE_CODE_OAUTH_TOKEN") continue
@@ -147,10 +144,11 @@ export const runSession = (config: SessionConfig): Effect.Effect<
       )
       yield* logToConsole(config.char.name, "session", `docker ${redactedArgs.join(" ")}`)
 
-      // No stdin pipe — persistent sessions receive input via channel events
-      // Provide an open scope: the process lifetime is managed by fiber interruption
-      // and Docker container lifecycle, not by Effect scope finalizers.
-      const cmd = Command.make("docker", ...execArgs)
+      // Pipe an initial stdin message so Claude Code starts in print mode and
+      // then waits for channel events to arrive via the MCP channel server.
+      const cmd = Command.make("docker", ...execArgs).pipe(
+        Command.stdin(Stream.encodeText(Stream.make("Begin session. Your task will arrive via channel notification.\n")))
+      )
       const openScope = yield* Scope.make()
       const process = yield* Effect.provideService(executor.start(cmd), Scope.Scope, openScope)
 
@@ -207,6 +205,10 @@ export const runSession = (config: SessionConfig): Effect.Effect<
           // Interrupt remaining I/O fibers
           yield* Fiber.interrupt(exitFiber).pipe(Effect.catchAll(() => Effect.void))
           yield* Fiber.interrupt(streamFiber).pipe(Effect.catchAll(() => Effect.void))
+          const stderr = yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.succeed("")))
+          if (stderr && stderr.trim()) {
+            yield* logToConsole(config.char.name, "session", `stderr: ${stderr.trim().slice(0, 500)}`)
+          }
           yield* Fiber.interrupt(stderrFiber).pipe(Effect.catchAll(() => Effect.void))
 
           const durationMs = Date.now() - start

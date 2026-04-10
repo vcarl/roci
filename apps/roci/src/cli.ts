@@ -25,10 +25,7 @@ import {
 } from "@roci/core/core/model-config.js"
 import type { AnyModel } from "@roci/core/core/limbic/hypothalamus/runtime.js"
 
-const isDev = import.meta.url.endsWith(".ts")
-const PROJECT_ROOT = isDev
-  ? path.resolve(import.meta.dirname, "../..")  // dev: orchestrator/src/ -> repo root
-  : process.cwd()                                // published: user runs from project root
+const PROJECT_ROOT = process.cwd()
 
 /**
  * Load .roci/models.json if present and merge with defaults + CLI overrides.

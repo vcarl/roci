@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { z } from "zod";
 
 const PORT = parseInt(process.env.ROCI_CHANNEL_PORT ?? "7878", 10);
 const PLAYER_DIR = process.env.ROCI_PLAYER_DIR ?? process.cwd();
@@ -21,55 +21,50 @@ When your task is complete or not achievable, you MUST call the \`terminate\` to
 Use the Agent tool to spawn subagents for parallel or delegated work.
 `.trim();
 
-const mcp = new McpServer(
+const mcp = new Server(
+  { name: "roci-channel", version: "1.0.0" },
   {
-    name: "roci-channel",
-    version: "1.0.0",
-  },
-  {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     capabilities: {
       experimental: { "claude/channel": {} },
       tools: {},
-    } as any,
+    },
     instructions,
   },
 );
 
-mcp.tool(
-  "terminate",
-  "Signal that the current task is complete or cannot be achieved. This ends the session.",
-  {
-    reason: z.enum(["completed", "unachievable"]),
-    summary: z.string().describe("A summary of what was accomplished or why the task is not achievable"),
-  },
-  async ({ reason, summary }) => {
-    const result = {
-      reason,
-      summary,
-      timestamp: new Date().toISOString(),
-    };
+mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [{
+    name: "terminate",
+    description: "Signal that the current task is complete or cannot be achieved. This ends the session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", enum: ["completed", "unachievable"] },
+        summary: { type: "string", description: "A summary of what was accomplished or why the task is not achievable" },
+      },
+      required: ["reason", "summary"],
+    },
+  }],
+}));
+
+mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
+  if (req.params.name === "terminate") {
+    const { reason, summary } = req.params.arguments as { reason: "completed" | "unachievable"; summary: string };
+    const result = { reason, summary, timestamp: new Date().toISOString() };
     try {
       writeFileSync(join(PLAYER_DIR, "session-result.json"), JSON.stringify(result, null, 2));
     } catch (err) {
       return {
-        content: [{
-          type: "text" as const,
-          text: `Failed to write session result: ${err instanceof Error ? err.message : String(err)}`,
-        }],
+        content: [{ type: "text" as const, text: `Failed to write session result: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
     }
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Session terminated: ${reason}. Result written to session-result.json.`,
-        },
-      ],
+      content: [{ type: "text" as const, text: `Session terminated: ${reason}. Result written to session-result.json.` }],
     };
-  },
-);
+  }
+  throw new Error(`unknown tool: ${req.params.name}`);
+});
 
 const transport = new StdioServerTransport();
 await mcp.connect(transport);
@@ -93,9 +88,8 @@ const server = Bun.serve({
       return new Response("Bad Request: missing content field", { status: 400 });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     try {
-      await (mcp.server as any).notification({
+      await mcp.notification({
         method: "notifications/claude/channel",
         params: {
           content: body.content,
