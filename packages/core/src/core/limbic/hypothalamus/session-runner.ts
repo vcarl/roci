@@ -12,10 +12,9 @@ import { Command, CommandExecutor } from "@effect/platform"
 import type { SessionConfig, SessionResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { normalizeClaude } from "../../../logging/stream-normalizer.js"
-import { demuxEvents, printRaw } from "../../../logging/log-demux.js"
+import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
-import { CharacterLog } from "../../../logging/log-writer.js"
-import { logToConsole } from "../../../logging/console-renderer.js"
+import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
 
 /** Default channel port if not specified in config. */
 const DEFAULT_CHANNEL_PORT = 3284
@@ -51,7 +50,7 @@ function parseStreamJson(line: string): Record<string, unknown> | null {
 }
 
 export interface SessionHandle {
-  pushEvent(content: string, meta?: Record<string, string>): Effect.Effect<void, never, CommandExecutor.CommandExecutor>
+  pushEvent(content: string, meta?: Record<string, string>): Effect.Effect<void, unknown, CommandExecutor.CommandExecutor | CharacterLog>
   join: Effect.Effect<SessionResult, never, never>
   interrupt: Effect.Effect<void, never, never>
 }
@@ -169,13 +168,19 @@ export const runSession = (config: SessionConfig): Effect.Effect<
         Stream.filter((line) => line.trim().length > 0),
         Stream.mapEffect((line) =>
           Effect.gen(function* () {
-            yield* log.raw(config.char, line).pipe(Effect.catchAll(() => Effect.void))
             const raw = parseStreamJson(line)
             if (raw) {
-              const events = normalizeClaude(raw)
-              yield* demuxEvents(config.char, events, "body")
-            } else {
-              printRaw(config.char.name, "session", line)
+              const internal = normalizeClaude(raw)
+              const unified = toUnifiedEvents(internal, config.char.name, "session", "claude")
+              for (const event of unified) {
+                yield* log.emit(config.char, event).pipe(Effect.catchAll(() => Effect.void))
+              }
+            } else if (line.trim()) {
+              yield* log.emit(config.char, {
+                ...eventBase(config.char.name, "session", "claude"),
+                kind: "system",
+                message: line,
+              }).pipe(Effect.catchAll(() => Effect.void))
             }
           }),
         ),

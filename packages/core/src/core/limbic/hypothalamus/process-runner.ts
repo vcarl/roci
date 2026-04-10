@@ -16,10 +16,9 @@ import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { runtimeBinary, runtimeBaseArgs } from "./runtime.js"
 import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
-import { demuxEvents, printRaw } from "../../../logging/log-demux.js"
+import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
-import { CharacterLog } from "../../../logging/log-writer.js"
-import { logToConsole } from "../../../logging/console-renderer.js"
+import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
 
 /**
  * Shell-safe literal using $'...' ANSI-C quoting.
@@ -175,15 +174,23 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
         Stream.filter((line) => line.trim().length > 0),
         Stream.mapEffect((line) =>
           Effect.gen(function* () {
-            // Raw capture to stream.jsonl
-            yield* log.raw(config.char, line)
-
             const raw = parseStreamJson(line)
             if (raw) {
-              const events = normalize(raw)
-              yield* demuxEvents(config.char, events, source, textAccumulator)
-            } else {
-              printRaw(config.char.name, "raw", line)
+              const internal = normalize(raw)
+              const system = config.role === "brain" ? "brain" : config.role
+              const unified = toUnifiedEvents(internal, config.char.name, system, "claude")
+              for (const event of unified) {
+                yield* log.emit(config.char, event)
+                if (textAccumulator && event.kind === "text") {
+                  yield* Ref.update(textAccumulator, (arr) => [...arr, event.text])
+                }
+              }
+            } else if (line.trim()) {
+              yield* log.emit(config.char, {
+                ...eventBase(config.char.name, config.role, "claude"),
+                kind: "system",
+                message: line,
+              })
             }
           }),
         ),
