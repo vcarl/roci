@@ -1,8 +1,0 @@
-{
-  "name": "roci-channel",
-  "version": "1.0.0",
-  "private": true,
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.3"
-  }
-}

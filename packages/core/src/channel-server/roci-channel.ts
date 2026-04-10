@@ -29,7 +29,7 @@ const mcp = new McpServer(
   {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     capabilities: {
-      "claude/channel": {},
+      experimental: { "claude/channel": {} },
       tools: {},
     } as any,
     instructions,
