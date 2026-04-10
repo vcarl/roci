@@ -1,0 +1,26 @@
+{
+  "channelsEnabled": true,
+  "hooks": {
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "async": true,
+        "command": "jq -c '{ts:(now|strftime(\"%H:%M:%S\")),event:\"tool_use\",tool:.tool_name,input:.tool_input}' >> logs/activity.log 2>/dev/null || true"
+      }]
+    }],
+    "SubagentStart": [{
+      "hooks": [{
+        "type": "command",
+        "async": true,
+        "command": "jq -c '{ts:(now|strftime(\"%H:%M:%S\")),event:\"subagent_start\",data:.}' >> logs/activity.log 2>/dev/null || true"
+      }]
+    }],
+    "SubagentStop": [{
+      "hooks": [{
+        "type": "command",
+        "async": true,
+        "command": "jq -c '{ts:(now|strftime(\"%H:%M:%S\")),event:\"subagent_stop\",data:.}' >> logs/activity.log 2>/dev/null || true"
+      }]
+    }]
+  }
+}

@@ -93,7 +93,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
       // Escape for use in sh -c "echo '...' > file" — replace embedded single
       // quotes with '\'' (end-quote, literal-quote, re-open-quote).
       const escapedMcp = mcpJson.replace(/'/g, `'\\''`)
-      const setupCmd = `echo '${escapedMcp}' > ${playerDir}/.mcp.json && rm -f ${playerDir}/session-result.json && mkdir -p ${playerDir}/.claude && echo '{"channelsEnabled":true}' > ${playerDir}/.claude/settings.json`
+      const setupCmd = `echo '${escapedMcp}' > ${playerDir}/.mcp.json && rm -f ${playerDir}/session-result.json && mkdir -p ${playerDir}/.claude ${playerDir}/logs && echo '{"channelsEnabled":true}' > ${playerDir}/.claude/settings.json`
 
       const setupArgs = ["exec", config.containerId, "sh", "-c", setupCmd]
       yield* Effect.scoped(Effect.gen(function* () {

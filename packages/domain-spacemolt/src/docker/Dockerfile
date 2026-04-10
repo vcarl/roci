@@ -98,8 +98,9 @@ RUN mkdir -p /home/node/.opencode && \
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
 
-# Enable channels support so --dangerously-load-development-channels works non-interactively
-RUN echo '{"channelsEnabled":true}' > /home/node/.claude/settings.json
+# Enable channels + activity logging hooks (user-level so they apply to subagents too).
+# All tool calls and subagent lifecycle events append to logs/activity.log (relative to cwd).
+COPY --chown=node:node claude-settings.json /home/node/.claude/settings.json
 
 # Use iptables-legacy for WSL2 compatibility (nf_tables has limited kernel support)
 USER root
