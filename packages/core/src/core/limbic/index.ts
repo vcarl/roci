@@ -9,9 +9,7 @@ export type { InterruptRule, InterruptRegistry } from "./amygdala/index.js"
 export { InterruptRegistryTag, createInterruptRegistry } from "./amygdala/index.js"
 export type { Alert } from "../types.js"
 
-// ── HYPOTHALAMUS ── Homeostatic regulation: timing, cycle execution
-export type { CycleConfig, CycleResult } from "./hypothalamus/index.js"
-export { runCycle } from "./hypothalamus/index.js"
+// ── HYPOTHALAMUS ── Homeostatic regulation: timing, session execution
 export type { TempoConfig, TempoBase, StateMachineTempo, PlannedActionTempo } from "./hypothalamus/index.js"
 
 // ── HIPPOCAMPUS ── Memory consolidation: dream compression

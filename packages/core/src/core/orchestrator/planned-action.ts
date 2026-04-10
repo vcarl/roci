@@ -1,45 +1,17 @@
 import { Effect, Queue, Option } from "effect"
 import type { CharacterConfig } from "../../services/CharacterFs.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
-import { CharacterLog } from "../../logging/log-writer.js"
-import type { ClaudeModel } from "../../services/Claude.js"
 import { CommandExecutor } from "@effect/platform"
 import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
 import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
-import { PromptBuilderTag } from "../prompt-builder.js"
-import { StateRendererTag } from "../state-renderer.js"
 import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
-import { runCycle } from "../limbic/hypothalamus/cycle-runner.js"
 import { dream } from "../limbic/hippocampus/dream.js"
 import type { Alert } from "../types.js"
 import { logToConsole } from "../../logging/console-renderer.js"
 import type { ModelConfig } from "../model-config.js"
 
 // ── Types ────────────────────────────────────────────────────
-
-export interface PlannedActionConfig {
-  char: CharacterConfig
-  containerId: string
-  containerEnv?: Record<string, string>
-  /** Container --add-dir paths for claude subagent. */
-  addDirs?: string[]
-  events: Queue.Queue<unknown>
-  initialState: unknown
-  tempo: PlannedActionTempo
-  brainSystemPrompt: string
-  bodySystemPrompt: string
-  brainModel: ClaudeModel
-  bodyModel: ClaudeModel
-  brainTimeoutMs: number
-  bodyTimeoutMs: number
-  brainDisallowedTools?: string[]
-  models: ModelConfig
-}
-
-export type PlannedActionResult =
-  | { readonly _tag: "Completed"; readonly finalState: unknown; readonly cyclesRun: number }
-  | { readonly _tag: "Interrupted"; readonly finalState: unknown; readonly cyclesRun: number; readonly criticals: Alert[] }
 
 export interface BreakConfig {
   char: CharacterConfig
@@ -151,151 +123,5 @@ export const runBreak = (config: BreakConfig) =>
     return {
       _tag: "Completed" as const,
       finalState: currentState,
-    }
-  })
-
-// ── runPlannedAction ────────────────────────────────────────────
-
-export const runPlannedAction = (config: PlannedActionConfig) =>
-  Effect.gen(function* () {
-    const eventProcessor = yield* EventProcessorTag
-    const classifier = yield* SituationClassifierTag
-    const interruptRegistry = yield* InterruptRegistryTag
-    const promptBuilder = yield* PromptBuilderTag
-    const renderer = yield* StateRendererTag
-    const charFs = yield* CharacterFs
-    const log = yield* CharacterLog
-
-    let currentState = config.initialState
-    let prevSnapshot = renderer.richSnapshot(currentState)
-    const softAlertAcc = new Map<string, Alert>()
-
-    for (let cycle = 0; cycle < config.tempo.maxCycles; cycle++) {
-      // 1. Drain event queue
-      let drained = false
-      while (!drained) {
-        const maybeEvent = yield* Queue.poll(config.events)
-        if (Option.isNone(maybeEvent)) {
-          drained = true
-        } else {
-          const event = maybeEvent.value
-          yield* Effect.try(() => {
-            const result = eventProcessor.processEvent(event, currentState)
-            if (result.stateUpdate) {
-              currentState = result.stateUpdate(currentState)
-            }
-            if (result.log) {
-              result.log()
-            }
-          }).pipe(
-            Effect.catchAll((e) =>
-              logToConsole(config.char.name, "error", `Event processing error: ${e}`),
-            ),
-          )
-        }
-      }
-
-      // 2. Classify
-      const summary = classifier.summarize(currentState)
-
-      // 3. Log state bar
-      renderer.logStateBar(config.char.name, summary.metrics)
-
-      // 4. State diff
-      const currentSnapshot = renderer.richSnapshot(currentState)
-      const stateDiff = renderer.stateDiff(prevSnapshot, currentSnapshot)
-
-      // 5. Evaluate interrupts
-      const allAlerts = interruptRegistry.evaluate(currentState, summary.situation)
-      const criticals = allAlerts.filter(a => a.priority === "critical")
-
-      if (criticals.length > 0) {
-        yield* logToConsole(
-          config.char.name,
-          "orchestrator",
-          `Critical interrupt: ${criticals.map(a => a.message).join("; ")}`,
-        )
-        // If we've already run at least one cycle, return early so the phase
-        // can route us back. But if this is cycle 0 we must run the brain at
-        // least once — otherwise we loop forever without doing any work.
-        if (cycle > 0) {
-          return {
-            _tag: "Interrupted" as const,
-            finalState: currentState,
-            cyclesRun: cycle,
-            criticals,
-          }
-        }
-        // Promote criticals into the alert accumulator so the brain sees them
-        for (const alert of criticals) {
-          softAlertAcc.set(alert.ruleName ?? alert.message, alert)
-        }
-      }
-
-      const softAlerts = allAlerts.filter(a => a.priority !== "critical")
-      for (const alert of softAlerts) {
-        softAlertAcc.set(alert.ruleName ?? alert.message, alert)
-      }
-
-      // 6. Read identity
-      const background = yield* charFs.readBackground(config.char).pipe(
-        Effect.catchAll(() => Effect.succeed("")),
-      )
-      const values = yield* charFs.readValues(config.char).pipe(
-        Effect.catchAll(() => Effect.succeed("")),
-      )
-      const diary = yield* charFs.readDiary(config.char)
-
-      // 7. Build prompt
-      const currentSoftAlerts = Array.from(softAlertAcc.values())
-      const brainPromptString = promptBuilder.brainPrompt({
-        summary,
-        diary,
-        background,
-        values,
-        cycleNumber: cycle + 1,
-        maxCycles: config.tempo.maxCycles,
-        softAlerts: currentSoftAlerts,
-        stateDiff: cycle > 0 ? stateDiff : undefined,
-      })
-
-      // Clear soft alert accumulator after building prompt
-      softAlertAcc.clear()
-
-      yield* logToConsole(config.char.name, "orchestrator", `Cycle ${cycle + 1}/${config.tempo.maxCycles}`)
-
-      // 8. Run cycle
-      const cycleResult = yield* runCycle({
-        containerId: config.containerId,
-        playerName: config.char.name,
-        brainSystemPrompt: config.brainSystemPrompt,
-        bodySystemPrompt: config.bodySystemPrompt,
-        brainModel: config.brainModel,
-        bodyModel: config.bodyModel,
-        brainTimeoutMs: config.brainTimeoutMs,
-        bodyTimeoutMs: config.bodyTimeoutMs,
-        env: config.containerEnv,
-        addDirs: config.addDirs,
-        char: config.char,
-        buildBrainPrompt: () => brainPromptString,
-        brainDisallowedTools: config.brainDisallowedTools,
-        models: config.models,
-      })
-
-      // 9. Log cycle completion
-      yield* logToConsole(
-        config.char.name,
-        "orchestrator",
-        `Cycle ${cycle + 1} complete — brain: ${Math.round(cycleResult.brainResult.durationMs / 1000)}s, body: ${Math.round(cycleResult.bodyResult.durationMs / 1000)}s`,
-      )
-
-      // 10. Update prevSnapshot
-      prevSnapshot = renderer.richSnapshot(currentState)
-    }
-
-    return {
-      _tag: "Completed" as const,
-      finalState: currentState,
-      cyclesRun: config.tempo.maxCycles,
     }
   })

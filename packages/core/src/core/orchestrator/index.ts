@@ -1,30 +1,15 @@
-// ── Orchestrator — State machine, lifecycle hooks, planning subsystem
+// ── Orchestrator — Lifecycle hooks, planning utilities
 
-export type { StateMachineConfig } from "./state-machine.js"
-export { runStateMachine } from "./state-machine.js"
-
-export type { PlannedActionConfig, PlannedActionResult, BreakConfig, BreakResult } from "./planned-action.js"
-export { runPlannedAction, runBreak, runReflection } from "./planned-action.js"
+export type { BreakConfig, BreakResult } from "./planned-action.js"
+export { runBreak, runReflection } from "./planned-action.js"
 
 export type { PlanContext, LifecycleHooks } from "./lifecycle.js"
 
-export {
-  brainPlan,
-  brainInterrupt,
-  brainEvaluate,
-  maybeRequestPlan,
-  killSubagent,
-  evaluateCompletedSubagent,
-  checkMidRun,
-  maybeSpawnSubagent,
-  recordStepTiming,
-  recordStepOutcome,
+export type {
+  TimingRefs,
 } from "./planning/index.js"
 
-export type {
-  BrainContainerContext,
-  PlanningRefs,
-  SubagentRefs,
-  PlanRefs,
-  TimingRefs,
+export {
+  recordStepTiming,
+  recordStepOutcome,
 } from "./planning/index.js"

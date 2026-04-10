@@ -84,21 +84,15 @@ export interface ChannelEventContext {
 }
 
 /**
- * Assembles all prompts for the brain and subagent.
+ * Assembles prompts for the agent session.
  */
 export interface PromptBuilder {
-  planPrompt(ctx: PlanPromptContext): string
-  interruptPrompt(ctx: InterruptPromptContext): string
-  evaluatePrompt(ctx: EvaluatePromptContext): string
-  subagentPrompt(ctx: SubagentPromptContext): string
   /** Domain-specific system prompt for the subagent container, varying by mode and task. */
   systemPrompt(mode: BrainMode, task: string): string
-  /** Build the brain's input prompt for a planned-action cycle. */
-  brainPrompt(ctx: PlannedActionBrainPromptContext): string
   /** Build the initial task prompt injected at session start via channel event. */
-  taskPrompt?(ctx: TaskPromptContext): string
+  taskPrompt(ctx: TaskPromptContext): string
   /** Build a tick/state-update event payload for the channel. */
-  channelEvent?(ctx: ChannelEventContext): string
+  channelEvent(ctx: ChannelEventContext): string
 }
 
 /**

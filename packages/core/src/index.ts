@@ -26,12 +26,14 @@ export { PhaseRegistryTag } from "./core/phase.js";
 
 export { runPhases } from "./core/phase-runner.js";
 export type {
+	ChannelEventContext,
 	EvaluatePromptContext,
 	InterruptPromptContext,
 	PlannedActionBrainPromptContext,
 	PlanPromptContext,
 	PromptBuilder,
 	SubagentPromptContext,
+	TaskPromptContext,
 } from "./core/prompt-builder.js";
 export { PromptBuilderTag } from "./core/prompt-builder.js";
 export type { Skill, SkillRegistry } from "./core/skill.js";
