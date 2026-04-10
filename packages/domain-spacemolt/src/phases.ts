@@ -1,23 +1,18 @@
-import { Effect, Deferred, Queue } from "effect"
+import { Effect, Queue } from "effect"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import type { GameState } from "./types.js"
 import type { GameEvent } from "./ws-types.js"
 import { getModels, type Phase, type PhaseContext, type PhaseResult, type PhaseRegistry, type ConnectionState } from "@roci/core/core/phase.js"
-import type { ExitReason } from "@roci/core/core/types.js"
-import type { LifecycleHooks } from "@roci/core/core/orchestrator/lifecycle.js"
 import { CharacterFs } from "@roci/core/services/CharacterFs.js"
 import { GameSocket } from "./game-socket.js"
 import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
 import { dinner } from "./dinner.js"
-import { runStateMachine } from "@roci/core/core/orchestrator/state-machine.js"
+import { runChannelSession } from "@roci/core/core/orchestrator/channel-session.js"
 import { logToConsole } from "@roci/core/logging/console-renderer.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
 import { askUser } from "@roci/core/util/prompt.js"
-
-/** Ticks in the active game loop before transitioning to social phase. At 30s/tick, 100 ticks ~ 50 min. */
-const ACTIVE_SESSION_TURNS = 100
 
 /** Diary lines above this threshold trigger dream compression. */
 const DIARY_COMPRESSION_THRESHOLD = 200
@@ -169,9 +164,9 @@ const startupPhase = {
 }
 
 /**
- * Active gameplay phase: runs the event loop / state machine.
- * Exits after MIN_ACTIVE_TURNS turns (~50 minutes at 30s/tick),
- * then transitions to social phase.
+ * Active gameplay phase: runs a persistent channel session.
+ * Exits when the session completes naturally (transitions to social)
+ * or is interrupted by a critical interrupt (re-enters active).
  */
 const activePhase = {
   name: "active",
@@ -185,7 +180,7 @@ const activePhase = {
       }
 
       const conn = context.connection as SMConnection
-      const { events, initialState, tickIntervalSec, initialTick } = conn
+      const { events, initialState } = conn
 
       yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
 
@@ -197,38 +192,24 @@ const activePhase = {
         containerId: context.containerId,
       })
 
-      const exitSignal = yield* Deferred.make<ExitReason, never>()
-
-      const hooks: LifecycleHooks = {
-        shouldExit: (turnCount: number) => Effect.succeed(turnCount >= ACTIVE_SESSION_TURNS),
-      }
-
       if (!context.domainBundle) {
         yield* logToConsole(context.char.name, "orchestrator", "No domainBundle in active phase — shutting down")
         return { _tag: "Shutdown" } as PhaseResult
       }
 
-      const manualApproval = context.phaseData?.manualApproval as boolean | undefined
-      const models = getModels(context)
-
-      yield* runStateMachine({
+      const result = yield* runChannelSession({
         char: context.char,
         containerId: context.containerId,
-        playerName: context.char.name,
         containerEnv: context.containerEnv,
         addDirs: context.containerAddDirs,
         events: events as Queue.Queue<unknown>,
         initialState,
-        tickIntervalSec,
-        initialTick,
-        exitSignal,
-        hooks,
-        manualApproval,
-        models,
-      }).pipe(Effect.provide(context.domainBundle))
+      }).pipe(Effect.provide(context.domainBundle!))
 
-      // When the state machine exits, transition to social phase
-      return { _tag: "Continue", next: "social", connection: context.connection } as PhaseResult
+      if (result._tag === "Interrupted") {
+        return { _tag: "Continue", next: "active", connection: { ...conn, initialState: result.finalState } } as PhaseResult
+      }
+      return { _tag: "Continue", next: "social", connection: { ...conn, initialState: result.finalState } } as PhaseResult
     }),
 }
 
