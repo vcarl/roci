@@ -587,7 +587,7 @@ const gitHubPromptBuilder: PromptBuilder = {
   taskPrompt(ctx: TaskPromptContext): string {
     const sections: string[] = []
 
-    sections.push(`# Task\n\n${ctx.summary.headline}\n\n${ctx.summary.situation}`)
+    sections.push(`# Task\n\n${ctx.summary.headline}`)
 
     if (ctx.summary.sections.length > 0) {
       sections.push(ctx.summary.sections.map(s => `## ${s.heading}\n\n${s.body}`).join("\n\n"))
