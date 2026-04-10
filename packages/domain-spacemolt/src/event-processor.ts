@@ -33,7 +33,7 @@ function handleStateUpdate(payload: StateUpdateEvent["payload"]): EventResult {
  * SpaceMolt-specific event processor.
  * Translates raw WebSocket GameEvents into state machine operations.
  */
-const spaceMoltEventProcessor: EventProcessor = {
+export const spaceMoltEventProcessor: EventProcessor = {
   processEvent(event, _currentState) {
     const smEvent = event as GameEvent
     switch (smEvent.type) {
@@ -48,11 +48,7 @@ const spaceMoltEventProcessor: EventProcessor = {
       case "combat_update": {
         const { payload } = smEvent
         return {
-          log: () => {
-            // Combat updates are informational — the actual inCombat flag
-            // is set by the subsequent state_update event, and the in_combat
-            // InterruptRule fires then.
-          },
+          alert: `Combat engaged! ${payload.attacker} is attacking you — ${payload.damage_type} hit for ${payload.damage} damage (shield: ${payload.shield_hit}, hull: ${payload.hull_hit}).`,
         }
       }
 

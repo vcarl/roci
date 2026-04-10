@@ -27,6 +27,8 @@ export interface EventResult {
   readonly stateUpdate?: (prev: DomainState) => DomainState
   readonly context?: DomainContext
   readonly log?: () => void
+  /** Immediate alert text to push to the running session via channel. */
+  readonly alert?: string
 }
 
 /**

@@ -67,6 +67,7 @@ export const runChannelSession = (config: ChannelSessionConfig) =>
       // ── 1. Drain event queue (non-blocking) ──────────────────
 
       let drained = false
+      let pendingAlert: string | undefined
       while (!drained) {
         const maybeEvent = yield* Queue.poll(config.events)
         if (Option.isNone(maybeEvent)) {
@@ -81,12 +82,25 @@ export const runChannelSession = (config: ChannelSessionConfig) =>
             if (result.log) {
               result.log()
             }
+            if (result.alert) {
+              pendingAlert = result.alert
+            }
           }).pipe(
             Effect.catchAll((e) =>
               logToConsole(config.char.name, "error", `Event processing error: ${e}`),
             ),
           )
         }
+      }
+
+      // ── 1b. Push any immediate alerts from event processing ──
+
+      if (pendingAlert !== undefined && sessionHandle !== null) {
+        yield* sessionHandle.pushEvent(pendingAlert, { type: "alert" }).pipe(
+          Effect.catchAll((e) =>
+            logToConsole(config.char.name, "error", `pushEvent (alert) failed: ${e}`),
+          ),
+        )
       }
 
       // ── 2. Classify situation ────────────────────────────────
