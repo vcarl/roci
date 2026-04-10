@@ -165,7 +165,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
         Effect.catchAll(() => Effect.succeed("")),
       ).pipe(Effect.fork)
 
-      // Stream stdout: log raw lines, parse stream-json, pass to demuxEvents
+      // Stream stdout: log raw lines, parse stream-json, emit unified events
       const streamFiber = yield* process.stdout.pipe(
         Stream.decodeText(),
         Stream.splitLines,

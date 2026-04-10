@@ -1,4 +1,4 @@
-/** Normalized event type consumed by log-demux, runtime-agnostic. */
+/** Normalized event type consumed by the event pipeline, runtime-agnostic. */
 export type InternalEvent =
   | { type: "system"; model?: string }
   | { type: "thinking"; text: string }

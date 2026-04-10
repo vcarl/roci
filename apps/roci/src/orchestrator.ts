@@ -203,7 +203,9 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
     yield* Fiber.joinAll(allFibers).pipe(
       Effect.ensuring(
         Effect.gen(function* () {
-          yield* logToConsole("orchestrator", "main", "Shutting down — stopping containers...")
+          yield* logToConsole("orchestrator", "main", "Shutting down — stopping containers...").pipe(
+            Effect.catchAll(() => Effect.void),
+          )
           for (const [domainName] of containerIds) {
             const containerName = `roci-${domainName}`
             yield* docker.stop(containerName).pipe(

@@ -1,6 +1,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Effect, Layer, Option } from "effect"
 import { FileSystem } from "@effect/platform"
+import { NodeFileSystem } from "@effect/platform-node"
 import * as path from "node:path"
 import { execSync } from "node:child_process"
 import { createGitHubApp } from "@roci/domain-github/create-app.js"
@@ -611,14 +612,20 @@ const rociCommand = Command.make(
 // --- provide services ---
 const projectRootLayer = Layer.succeed(ProjectRoot, PROJECT_ROOT)
 
-const oauthTokenLayer = OAuthTokenLive.pipe(Layer.provide(projectRootLayer))
+const characterLogLayer = CharacterLogLive.pipe(
+  Layer.provide(Layer.mergeAll(projectRootLayer, NodeFileSystem.layer)),
+)
+
+const oauthTokenLayer = OAuthTokenLive.pipe(
+  Layer.provide(Layer.mergeAll(projectRootLayer, characterLogLayer)),
+)
 
 const serviceLayer = Layer.mergeAll(
   DockerLive,
   oauthTokenLayer,
   CharacterFsLive,
   projectRootLayer,
-  CharacterLogLive.pipe(Layer.provide(projectRootLayer)),
+  characterLogLayer,
 )
 
 export { rociCommand, serviceLayer }

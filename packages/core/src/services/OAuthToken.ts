@@ -84,34 +84,26 @@ export const OAuthTokenLive = Layer.effect(
       validateInContainer: (containerId: string) =>
         Effect.gen(function* () {
           const { token: currentToken } = yield* Ref.get(tokenRef)
-          yield* logToConsole(
-            "orchestrator",
-            "main",
+          yield* Effect.logInfo(
             `Validating OAuth token inside container ${containerId.slice(0, 12)} (token len=${currentToken.length})...`,
           )
           const result = validateTokenInContainer(currentToken, containerId)
           if (result.ok) {
-            yield* logToConsole("orchestrator", "main", "Token validated in container")
+            yield* Effect.logInfo("Token validated in container")
             return true
           }
           // A rate-limit response means auth succeeded — token is valid, just throttled.
           const combined = `${result.stdout} ${result.stderr}`.toLowerCase()
           if (/hit your limit|rate limit|usage limit|resets/.test(combined)) {
-            yield* logToConsole(
-              "orchestrator",
-              "main",
+            yield* Effect.logInfo(
               `Token is valid but rate-limited: ${result.stdout.trim().slice(0, 200)}`,
             )
             return true
           }
-          yield* logToConsole(
-            "orchestrator",
-            "main",
+          yield* Effect.logWarning(
             `Token validation failed: exit=${result.status} stderr=${result.stderr.trim().slice(0, 500)} stdout=${result.stdout.trim().slice(0, 500)}`,
           )
-          yield* logToConsole(
-            "orchestrator",
-            "main",
+          yield* Effect.logWarning(
             "Token is invalid inside container. Run 'claude setup-token' and update .oauth-token",
           )
           return false
