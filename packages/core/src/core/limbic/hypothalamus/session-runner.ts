@@ -117,6 +117,7 @@ export const runSession = (config: SessionConfig): Effect.Effect<
 
       const claudeArgs: string[] = [
         "--channels", "server:roci-channel",
+        "--output-format", "stream-json", "--verbose",
         "--permission-mode", "bypassPermissions",
         "--model", config.model,
         "--system-prompt", config.systemPrompt,
