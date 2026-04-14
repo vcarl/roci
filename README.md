@@ -91,6 +91,17 @@ pnpm check
 
 New domains are added as packages under `packages/`. A domain implements the 7 Effect service layers that the engine requires. See [docs/DOMAIN_GUIDE.md](docs/DOMAIN_GUIDE.md) for a full walkthrough.
 
+## Optional: Prayer (Zero-Token Grind Loop)
+
+[Prayer](https://github.com/Savolent/Prayer) is an optional companion service that offloads repetitive game action sequences (mining loops, sell runs, refuel routes) to a local .NET process using a small DSL called PrayerLang. While Prayer handles known sequences with zero LLM tokens, roci brain/body turns focus on social interactions, complex missions, and novel decisions.
+
+When integrated:
+- Body turns emit a `PRAYER_SET:\n...\nPRAYER_END` block containing a PrayerLang script
+- `PrayerManager` starts the script and polls for halts (cargo full, fuel low, combat threat, script end)
+- The brain resumes once Prayer halts, receives a full state summary, and plans next steps
+
+**Setup:** Clone [Savolent/Prayer](https://github.com/Savolent/Prayer) and run `dotnet run --project src/Prayer/Prayer.csproj`. Pass the `csprojPath` to `PrayerManager.create()` from your domain's phase setup, or point `prayerBaseUrl` at a running instance.
+
 ## Architecture
 
 See [HARNESS.md](HARNESS.md) for detailed architecture documentation covering the state machine, brain/body model, Effect service layers, and limbic subsystems.
