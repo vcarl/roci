@@ -22,4 +22,22 @@ describe("loadSkillSync", () => {
   it("throws on missing file", () => {
     expect(() => loadSkillSync("/nonexistent/file.md")).toThrow()
   })
+
+  it("loads orient.md", () => {
+    const skill = loadSkillSync(path.join(SKILLS_DIR, "orient.md"))
+    expect(skill.name).toBe("orient")
+    expect(skill.template).toContain("situation synthesizer")
+  })
+
+  it("loads decide.md", () => {
+    const skill = loadSkillSync(path.join(SKILLS_DIR, "decide.md"))
+    expect(skill.name).toBe("decide")
+    expect(skill.template).toContain("decision-maker")
+  })
+
+  it("loads evaluate.md", () => {
+    const skill = loadSkillSync(path.join(SKILLS_DIR, "evaluate.md"))
+    expect(skill.name).toBe("evaluate")
+    expect(skill.template).toContain("evaluating")
+  })
 })
