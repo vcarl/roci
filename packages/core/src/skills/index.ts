@@ -11,3 +11,6 @@ export type {
   EvaluateTransition,
   EvaluateResult,
 } from "./types.js"
+
+export { getCadenceGuidance } from "./cadence.js"
+export type { Cadence } from "./cadence.js"

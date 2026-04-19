@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { loadSkillSync, type LoadedSkill } from "./loader.js"
+import { getCadenceGuidance } from "./cadence.js"
 import * as path from "node:path"
 
 const SKILLS_DIR = path.resolve(import.meta.dirname, ".")
@@ -39,5 +40,21 @@ describe("loadSkillSync", () => {
     const skill = loadSkillSync(path.join(SKILLS_DIR, "evaluate.md"))
     expect(skill.name).toBe("evaluate")
     expect(skill.template).toContain("evaluating")
+  })
+})
+
+describe("getCadenceGuidance", () => {
+  it("returns guidance for observe + real-time", () => {
+    const guidance = getCadenceGuidance("observe", "real-time")
+    expect(guidance).toContain("LOW")
+  })
+
+  it("returns guidance for decide + planned-action", () => {
+    const guidance = getCadenceGuidance("decide", "planned-action")
+    expect(guidance).toContain("3-5 steps")
+  })
+
+  it("returns empty string for unknown skill", () => {
+    expect(getCadenceGuidance("nonexistent", "real-time")).toBe("")
   })
 })

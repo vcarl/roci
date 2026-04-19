@@ -73,3 +73,5 @@ export type {
 	EvaluateTransition,
 	EvaluateResult,
 } from "./skills/index.js"
+export { getCadenceGuidance } from "./skills/index.js"
+export type { Cadence } from "./skills/index.js"
