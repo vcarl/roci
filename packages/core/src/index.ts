@@ -59,3 +59,17 @@ export type {
 	StepCompletionResult,
 	StepTiming,
 } from "./core/types.js";
+
+// Skills — operating loop prompt templates
+export { loadSkillSync } from "./skills/index.js"
+export type { LoadedSkill } from "./skills/index.js"
+export type {
+	Disposition,
+	ObserveResult,
+	OrientResult,
+	WaitState,
+	DecideResult,
+	Judgment,
+	EvaluateTransition,
+	EvaluateResult,
+} from "./skills/index.js"
