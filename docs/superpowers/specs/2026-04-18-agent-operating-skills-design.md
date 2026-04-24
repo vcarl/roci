@@ -64,7 +64,7 @@ Rather than separate skills per cadence, each operating skill contains cadence-s
 - **Headline** — one-sentence summary of the current situation
 - **Sections** — relevant context organized by topic, curated for the decision-maker. Orient decides what to include and what to leave out — this is an attention mechanism.
 - **What changed** — delta since last orientation
-- **Emotional weight** — carried forward from observe, potentially amplified by orient's synthesis (e.g. three individually-minor accumulations that together paint a concerning picture)
+- **Emotional state** — carried forward from observe, potentially amplified by orient's synthesis (e.g. three individually-minor accumulations that together paint a concerning picture)
 - **Metrics** — quantitative signals (resource levels, time budgets, queue depths)
 
 **Cadence sensitivity:**

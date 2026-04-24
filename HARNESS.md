@@ -1,16 +1,14 @@
 # Agent Harness
 
-The harness runs autonomous character-driven sessions inside a shared Docker container, using Claude Code as the agent runtime. An orchestrator on the host manages the session lifecycle: connect to a domain, run brain/body or plan/act/evaluate cycles, and capture all output.
+The harness runs autonomous character-driven sessions inside shared Docker containers, using Claude Code as the agent runtime. An orchestrator on the host manages the session lifecycle: connect to a domain, spawn a persistent channel session, push state updates as events, and capture all output.
 
 ## Repository Structure
 
-This project is a pnpm monorepo with the following packages:
-
 ```
-packages/core/          (@roci/core)              Core engine, services, logging, utilities
-packages/domain-spacemolt/ (@roci/domain-spacemolt) SpaceMolt domain implementation
-packages/domain-github/    (@roci/domain-github)    GitHub domain implementation
-apps/roci/              (roci)                     CLI, orchestrator runner, setup, domain registry
+packages/core/             (@roci/core)               Core engine, services, logging, utilities
+packages/domain-spacemolt/ (@roci/domain-spacemolt)    SpaceMolt domain implementation
+packages/domain-github/    (@roci/domain-github)       GitHub domain implementation
+apps/roci/                 (roci)                      CLI, orchestrator runner, setup, domain registry
 ```
 
 ## Architecture
@@ -18,85 +16,87 @@ apps/roci/              (roci)                     CLI, orchestrator runner, set
 ```
 apps/roci/src/cli.ts
  +-- runOrchestrator(configs[], domain)              apps/roci/src/orchestrator.ts
-     +-- ensureSharedContainer()                      Start/reuse Docker container
-     +-- for each character: fork characterLoop()     apps/roci/src/orchestrator.ts
+     +-- ensureContainer()                            Start/reuse Docker container per domain
+     +-- for each character: fork characterLoop()
          +-- runPhases(context, phaseRegistry)         packages/core/src/core/phase-runner.ts
              +-- Phase: startup, active, break/social, reflection
-                 +-- runStateMachine() or runPlannedAction()
+                 +-- runChannelSession()               packages/core/src/core/orchestrator/channel-session.ts
 ```
+
+### Channel Session Model
+
+The primary execution engine is `runChannelSession()`. It spawns a persistent `claude --channels` process inside the Docker container and pushes events to it over the session lifetime.
+
+**Lifecycle:**
+
+1. **Spawn** -- The orchestrator calls `runSession()`, which writes a `.mcp.json` config, builds `claude --channels` CLI args, and starts the process via `docker exec`. The session runs continuously inside the container.
+
+2. **Task injection** -- After a 2-second stabilization delay, the orchestrator pushes an initial task event via HTTP POST to the channel server. This task contains the full situation briefing, agent identity, and instructions.
+
+3. **Tick loop** -- Every 30 seconds, the orchestrator:
+   - Drains the event queue (non-blocking poll)
+   - Processes events through `EventProcessor` to update state
+   - Classifies the situation via `SituationClassifier`
+   - Evaluates interrupt rules via `InterruptRegistry`
+   - If critical interrupts fire: kills the session, returns `Interrupted`
+   - If session completed naturally: returns `Completed`
+   - Otherwise: computes state diff, builds a channel event payload via `PromptBuilder.channelEvent()`, and pushes it to the running session
+
+4. **Termination** -- The session ends when:
+   - The agent completes its work and exits naturally
+   - A critical interrupt fires (CI failure, combat, hull critical)
+   - The session timeout expires (default: 1 hour)
+
+**Key constants:**
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `TICK_INTERVAL_MS` | 30,000 | How often the orchestrator pushes state updates |
+| `DEFAULT_SESSION_TIMEOUT_MS` | 3,600,000 | Maximum session duration (1 hour) |
+| `POST_SPAWN_DELAY_MS` | 2,000 | Wait after spawn before pushing the first task |
 
 ### Limbic System
 
-Domain-agnostic subsystems live under `packages/core/src/core/limbic/`, organized by analogy to limbic brain regions:
+Domain-agnostic subsystems live under `packages/core/src/core/limbic/`, organized by analogy to limbic brain regions. See [LIMBIC.md](packages/core/src/core/limbic/LIMBIC.md) for full documentation.
 
 ```
 packages/core/src/core/limbic/
  +-- thalamus/         Sensory relay: event processing, situation classification
- |   +-- event-processor.ts    EventProcessor, EventResult, EventCategory
- |   +-- situation-classifier.ts   SituationClassifier, SituationSummary
  +-- amygdala/         Threat detection: interrupt evaluation and alerting
- |   +-- interrupt.ts  InterruptRule, InterruptRegistry, createInterruptRegistry()
- +-- hypothalamus/     Homeostatic regulation: timing, cycle execution
- |   +-- tempo.ts      TempoConfig (StateMachineTempo | PlannedActionTempo)
- |   +-- cycle-runner.ts   runCycle (brain/body turn pair)
- |   +-- process-runner.ts runTurn (claude -p in container)
- |   +-- timeout-summarizer.ts
+ +-- hypothalamus/     Homeostatic regulation: session execution, timing
  +-- hippocampus/      Memory consolidation: dream compression
-     +-- dream.ts      dream.execute() -- diary + secrets compression via Opus
 ```
 
-**Thalamus** -- `EventProcessor` translates raw domain events into `EventResult`, which uses a discriminated union `EventCategory`:
+**Data flow:**
 
-```typescript
-type EventCategory =
-  | { _tag: "Heartbeat"; tick: number }
-  | { _tag: "StateChange" }
-  | { _tag: "LifecycleReset"; reason: string }
-
-interface EventResult {
-  category?: EventCategory
-  stateUpdate?: (prev: DomainState) => DomainState
-  context?: DomainContext         // e.g. chatMessages
-  log?: () => void
-}
+```
+Domain Events (WebSocket, GraphQL poll, etc.)
+  |
+  v
+THALAMUS: EventProcessor.processEvent(event, state) --> EventResult
+  |  apply stateUpdate, run log side effect
+  v
+THALAMUS: SituationClassifier.summarize(state) --> SituationSummary
+  |
+  v
+AMYGDALA: InterruptRegistry.evaluate(state, situation)
+  +--[critical]--> Kill session, return Interrupted
+  +--[soft]------> Include in next channel event
+  |
+  v
+ORCHESTRATOR: push channel event to running session
+  |
+  v
+HIPPOCAMPUS: dream.execute() (in reflection phase, when diary exceeds threshold)
 ```
 
-`SituationClassifier` has a single `summarize()` method returning `SituationSummary`:
+### Operating Skills
 
-```typescript
-interface SituationSummary {
-  situation: DomainSituation          // domain-specific enum/type
-  headline: string
-  sections: Array<{ id: string; heading: string; body: string }>
-  metrics: Record<string, string | number | boolean>
-}
-```
-
-**Amygdala** -- `InterruptRegistry` evaluates declarative `InterruptRule`s against current state + situation. Rules have a priority (`critical | high | medium | low`), a condition function, a message function, and optional `suppressWhenTaskIs` for deduplication. Critical alerts trigger immediate replanning; soft alerts accumulate and feed into the next brain prompt.
-
-**Hypothalamus** -- `TempoConfig` is a discriminated union governing cycle timing:
-
-```typescript
-interface StateMachineTempo extends TempoBase {
-  _tag: "StateMachine"
-  maxTurns: number
-}
-
-interface PlannedActionTempo extends TempoBase {
-  _tag: "PlannedAction"
-  maxCycles: number
-  breakDurationMs: number
-  breakPollIntervalSec: number
-}
-```
-
-`runCycle` runs a single brain/body turn pair: build brain prompt, run brain (Opus) with timeout, run body (Sonnet) with brain output as prompt, summarize on timeout.
-
-**Hippocampus** -- `dream.execute()` compresses diary and secrets via Opus. Dream type is probabilistic (normal/good/nightmare), selected based on secrets line count.
+Operating skills define how agents think at each stage of the OODA loop: observe, orient, decide, evaluate. They live in `packages/core/src/skills/` as markdown templates with YAML frontmatter. See [docs/OPERATING_SKILLS.md](docs/OPERATING_SKILLS.md) for full documentation.
 
 ### Domain Services
 
-All domain knowledge is injected via 6 Effect service layers, provided as a `DomainBundle`. See `docs/DOMAIN_GUIDE.md` for full documentation.
+All domain knowledge is injected via 6 Effect service layers, provided as a `DomainBundle`. See [docs/DOMAIN_GUIDE.md](docs/DOMAIN_GUIDE.md) for full documentation.
 
 | Service | Tag | Role |
 |---------|-----|------|
@@ -104,8 +104,8 @@ All domain knowledge is injected via 6 Effect service layers, provided as a `Dom
 | **SituationClassifier** | `SituationClassifierTag` | `summarize(state)` -- structured `SituationSummary` with headline, sections, metrics |
 | **InterruptRegistry** | `InterruptRegistryTag` | Declarative interrupt rules with priority, condition, message, `suppressWhenTaskIs` |
 | **StateRenderer** | `StateRendererTag` | Snapshots, rich snapshots, diffs, console state bar |
-| **PromptBuilder** | `PromptBuilderTag` | Assembles all LLM prompts (plan, interrupt, evaluate, subagent, brainPrompt) |
-| **SkillRegistry** | `SkillRegistryTag` | Step completion logic -- task types, instructions, deterministic checks |
+| **PromptBuilder** | `PromptBuilderTag` | Assembles session prompts: `systemPrompt`, `taskPrompt`, `channelEvent` |
+| **SkillRegistry** | `SkillRegistryTag` | Domain skill catalog and deterministic step-completion checks |
 
 ### Phase System
 
@@ -113,158 +113,86 @@ Sessions progress through a sequence of named phases. Each phase returns a `Phas
 
 `PhaseContext` carries the character config, container ID, container env, an optional `ConnectionState` (event queue + initial state), optional `phaseData` for inter-phase threading, and the `DomainBundle`.
 
-`PhaseRegistry` lists available phases and identifies the initial phase.
-
-## Execution Engines
-
-### runStateMachine -- Plan/Act/Evaluate
-
-Used by SpaceMolt. Reads events from a queue, drives a brain + subagent cycle with planning, execution, and evaluation steps.
+#### SpaceMolt Phase Lifecycle
 
 ```
-Queue.take(event)
- |
- v
-eventProcessor.processEvent(event, state) --> EventResult
- +-- apply stateUpdate
- +-- run log side effect
- +-- accumulate context (chat messages)
- |
- v
-dispatch on EventCategory:
- +-- LifecycleReset --> kill subagent, clear plan, reset mode
- +-- StateChange   --> { decision cycle }
- +-- Heartbeat     --> { tick cycle }
+startup --> active (channel session) --> social (dinner) --> reflection (dream) --> active
 ```
 
-**Decision cycle** (on StateChange):
+- **startup** -- Read credentials, connect via WebSocket, compress diary if over threshold
+- **active** -- `runChannelSession` with domain bundle. On interrupt: restart active. On completion: proceed to social
+- **social** -- Run `dinner.execute()` for social reflection
+- **reflection** -- Run `runReflection` to compress diary if over 200 lines. Loop back to active
+
+#### GitHub Phase Lifecycle
 
 ```
-classifier.summarize(state)
- |
-interrupts.evaluate(state, situation, currentTask)
- +-- criticals --> kill subagent, brainInterrupt --> new Plan
- +-- soft alerts --> accumulate for next brain prompt
- |
-poll subagent fiber
- +-- done --> evaluateCompletedSubagent --> step++ or clear plan
- |
-maybeRequestPlan   (no plan, no subagent)
- +-- reads diary, background, values
- +-- brainPlan.execute() --> LLM --> Plan{steps[]}
- |
-maybeSpawnSubagent  (plan exists, no fiber)
- +-- runGenericSubagent() --> Docker exec --> Claude Code
+startup --> active (channel session) --> break (90 min) --> reflection (dream) --> active
+                 \                              ^
+                  \---> (critical interrupt) ---/
 ```
 
-**Tick cycle** (on Heartbeat):
+- **startup** -- Read `github.json`, validate token, clone repos, create worktrees, start GraphQL polling
+- **active** -- `runChannelSession` with domain bundle. On interrupt: restart active. On completion: proceed to break
+- **break** -- Sleep 90 minutes via `runBreak`, polling for critical interrupts every 5 seconds. If a critical fires (e.g., CI failure), exit early to active
+- **reflection** -- Run `runReflection` to compress diary. Loop back to active
 
-```
-checkMidRun   (timeout exceeded --> kill fiber, step++)
-poll subagent fiber (done --> evaluate)
-planAndSpawn
-```
+### Orchestrator Startup
 
-The state machine supports lifecycle hooks (`shouldExit`, `onInterrupt`, `onReset`, `onProcedureComplete`) and an exit signal deferred for clean shutdown.
+`runOrchestrator()` in `apps/roci/src/orchestrator.ts` manages the top-level lifecycle:
 
-### Brain/Body Cycles
+1. **Image building** -- Build Docker images once per unique `imageName` across resolved domains
+2. **Container provisioning** -- `ensureContainer()` per domain: reuse running, resume paused, or create new. Containers get `NET_ADMIN` + `NET_RAW` capabilities for firewall rules
+3. **OAuth validation** -- Validate token inside the first container
+4. **Character fibers** -- Fork one concurrent fiber per character via `runPhases()`. Each character gets `Layer.fresh(domainServiceLayer)` to prevent shared stateful services
+5. **Cleanup** -- On exit, stop all containers
 
-Runs up to `maxCycles` brain/body cycles per active phase. Consumes 5 of 6 domain services (not SkillRegistry).
+### Model Configuration
 
-```
-for cycle in 0..maxCycles:
-  1. Drain event queue, apply state updates
-  2. classifier.summarize(state)
-  3. renderer.logStateBar() + stateDiff from previous cycle
-  4. interrupts.evaluate() --> critical? return Interrupted
-  5. Read identity (background, values, diary)
-  6. promptBuilder.brainPrompt({summary, diary, background, values, cycle, softAlerts, stateDiff})
-  7. runCycle():
-     a. Brain (Opus, 8 min timeout) --> directives
-     b. Body (Sonnet, 15 min timeout) receives brain output as prompt
-  8. Update snapshot for next cycle's diff
-
-Returns: Completed{finalState, cyclesRun} | Interrupted{finalState, cyclesRun, criticals}
-```
-
-### runBreak
-
-Sleeps for `breakDurationMs`, polling the event queue every `breakPollIntervalSec`. On each state change, evaluates interrupt rules. If a critical fires, returns `Interrupted` early. Otherwise returns `Completed`.
-
-### runReflection
-
-Checks diary line count against `dreamThreshold`. If exceeded, calls `dream.execute()` to compress diary and secrets.
-
-## Adding an Interrupt Rule
-
-Add to the rules array in the domain's `interrupts.ts` (e.g. `packages/domain-spacemolt/src/interrupts.ts`):
-
-```typescript
-{ name: "fuel_emergency", priority: "critical",
-  condition: (s, sit) => sit.flags.lowFuel && sit.type !== SituationType.Docked,
-  message: (s) => `Fuel critical (${s.ship.fuel}). Dock immediately.`,
-  suppressWhenTaskIs: "refuel" }
-```
-
-`createInterruptRegistry(rules)` builds an `InterruptRegistry` that handles rule walking, suppression, sorting, and partitioning into `criticals()` and `softAlerts()`.
+Models are configured via a tier system (`fast`, `smart`, `reasoning`) with per-role overrides. See [docs/MODEL_CONFIG.md](docs/MODEL_CONFIG.md) for details.
 
 ## Domain Comparison
 
 | | SpaceMolt | GitHub |
 |---|-----------|--------|
-| **Engine** | `runStateMachine` (plan/act/evaluate per event) | `runPlannedAction` (up to 3 brain/body cycles per active phase) |
 | **Phases** | startup, active, social, reflection | startup, active, break, reflection |
-| **Brain** | Opus plans steps, Haiku/Sonnet executes each step | Opus writes directives, Sonnet executes full session |
-| **Polling** | WebSocket events | Single GraphQL query per repo per poll |
-| **Interrupts** | Evaluated on every state change and tick | Evaluated at start of each cycle + during break |
-| **Reports** | Step timing history + diffs | Body output (brain sees previous cycle results via diary) |
+| **Event Source** | WebSocket (real-time game events) | GraphQL polling (30s interval) |
+| **Session Model** | Persistent channel session | Persistent channel session |
+| **Interrupts** | 9 rules (combat, hull, fuel, cargo, etc.) | 5 rules (CI, review, triage, etc.) |
+| **Skills** | Stub (LLM evaluates all steps) | File-based loader from `.claude/skills/` |
 
-## Sequence Diagram: Subagent Execution
+## Session Execution Detail
 
 ```
-  Orchestrator          Docker Container          Log Files        Console
-  (host)                (roci-crew)
-  |                     |                         |                |
-  | docker exec -i      |                         |                |
-  | -e OAUTH_TOKEN=...  |                         |                |
-  |-------------------->|                         |                |
-  |  stdin: prompt      |                         |                |
-  |                     | run-step.sh             |                |
-  |                     | cd /work/players/<name> |                |
-  |                     | claude -p --stream-json |                |
-  |                     |         |               |                |
-  |                     |         | $ sm status   |                |
-  |                     |         |---------> ... |                |
-  |                     |         |<--------- ... |                |
-  |                     |         |               |                |
-  |<====================| stdout: stream-json lines                |
-  |  (each line)        |         |               |                |
-  |- - - - - - - - - - - - - - - - - - - - - - - ->|                |
-  |  log.raw(line)      |         |       stream.jsonl (verbatim)  |
-  |                     |         |               |                |
-  |  parseStreamJson(line)        |               |                |
-  |  +-- ok --> demuxEvent        |               |                |
-  |  |   +-- assistant:text - - - - - - - - - - - - - - - - - - - >|
-  |  |   +-- assistant:tool_use - - - - - - - - - - - - - - - - - >|
-  |  |   +-- user:tool_result - - - - - - - - - - - - - - - - - - >|
-  |  |   +-- result - - - - - - - - - - - - - - - - - - - - - - - >|
-  |  +-- parse fail - - - - - - - - - - - - - - - - - - - - - - - >|
-  |                               |               |  [name:raw]    |
-  |                               |               |                |
-  |<====================| stream ends             |                |
-  |                     |         |               |                |
-  |  waitForExit        |         |               |                |
-  |  +-- join stderr fiber        |               |                |
-  |  +-- get exit code  |         |               |                |
-  |  +-- exitCode != 0 - - - - - - - - - - - - - - - - - - - - - >|
-  |  |   fail with ClaudeError    |               |  [name:error]
-  |  +-- exitCode == 0  |         |               |                |
-  |     return text     |         |               |                |
+  Orchestrator          Docker Container          Channel Server
+  (host)                (roci-<domain>)           (localhost:port)
+  |                     |                         |
+  | docker exec         |                         |
+  | claude --channels   |                         |
+  |-------------------->|                         |
+  |                     | spawns session          |
+  |                     |------------------------>|
+  |                     |                         |
+  | POST /event (task)  |                         |
+  |-------------------------------------------->  |
+  |                     |  <-- receives task       |
+  |                     |                         |
+  | [every 30s]         |                         |
+  | POST /event (tick)  |                         |
+  |-------------------------------------------->  |
+  |                     |  <-- receives state      |
+  |                     |      update event        |
+  |                     |                         |
+  |<====================| stream-json stdout       |
+  |  parse, log, route  |                         |
+  |                     |                         |
+  | [on completion]     |                         |
+  |<====================| session-result.json      |
 ```
 
 ## Container Layout
 
-Single shared container `roci-crew`, all characters isolated via `--add-dir`.
+Each domain runs in its own Docker container named `roci-<domain>`. Characters within a domain share a container.
 
 **Volume mounts:**
 
@@ -280,20 +208,12 @@ Single shared container `roci-crew`, all characters isolated via `--add-dir`.
 | `.devcontainer/` | `/opt/devcontainer` | RO | Both |
 | `scripts/` | `/opt/scripts` | RO | Both |
 
-**What the subagent sees** (via `--add-dir` in `run-step.sh`):
+**What the agent sees** (via `--add-dir`):
 
 | Path | Purpose |
 |------|---------|
 | `/work/players/<name>/` | CWD -- credentials, background, diary, secrets, values |
 | `/work/shared/` | Shared workspace, game docs |
-| `/work/sm-cli/` | sm CLI source |
-
-**What the subagent doesn't see:**
-
-| Path | Purpose |
-|------|---------|
-| `/opt/scripts/` | run-step.sh |
-| `/opt/devcontainer/` | Dockerfile, firewall script |
 
 ## Log Files
 
@@ -302,13 +222,26 @@ Per character at `players/<name>/logs/`:
 | File | Contents | Written by |
 |------|----------|-----------|
 | `stream.jsonl` | Every raw stdout line, verbatim | `log.raw()` |
-| `thoughts.jsonl` | Assistant text blocks, dream events, brain decisions | `log.thought()` |
-| `actions.jsonl` | Tool use, tool results, subagent lifecycle | `log.action()` |
-| `words.jsonl` | sm chat/forum commands (social actions) | `log.word()` |
+| `thoughts.jsonl` | Assistant text blocks, dream events, decisions | `log.thought()` |
+| `actions.jsonl` | Tool use, tool results, session lifecycle | `log.action()` |
+| `words.jsonl` | Social actions (chat, forum commands) | `log.word()` |
+
+## Adding an Interrupt Rule
+
+Add to the rules array in the domain's `interrupts.ts`:
+
+```typescript
+{ name: "fuel_emergency", priority: "critical",
+  condition: (s, sit) => sit.flags.lowFuel && sit.type !== SituationType.Docked,
+  message: (s) => `Fuel critical (${s.ship.fuel}). Dock immediately.`,
+  suppressWhenTaskIs: "refuel" }
+```
+
+`createInterruptRegistry(rules)` builds an `InterruptRegistry` that handles rule walking, suppression, sorting, and partitioning into `criticals()` and `softAlerts()`. See the [LIMBIC.md](packages/core/src/core/limbic/LIMBIC.md) amygdala section for details.
 
 ## Console Output
 
-All events printed type-tagged with timestamp and character name:
+All events are printed type-tagged with timestamp and character name:
 
 ```
 18:04:37 [test-pilot:assistant:text] I'll check the market prices first...
@@ -318,7 +251,6 @@ All events printed type-tagged with timestamp and character name:
 18:04:39 [test-pilot:user:tool_result] Iron Ore: 5cr/unit (3 buy orders)...
 18:04:39   > Iron Ore: 5cr/unit (3 buy orders)...
 18:04:45 [test-pilot:result] ok:
-18:04:45 [test-pilot:stderr] (if any stderr output)
 ```
 
 ## Commands
@@ -331,79 +263,80 @@ All events printed type-tagged with timestamp and character name:
 ./roci resume                              # Resume the shared container
 ./roci destroy                             # Remove the shared container
 ./roci status                              # Show container status
-./roci logs <character>                    # Show recent thoughts
 ```
 
 ## Key Files
 
-### Core — `packages/core/` (@roci/core)
+### Core -- `packages/core/` (@roci/core)
 
 | File | Role |
 |------|------|
-| `packages/core/src/core/orchestrator/state-machine.ts` | Plan/act/evaluate event loop |
-| `packages/core/src/core/orchestrator/planned-action.ts` | Brain/body cycle engine, runBreak, runReflection |
-| `packages/core/src/core/orchestrator/planning/brain.ts` | Brain functions: plan, interrupt, evaluate (Opus) |
-| `packages/core/src/core/orchestrator/planning/subagent-manager.ts` | Build prompt, run in container, handle exit |
-| `packages/core/src/core/orchestrator/lifecycle.ts` | LifecycleHooks (shouldExit, onInterrupt, onReset) |
-| `packages/core/src/core/limbic/thalamus/event-processor.ts` | EventProcessor, EventResult, EventCategory |
-| `packages/core/src/core/limbic/thalamus/situation-classifier.ts` | SituationClassifier, SituationSummary |
-| `packages/core/src/core/limbic/amygdala/interrupt.ts` | InterruptRule, InterruptRegistry, createInterruptRegistry() |
-| `packages/core/src/core/limbic/hypothalamus/tempo.ts` | TempoConfig (StateMachineTempo, PlannedActionTempo) |
-| `packages/core/src/core/limbic/hypothalamus/cycle-runner.ts` | runCycle -- single brain/body turn pair |
-| `packages/core/src/core/limbic/hypothalamus/process-runner.ts` | `runTurn` -- primary domain execution path: claude -p in container with tool access |
-| `packages/core/src/core/limbic/hippocampus/dream.ts` | Dream compression (diary + secrets) |
-| `packages/core/src/core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
-| `packages/core/src/core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
-| `packages/core/src/core/domain-bundle.ts` | DomainBundle (6 service layers) + DomainConfig |
-| `packages/core/src/core/prompt-builder.ts` | PromptBuilder interface (plan, interrupt, evaluate, subagent, brainPrompt) |
-| `packages/core/src/core/state-renderer.ts` | StateRenderer interface |
-| `packages/core/src/core/skill.ts` | Skill + SkillRegistry interface |
+| `src/core/orchestrator/channel-session.ts` | Channel session event loop -- the primary execution engine |
+| `src/core/limbic/hypothalamus/session-runner.ts` | Spawns `claude --channels` in container, returns `SessionHandle` |
+| `src/core/limbic/hypothalamus/runtime.ts` | Runtime binary selection (claude vs opencode) and CLI arg building |
+| `src/core/limbic/thalamus/event-processor.ts` | EventProcessor, EventResult, EventCategory |
+| `src/core/limbic/thalamus/situation-classifier.ts` | SituationClassifier, SituationSummary |
+| `src/core/limbic/amygdala/interrupt.ts` | InterruptRule, InterruptRegistry, createInterruptRegistry() |
+| `src/core/limbic/hippocampus/dream.ts` | Dream compression (diary + secrets) |
+| `src/core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
+| `src/core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
+| `src/core/domain-bundle.ts` | DomainBundle (6 service layers) + DomainConfig |
+| `src/core/prompt-builder.ts` | PromptBuilder interface (systemPrompt, taskPrompt, channelEvent) |
+| `src/core/state-renderer.ts` | StateRenderer interface |
+| `src/core/skill.ts` | Skill + SkillRegistry interface |
+| `src/core/model-config.ts` | Tier-based model resolution |
+| `src/skills/` | Operating skill templates (observe, orient, decide, evaluate) |
 
-### GitHub domain — `packages/domain-github/` (@roci/domain-github)
+### GitHub domain -- `packages/domain-github/` (@roci/domain-github)
 
 | File | Role |
 |------|------|
-| `packages/domain-github/src/phases.ts` | Phase registry: startup, active (runPlannedAction), break (runBreak), reflection |
-| `packages/domain-github/src/interrupts.ts` | Declarative interrupt rules (CI failing, review requested, untriaged issues, stale PRs) |
-| `packages/domain-github/src/github-client.ts` | GraphQL polling, single query per repo, token validation |
-| `packages/domain-github/src/brain-system-prompt.md` | Brain (Opus) system prompt |
-| `packages/domain-github/src/body-system-prompt.md` | Body (Sonnet) system prompt |
-| `packages/domain-github/src/prompt-helpers.ts` | State summary renderer for brain prompt |
+| `src/phases.ts` | Phase registry: startup, active (runChannelSession), break, reflection |
+| `src/index.ts` | Domain bundle assembly and file-based skill loading |
+| `src/types.ts` | All domain types: state, events, situations, config |
+| `src/github-client.ts` | GraphQL polling client (1 query per repo per poll) |
+| `src/prompt-builder.ts` | Prompt generation: system, task, channel event |
+| `src/interrupts.ts` | Declarative interrupt rules (CI, review, triage, stale PRs) |
+| `src/situation-classifier.ts` | Per-repo classification and aggregate rollup |
+| `src/renderer.ts` | State snapshots, rich diffs, status bar |
+| `src/session-system-prompt.md` | System prompt for the persistent session |
+| `src/procedures/` | Procedure templates (select, triage, feature, review) |
 
-### SpaceMolt domain — `packages/domain-spacemolt/` (@roci/domain-spacemolt)
-
-| File | Role |
-|------|------|
-| `packages/domain-spacemolt/src/config.ts` | DomainConfig factory (mounts, image, setup) |
-| `packages/domain-spacemolt/src/index.ts` | Domain bundle (all 6 service layers) |
-| `packages/domain-spacemolt/src/phases.ts` | Phase registry: startup, active (runStateMachine), social, reflection |
-| `packages/domain-spacemolt/src/interrupts.ts` | Declarative interrupt rules via createInterruptRegistry() |
-| `packages/domain-spacemolt/src/situation.ts` | SituationClassifier -- summarize() with structured SituationSummary |
-| `packages/domain-spacemolt/src/renderer.ts` | State snapshots, diffs, console bar |
-| `packages/domain-spacemolt/src/prompt-builder.ts` | All LLM prompt assembly |
-| `packages/domain-spacemolt/src/event-processor.ts` | Maps WS GameEvents to EventResults |
-| `packages/domain-spacemolt/src/game-socket-impl.ts` | WebSocket connection, reconnection, event queue |
-| `docs/DOMAIN_GUIDE.md` | Guide for building new domains |
-
-### CLI and orchestrator — `apps/roci/` (roci)
+### SpaceMolt domain -- `packages/domain-spacemolt/` (@roci/domain-spacemolt)
 
 | File | Role |
 |------|------|
-| `apps/roci/src/cli.ts` | CLI commands and service wiring |
-| `apps/roci/src/orchestrator.ts` | Container lifecycle, fork character fibers |
-| `apps/roci/src/domains/registry.ts` | Domain registry |
+| `src/phases.ts` | Phase registry: startup, active (runChannelSession), social, reflection |
+| `src/index.ts` | Domain bundle assembly and stub skill registry |
+| `src/types.ts` | All domain types: game state, player, ship, system, POI, situation |
+| `src/game-socket-impl.ts` | WebSocket connection, login flow, event dispatching |
+| `src/event-processor.ts` | Maps WebSocket events to state operations |
+| `src/situation-classifier.ts` | Situation classification (combat, transit, docked, in-space) |
+| `src/interrupts.ts` | 9 interrupt rules across 4 priority levels |
+| `src/prompt-builder.ts` | Template-based prompt generation |
+| `src/session-system-prompt.md` | System prompt for the persistent session |
+| `src/dinner.ts` | Social/dinner phase implementation |
 
-### Services and logging — `packages/core/` (@roci/core)
+### CLI and orchestrator -- `apps/roci/` (roci)
 
 | File | Role |
 |------|------|
-| `packages/core/src/services/Claude.ts` | Host-only `invoke` for orchestrator-internal tasks (memory, summarization) |
-| `packages/core/src/services/ProjectRoot.ts` | Project root path service |
-| `packages/core/src/services/CharacterFs.ts` | Character file system operations |
-| `packages/core/src/services/Docker.ts` | Docker container management |
-| `packages/core/src/logging/log-demux.ts` | Raw capture, parse, route to logs + console |
-| `packages/core/src/logging/log-writer.ts` | CharacterLog service (JSONL append) |
-| `packages/core/src/logging/console-renderer.ts` | Type-tagged + narrative console output |
+| `src/cli.ts` | CLI commands and service wiring |
+| `src/orchestrator.ts` | Container lifecycle, fork character fibers |
+| `src/domains/registry.ts` | Domain registry |
+
+### Services and logging -- `packages/core/` (@roci/core)
+
+| File | Role |
+|------|------|
+| `src/services/Claude.ts` | Host-only `invoke` for orchestrator-internal tasks (memory, summarization) |
+| `src/services/ProjectRoot.ts` | Project root path service |
+| `src/services/CharacterFs.ts` | Character file system operations |
+| `src/services/Docker.ts` | Docker container management |
+| `src/services/OAuthToken.ts` | OAuth token resolution for container injection |
+| `src/logging/log-writer.ts` | CharacterLog service (JSONL append) |
+| `src/logging/console-renderer.ts` | Type-tagged + narrative console output |
+| `src/logging/stream-normalizer.ts` | Normalize stream-json output from Claude |
 
 ### Infrastructure
 
