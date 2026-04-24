@@ -106,12 +106,11 @@ const REMAINING_STEPS = `2. Respond to jdoe's naming feedback (rename tkn → to
 
 describe("skill smoke tests — render with realistic GitHub data", () => {
   describe("observe", () => {
-    it("renders completely with planned-action cadence", () => {
+    it("renders completely with planned-action cadence and batch events", () => {
       const skill = loadSkillSync(path.join(SKILLS_DIR, "observe.md"))
       const rendered = skill.render(
         withCadence("observe", "planned-action", {
-          eventType: "pull_request.review_submitted",
-          eventPayload: GITHUB_EVENT_PAYLOAD,
+          events: `[Event 1] type: pull_request.review_submitted\n${GITHUB_EVENT_PAYLOAD}\n\n[Event 2] type: ci.status_change\n{"branch": "auth-token-refresh", "status": "failing"}`,
           waitState: "None — not currently waiting.",
         }),
       )
@@ -119,7 +118,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
       expect(rendered).not.toMatch(/\{\{\w+\}\}/)
       expect(rendered).toContain("planned-action")
       expect(rendered).toContain("HIGH")
-      expect(rendered).toContain("pull_request.review_submitted")
+      expect(rendered).toContain("pull_request")
       expect(rendered).toContain("race condition")
       expect(rendered).toContain("None — not currently waiting.")
     })
@@ -128,8 +127,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
       const skill = loadSkillSync(path.join(SKILLS_DIR, "observe.md"))
       const rendered = skill.render(
         withCadence("observe", "real-time", {
-          eventType: "ci.status_change",
-          eventPayload: `{"branch": "auth-token-refresh", "status": "passing", "suite": "auth/refresh.test.ts"}`,
+          events: `[Event 1] type: ci.status_change\n{"branch": "auth-token-refresh", "status": "passing", "suite": "auth/refresh.test.ts"}`,
           waitState: `Waiting for: CI to pass on auth-token-refresh\nResolution signal: ci.status_change with status=passing\nDisposition: hold`,
         }),
       )

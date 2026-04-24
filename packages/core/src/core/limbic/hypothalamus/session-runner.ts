@@ -7,7 +7,7 @@
  * events via `pushEvent`, be awaited via `join`, or be terminated via `interrupt`.
  */
 
-import { Effect, Stream, Chunk, Fiber, Scope } from "effect"
+import { Effect, Stream, Chunk, Fiber, Scope, Ref } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { SessionConfig, SessionResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
@@ -54,6 +54,8 @@ function parseStreamJson(line: string): Record<string, unknown> | null {
 
 export interface SessionHandle {
   pushEvent(content: string, meta?: Record<string, string>): Effect.Effect<void, unknown, CommandExecutor.CommandExecutor | CharacterLog>
+  /** Drain and clear accumulated tool_use/tool_result events since last drain. */
+  drainEvents(): Effect.Effect<UnifiedEvent[]>
   join: Effect.Effect<SessionResult, never, never>
   interrupt: Effect.Effect<void, never, never>
 }
@@ -166,6 +168,9 @@ export const runSession = (config: SessionConfig): Effect.Effect<
         Effect.catchAll(() => Effect.succeed("")),
       ).pipe(Effect.fork)
 
+      // Accumulate tool_use/tool_result events for drainEvents()
+      const toolEventBuffer = yield* Ref.make<UnifiedEvent[]>([])
+
       // Stream stdout: log raw lines, parse stream-json, emit unified events
       const streamFiber = yield* process.stdout.pipe(
         Stream.decodeText(),
@@ -179,6 +184,9 @@ export const runSession = (config: SessionConfig): Effect.Effect<
               const unified = toUnifiedEvents(internal, config.char.name, "session", "claude")
               for (const event of unified) {
                 yield* log.emit(config.char, event).pipe(Effect.catchAll(() => Effect.void))
+                if (event.kind === "tool_use" || event.kind === "tool_result") {
+                  yield* Ref.update(toolEventBuffer, (arr) => [...arr, event])
+                }
               }
             } else if (line.trim()) {
               yield* log.emit(config.char, {
@@ -370,6 +378,8 @@ export const runSession = (config: SessionConfig): Effect.Effect<
               yield* logToConsole(config.char.name, "session", `pushEvent: curl exited with code ${curlExit}`)
             }
           }),
+
+        drainEvents: () => Ref.getAndSet(toolEventBuffer, []),
 
         join: Fiber.join(sessionFiber),
 

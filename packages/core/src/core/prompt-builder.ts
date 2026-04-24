@@ -1,20 +1,9 @@
 import { Context } from "effect"
 import type { DomainState, DomainSituation } from "./domain-types.js"
 import type { SituationSummary } from "./limbic/thalamus/situation-classifier.js"
-import type { Alert, BrainMode, Plan, PlanStep, StepCompletionResult, StepTiming } from "./types.js"
+import type { Alert, BrainMode, PlanStep, StepTiming } from "./types.js"
 
-/** Context for building a planned-action brain prompt. */
-export interface PlannedActionBrainPromptContext {
-  summary: SituationSummary
-  diary: string
-  background: string
-  values: string
-  cycleNumber: number
-  maxCycles: number
-  softAlerts: Alert[]
-  stateDiff?: string
-}
-
+/** @deprecated Remnant of old brain/body architecture — still used by domain-github prompt helpers. */
 export interface PlanPromptContext {
   state: DomainState
   summary: SituationSummary
@@ -31,29 +20,7 @@ export interface PlanPromptContext {
   procedureTargets?: string[]
 }
 
-export interface InterruptPromptContext {
-  state: DomainState
-  summary: SituationSummary
-  alerts: Alert[]
-  currentPlan: Plan | null
-  background: string
-  mode: BrainMode
-  procedureTargets?: string[]
-}
-
-export interface EvaluatePromptContext {
-  step: PlanStep
-  subagentReport: string
-  state: DomainState
-  stateBefore: Record<string, unknown> | null
-  stateDiff: string
-  conditionCheck: StepCompletionResult
-  ticksConsumed: number
-  ticksBudgeted: number
-  tickIntervalSec: number
-  mode: BrainMode
-}
-
+/** @deprecated Remnant of old brain/body architecture — still used by domain-github prompt helpers. */
 export interface SubagentPromptContext {
   step: PlanStep
   state: DomainState
@@ -89,10 +56,10 @@ export interface ChannelEventContext {
 export interface PromptBuilder {
   /** Domain-specific system prompt for the subagent container, varying by mode and task. */
   systemPrompt(mode: BrainMode, task: string): string
-  /** Build the initial task prompt injected at session start via channel event. */
-  taskPrompt(ctx: TaskPromptContext): string
-  /** Build a tick/state-update event payload for the channel. */
-  channelEvent(ctx: ChannelEventContext): string
+  /** @deprecated OODA orient+decide now produces task content. Kept for fallback. */
+  taskPrompt?(ctx: TaskPromptContext): string
+  /** @deprecated OODA orient produces channel event content. Kept for fallback. */
+  channelEvent?(ctx: ChannelEventContext): string
 }
 
 /**

@@ -17,6 +17,10 @@ export type Role =
   | "timeoutSummary"
   | "scaffoldIdentity"
   | "scaffoldSummary"
+  | "oodaObserve"
+  | "oodaOrient"
+  | "oodaDecide"
+  | "oodaEvaluate"
 
 export interface ModelConfig {
   tiers: Record<Tier, AnyModel>

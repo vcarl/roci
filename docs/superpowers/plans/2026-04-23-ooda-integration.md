@@ -33,6 +33,22 @@ Additionally, `dream.execute()` only runs during the reflection phase. We want i
 - Event accumulation buffer — events classified as "accumulate" by observe, drained on next orient
 - Dream as a step within the OODA loop (memory consolidation phase)
 
+## Key Design Decision: Evaluate Inputs from Observable State
+
+The session is a black box — the orchestrator cannot see the session's internal reasoning or ask it to self-report. Evaluate's inputs come entirely from what the orchestrator can observe externally:
+
+**`{{stateDiff}}`** — `StateRenderer.stateDiff()` comparing domain state snapshots from the step's start tick to the current tick. This is the primary evidence: what changed in the world (new commits, PR status changes, CI results, cargo sold, etc.).
+
+**`{{executionReport}}`** — Built from two sources the orchestrator already captures:
+1. **Tool call events** from stream-json stdout. The `streamFiber` in session-runner.ts already parses every `tool_use` and `tool_result` into `UnifiedEvent`s and routes them to the log. To make them available to evaluate, accumulate them into a shared buffer (via `Ref<UnifiedEvent[]>`) that the tick loop drains per-tick. Format as a chronological summary: "Bash: git commit ..., Edit: src/auth/refresh.ts, Bash: npm test — exit 0".
+2. **Subagent activity** from activity.log. The `activityFiber` already tails this file every 2 seconds and emits `subagent_start`/`subagent_stop` events. Include these in the report.
+
+**`{{conditionCheck}}`** — `SkillRegistry.isStepComplete()`, which is deterministic. Most implementations fall through to "no deterministic check" (advisory), which is fine — evaluate treats it as one signal among several.
+
+This approach is reliable because it depends on no session cooperation. The session doesn't need to call a `report` tool or format its output specially. The orchestrator observes what happened and lets the evaluate LLM judge it.
+
+**Implementation note for Step 3 (OodaRunner):** The `runSession` stream fiber needs a small change — in addition to logging events, it should append tool_use/tool_result events to a `Ref` that the tick loop can drain. This is a ~10-line change to session-runner.ts (add a `Ref.make<UnifiedEvent[]>([])` to the session handle, push relevant events in the stream fiber, expose a `drainEvents()` method on SessionHandle).
+
 ## Key Design Decision: Batched Observe
 
 The observe skill template is designed for a single event, but running a separate LLM call per drained event per tick is too expensive and slow. Instead, batch all events drained in a tick into a single observe invocation:
@@ -234,6 +250,8 @@ function extractJson(text: string): string {
 
 **Error handling:** If JSON parsing fails, log the raw output and fall back to a safe default (discard for observe, continue for decide). Do not crash the tick loop.
 
+**SessionHandle change:** Add a `drainEvents()` method to `SessionHandle` that returns and clears accumulated `tool_use`/`tool_result` events. Implementation: add a `Ref<UnifiedEvent[]>` to session-runner.ts, push relevant events in the `streamFiber`'s `mapEffect`, and expose a drain function on the handle. This is ~10 lines of change and provides the raw material for evaluate's `{{executionReport}}`.
+
 ### Step 4: Add configuration to ChannelSessionConfig
 
 **File:** `packages/core/src/core/orchestrator/channel-session.ts`
@@ -290,7 +308,11 @@ c) Orient trigger (step 4): runs when escalate flag is set OR `tickNumber - ooda
 
 d) Decide runs immediately after orient. Receives orient's output, SkillRegistry.taskList() as availableSkills, and the current plan state. If decide returns "plan", store the plan in oodaState and push the first step's instructions to the session. If "continue", push a status update. If "wait", enter wait state. If "terminate", end the session.
 
-e) Evaluate trigger (step 5): when `oodaState.currentPlan` is active and the current step's tick budget is exhausted (`tickNumber - oodaState.stepStartTick >= step.timeoutTicks`). Uses SkillRegistry.isStepComplete() for the conditionCheck input. Uses StateRenderer.stateDiff() for the stateDiff input. After evaluate returns, check for `result.diaryEntry` — if present, persist it by reading the current diary with `charFs.readDiary(config.char)`, appending the new entry, and writing back with `charFs.writeDiary(config.char, updatedDiary)`. Note: `CharacterFs` exposes `readDiary`/`writeDiary` (full overwrite) but no append method, so the read-append-write pattern is necessary.
+e) Evaluate trigger (step 5): when `oodaState.currentPlan` is active and the current step's tick budget is exhausted (`tickNumber - oodaState.stepStartTick >= step.timeoutTicks`). Inputs:
+   - `{{stateDiff}}` — `renderer.stateDiff(stepStartSnapshot, currentSnapshot)`, comparing state at step start vs now
+   - `{{executionReport}}` — formatted from tool_use/tool_result events drained from `sessionHandle.drainEvents()` (see "Evaluate Inputs" design decision above)
+   - `{{conditionCheck}}` — `SkillRegistry.isStepComplete()` (deterministic, advisory)
+   - After evaluate returns, check for `result.diaryEntry` — if present, persist via read-append-write with `charFs.readDiary`/`charFs.writeDiary` (no append method exists)
 
 f) Session spawn (step 7 in current code): adapt to use orient output for the initial task content instead of PromptBuilder.taskPrompt(). On first tick, force an orient+decide cycle regardless of observe disposition.
 

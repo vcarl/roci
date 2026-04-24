@@ -202,6 +202,9 @@ const activePhase = {
         addDirs: context.containerAddDirs,
         events: events as Queue.Queue<unknown>,
         initialState,
+        cadence: "real-time",
+        dream: { cycleInterval: 2, maxIntervalTicks: 80 },
+        orientInterval: 3,
       }).pipe(Effect.provide(context.domainBundle!))
 
       if (result._tag === "Interrupted") {

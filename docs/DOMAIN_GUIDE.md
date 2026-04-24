@@ -207,39 +207,31 @@ The factory handles: iterating rules, checking conditions, building `Alert` obje
 
 ### 6. `PromptBuilder` -- Session Prompts
 
-The PromptBuilder has three methods that control what the agent sees:
+The PromptBuilder has one required method and two optional fallback methods:
 
 ```ts
 interface PromptBuilder {
   systemPrompt(mode: BrainMode, task: string): string
-  taskPrompt(ctx: TaskPromptContext): string
-  channelEvent(ctx: ChannelEventContext): string
+  taskPrompt?(ctx: TaskPromptContext): string    // deprecated fallback
+  channelEvent?(ctx: ChannelEventContext): string // deprecated fallback
 }
 ```
 
 **`systemPrompt(mode, task)`** -- The system prompt for the persistent session. Defines the agent's capabilities and constraints. Can vary by mode (e.g., read-only vs. full-access) and task (e.g., diary-only).
 
-**`taskPrompt(ctx)`** -- The initial task injected when a new session starts. Should contain the full situation briefing, agent identity, and work instructions. Context includes:
+**`taskPrompt(ctx)`** *(deprecated)* -- Fallback initial task content used when a session starts before the OODA chain runs. The OODA orient+decide chain now produces task content for the session. Only called if the OODA chain fails.
+
+**`channelEvent(ctx)`** *(deprecated)* -- Fallback state update for ticks where the OODA chain doesn't produce a structured push. Only used for accumulate-disposition ticks as a lightweight state update.
+
+**OODA integration:** The tick loop now uses the OODA skill chain (observe → orient → decide → evaluate) to classify events, assess situations, and produce structured directives. Configure OODA behavior when calling `runChannelSession`:
 
 ```ts
-interface TaskPromptContext {
-  state: DomainState
-  summary: SituationSummary
-  diary: string
-  background: string
-  values: string
-}
-```
-
-**`channelEvent(ctx)`** -- State update events pushed every tick (30 seconds). Should be concise -- the agent receives these as ongoing context during its work. Context includes:
-
-```ts
-interface ChannelEventContext {
-  summary: SituationSummary
-  stateDiff?: string
-  softAlerts?: Alert[]
-  tickNumber: number
-}
+yield* runChannelSession({
+  ...existingConfig,
+  cadence: "planned-action",         // or "real-time" — affects OODA skill thresholds
+  dream: { cycleInterval: 3, maxIntervalTicks: 120 },  // memory consolidation
+  orientInterval: 5,                 // max ticks before forcing orient
+})
 ```
 
 See the GitHub implementation (`packages/domain-github/src/prompt-builder.ts`) for a full reference.
@@ -290,6 +282,9 @@ const activePhase = {
         events: context.connection.events as Queue.Queue<unknown>,
         initialState: context.connection.initialState,
         sessionModel: "sonnet",
+        cadence: "planned-action",  // or "real-time"
+        dream: { cycleInterval: 3, maxIntervalTicks: 120 },
+        orientInterval: 5,
       }).pipe(Effect.provide(context.domainBundle))
 
       const conn = { ...context.connection, initialState: result.finalState }
@@ -301,9 +296,9 @@ const activePhase = {
 }
 ```
 
-The key pattern: **`Effect.provide(context.domainBundle)`** injects your 6 service layers into the engine.
+The key pattern: **`Effect.provide(context.domainBundle)`** injects your 6 service layers (EventProcessor, SituationClassifier, StateRenderer, InterruptRegistry, PromptBuilder, SkillRegistry) into the engine.
 
-Domains typically add `break` (polls for critical interrupts during rest) and `reflection` (dream compression) phases alongside `active`. The core provides `runBreak` and `runReflection` as reusable building blocks.
+Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is now integrated into the OODA loop and triggers automatically based on `dream` config.
 
 ### 9. `DomainConfig` -- Assemble Everything
 
@@ -418,7 +413,7 @@ New domain author checklist:
 - [ ] `SituationClassifier` -- `summarize()` returns `SituationSummary`
 - [ ] `StateRenderer` -- `snapshot()`, `richSnapshot()`, `stateDiff()`, `logStateBar()`
 - [ ] `InterruptRegistry` -- rules array + `createInterruptRegistry()` factory
-- [ ] `PromptBuilder` -- `systemPrompt()`, `taskPrompt()`, `channelEvent()`
+- [ ] `PromptBuilder` -- `systemPrompt()` (required); `taskPrompt()`, `channelEvent()` (optional fallbacks)
 - [ ] `SkillRegistry` -- stub or real implementation
 - [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runChannelSession()` with `Effect.provide(context.domainBundle)`
 - [ ] `DomainConfig` -- bundle, phaseRegistry, containerMounts, imageName

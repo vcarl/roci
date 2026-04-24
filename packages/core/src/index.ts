@@ -27,9 +27,6 @@ export { PhaseRegistryTag } from "./core/phase.js";
 export { runPhases } from "./core/phase-runner.js";
 export type {
 	ChannelEventContext,
-	EvaluatePromptContext,
-	InterruptPromptContext,
-	PlannedActionBrainPromptContext,
 	PlanPromptContext,
 	PromptBuilder,
 	SubagentPromptContext,

@@ -246,6 +246,9 @@ const activePhase = {
         addDirs: context.containerAddDirs,
         events: conn.events as Queue.Queue<unknown>,
         initialState: conn.initialState as unknown,
+        cadence: "planned-action",
+        dream: { cycleInterval: 3, maxIntervalTicks: 120 },
+        orientInterval: 5,
       }).pipe(Effect.provide(context.domainBundle!))
 
       const updatedConnection = { ...conn, initialState: result.finalState }

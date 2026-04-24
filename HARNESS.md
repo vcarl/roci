@@ -40,7 +40,7 @@ The primary execution engine is `runChannelSession()`. It spawns a persistent `c
    - Evaluates interrupt rules via `InterruptRegistry`
    - If critical interrupts fire: kills the session, returns `Interrupted`
    - If session completed naturally: returns `Completed`
-   - Otherwise: computes state diff, builds a channel event payload via `PromptBuilder.channelEvent()`, and pushes it to the running session
+   - Otherwise: runs the OODA skill chain (observe → orient → decide → evaluate) to classify events, assess the situation, produce plans, and push structured directives to the session. Falls back to `PromptBuilder.channelEvent()` if the OODA chain fails.
 
 4. **Termination** -- The session ends when:
    - The agent completes its work and exits naturally
@@ -104,7 +104,7 @@ All domain knowledge is injected via 6 Effect service layers, provided as a `Dom
 | **SituationClassifier** | `SituationClassifierTag` | `summarize(state)` -- structured `SituationSummary` with headline, sections, metrics |
 | **InterruptRegistry** | `InterruptRegistryTag` | Declarative interrupt rules with priority, condition, message, `suppressWhenTaskIs` |
 | **StateRenderer** | `StateRendererTag` | Snapshots, rich snapshots, diffs, console state bar |
-| **PromptBuilder** | `PromptBuilderTag` | Assembles session prompts: `systemPrompt`, `taskPrompt`, `channelEvent` |
+| **PromptBuilder** | `PromptBuilderTag` | Assembles session prompts: `systemPrompt`; `taskPrompt` and `channelEvent` are deprecated fallbacks (OODA chain now produces session content) |
 | **SkillRegistry** | `SkillRegistryTag` | Domain skill catalog and deterministic step-completion checks |
 
 ### Phase System
@@ -281,7 +281,8 @@ All events are printed type-tagged with timestamp and character name:
 | `src/core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
 | `src/core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
 | `src/core/domain-bundle.ts` | DomainBundle (6 service layers) + DomainConfig |
-| `src/core/prompt-builder.ts` | PromptBuilder interface (systemPrompt, taskPrompt, channelEvent) |
+| `src/core/prompt-builder.ts` | PromptBuilder interface (systemPrompt; taskPrompt/channelEvent deprecated) |
+| `src/core/ooda-runner.ts` | OODA skill invocation module (observe, orient, decide, evaluate via runTurn) |
 | `src/core/state-renderer.ts` | StateRenderer interface |
 | `src/core/skill.ts` | Skill + SkillRegistry interface |
 | `src/core/model-config.ts` | Tier-based model resolution |
