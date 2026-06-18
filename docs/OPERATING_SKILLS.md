@@ -278,9 +278,4 @@ const prompt = renderObserve(
 
 ## Integration Status
 
-The skill templates are loadable and renderable but are not yet wired into the channel session tick loop. The current runtime uses `PromptBuilder.channelEvent()` to push state updates to the running session. Integrating operating skills will require building an adapter that:
-
-1. Translates domain events and state into the template variable sets each skill expects
-2. Invokes observe/orient/decide as separate LLM calls during the tick loop
-3. Feeds decide's plan output into the session as structured work directives
-4. Runs evaluate after each step completes
+Operating skills are wired into the channel session tick loop via `ooda-runner.ts`. Each tick runs the full observe-orient-decide-evaluate chain: observe triages incoming events, orient synthesizes the situation, decide chooses an action (plan/continue/wait/terminate), and evaluate judges step outcomes after execution. The legacy `PromptBuilder.taskPrompt()` and `PromptBuilder.channelEvent()` methods remain as deprecated fallbacks but are no longer the primary path.

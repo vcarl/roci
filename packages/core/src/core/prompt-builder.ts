@@ -1,37 +1,7 @@
 import { Context } from "effect"
-import type { DomainState, DomainSituation } from "./domain-types.js"
+import type { DomainState } from "./domain-types.js"
 import type { SituationSummary } from "./limbic/thalamus/situation-classifier.js"
-import type { Alert, BrainMode, PlanStep, StepTiming } from "./types.js"
-
-/** @deprecated Remnant of old brain/body architecture — still used by domain-github prompt helpers. */
-export interface PlanPromptContext {
-  state: DomainState
-  summary: SituationSummary
-  diary: string
-  background: string
-  values: string
-  previousFailure?: string
-  recentChat?: Array<{ channel: string; sender: string; content: string }>
-  stepTimingHistory?: StepTiming[]
-  tickIntervalSec: number
-  additionalContext?: string
-  mode: BrainMode
-  investigationReport?: string
-  procedureTargets?: string[]
-}
-
-/** @deprecated Remnant of old brain/body architecture — still used by domain-github prompt helpers. */
-export interface SubagentPromptContext {
-  step: PlanStep
-  state: DomainState
-  situation: DomainSituation
-  identity: {
-    personality: string
-    values: string
-    tickIntervalSec: number
-  }
-  mode: BrainMode
-}
+import type { Alert, BrainMode } from "./types.js"
 
 /** Context for building the initial task prompt sent to a channel session at startup. */
 export interface TaskPromptContext {

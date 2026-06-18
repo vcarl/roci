@@ -1,3 +1,5 @@
+import type { PlanStep } from "../core/types.js"
+
 /**
  * Disposition — how observe classifies an incoming event.
  */
@@ -49,13 +51,7 @@ export type DecideResult =
   | {
       readonly decision: "plan"
       readonly reasoning: string
-      readonly steps: ReadonlyArray<{
-        readonly task: string
-        readonly goal: string
-        readonly successCondition: string
-        readonly tier: "fast" | "smart"
-        readonly timeoutTicks: number
-      }>
+      readonly steps: ReadonlyArray<PlanStep>
     }
   | { readonly decision: "continue"; readonly reasoning: string }
   | { readonly decision: "wait"; readonly reasoning: string; readonly wait: WaitState }
