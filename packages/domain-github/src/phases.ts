@@ -9,7 +9,7 @@ import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { GitHubClientTag } from "./github-client.js"
 import { runBreak, runReflection } from "@roci/core/core/orchestrator/planned-action.js"
-import { runChannelSession } from "@roci/core/core/orchestrator/channel-session.js"
+import { runCortex } from "@roci/core/cortex/loop.js"
 import type { PlannedActionTempo } from "@roci/core/core/limbic/hypothalamus/tempo.js"
 
 const tempo: PlannedActionTempo = {
@@ -231,15 +231,15 @@ const activePhase = {
         GH_TOKEN: (context.phaseData?.ghToken as string) ?? "",
       }
 
-      yield* logToConsole(context.char.name, "orchestrator", "Starting channel session...")
+      yield* logToConsole(context.char.name, "orchestrator", "Starting cortex loop...")
 
       yield* log.emit(context.char, {
-        ...eventBase(context.char.name, "orchestrator", "channel-session"),
+        ...eventBase(context.char.name, "orchestrator", "cortex-loop"),
         kind: "system",
         message: "loop_start",
       })
 
-      const result = yield* runChannelSession({
+      const result = yield* runCortex({
         char: context.char,
         containerId: context.containerId,
         containerEnv,
@@ -247,7 +247,7 @@ const activePhase = {
         events: conn.events as Queue.Queue<unknown>,
         initialState: conn.initialState as unknown,
         cadence: "planned-action",
-        dream: { cycleInterval: 3, maxIntervalTicks: 120 },
+        workerModels: getModels(context),
         orientInterval: 5,
       }).pipe(Effect.provide(context.domainBundle!))
 

@@ -8,7 +8,7 @@ import { CharacterFs } from "@roci/core/services/CharacterFs.js"
 import { GameSocket } from "./game-socket.js"
 import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
 import { dinner } from "./dinner.js"
-import { runChannelSession } from "@roci/core/core/orchestrator/channel-session.js"
+import { runCortex } from "@roci/core/cortex/loop.js"
 import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
@@ -185,7 +185,7 @@ const activePhase = {
       yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
 
       yield* log.emit(context.char, {
-        ...eventBase(context.char.name, "orchestrator", "channel-session"),
+        ...eventBase(context.char.name, "orchestrator", "cortex-loop"),
         kind: "system",
         message: "loop_start",
       })
@@ -195,7 +195,7 @@ const activePhase = {
         return { _tag: "Shutdown" } as PhaseResult
       }
 
-      const result = yield* runChannelSession({
+      const result = yield* runCortex({
         char: context.char,
         containerId: context.containerId,
         containerEnv: context.containerEnv,
@@ -203,7 +203,7 @@ const activePhase = {
         events: events as Queue.Queue<unknown>,
         initialState,
         cadence: "real-time",
-        dream: { cycleInterval: 2, maxIntervalTicks: 80 },
+        workerModels: getModels(context),
         orientInterval: 3,
       }).pipe(Effect.provide(context.domainBundle!))
 

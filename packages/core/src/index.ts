@@ -70,3 +70,20 @@ export type {
 } from "./skills/index.js"
 export { getCadenceGuidance } from "./skills/index.js"
 export type { Cadence } from "./skills/index.js"
+
+export * from "./model/handles.js"
+export * from "./model/errors.js"
+export * from "./model/client.js"
+
+// Cybernetics — frontier-model worker delegation
+export type { DelegationConfig, DelegationResult } from "./cybernetics/types.js"
+export { toDelegationResult } from "./cybernetics/result.js"
+export { Cybernetics, CyberneticsLive, CyberneticsTest } from "./cybernetics/delegate.js"
+
+// Cortex — local-model escalation ladder
+export { runCortex } from "./cortex/loop.js"
+export type { CortexLoopConfig, CortexResult } from "./cortex/loop.js"
+export { freshCortexState } from "./cortex/state.js"
+export type { CortexState } from "./cortex/state.js"
+export { runHindbrain, runForebrain, runConsciousDecide, runConsciousEvaluate } from "./cortex/tiers.js"
+export type { CortexRunnerConfig } from "./cortex/tiers.js"
