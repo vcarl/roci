@@ -1,4 +1,8 @@
+import { Effect } from "effect"
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
+import * as path from "node:path"
 import type { ModelHandle } from "../model/handles.js"
+import { Docker } from "../services/Docker.js"
 
 /** OpenCode provider id for the local host model server. */
 export const CONSCIOUS_PROVIDER_ID = "local"
@@ -49,4 +53,38 @@ export function buildCharacterAgentMarkdown(opts: {
 }): string {
   const model = opts.modelLabel ?? CONSCIOUS_MODEL_LABEL
   return `---\nmode: primary\nmodel: ${model}\n---\n\n${opts.systemPrompt}\n`
+}
+
+/**
+ * Write the global OpenCode provider config inside the container. Base64-pipes the
+ * JSON to sidestep shell quoting. Idempotent — safe to run before each session.
+ */
+export function provisionConsciousProvider(containerId: string, handle: ModelHandle) {
+  const json = buildProviderConfigJson(handle)
+  const b64 = Buffer.from(json).toString("base64")
+  const dir = path.posix.dirname(GLOBAL_OPENCODE_CONFIG_PATH)
+  const script = `mkdir -p ${dir} && echo ${b64} | base64 -d > ${GLOBAL_OPENCODE_CONFIG_PATH}`
+  return Effect.gen(function* () {
+    const docker = yield* Docker
+    yield* docker.exec(containerId, ["bash", "-lc", script])
+  })
+}
+
+/**
+ * Write the per-character conscious agent file into the bind-mounted players dir
+ * (host-side), then chmod it read-only so a confused tool turn cannot corrupt it.
+ * Re-writable on re-run: restores 0o644 before overwriting if the file already exists.
+ */
+export function writeCharacterAgentFile(opts: {
+  playersDir: string
+  playerName: string
+  systemPrompt: string
+  modelLabel?: string
+}): void {
+  const dir = path.join(opts.playersDir, opts.playerName, ".opencode", "agent")
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `${CONSCIOUS_AGENT_NAME}.md`)
+  if (existsSync(file)) chmodSync(file, 0o644) // restore write to allow re-write
+  writeFileSync(file, buildCharacterAgentMarkdown({ systemPrompt: opts.systemPrompt, modelLabel: opts.modelLabel }))
+  chmodSync(file, 0o444)
 }

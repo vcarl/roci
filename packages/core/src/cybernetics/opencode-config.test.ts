@@ -1,11 +1,19 @@
 import { describe, it, expect } from "vitest"
+import { Effect, Layer } from "effect"
+import { mkdtempSync, readFileSync, statSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import {
   hostInternalBaseUrl,
   buildProviderConfigJson,
   buildCharacterAgentMarkdown,
   CONSCIOUS_MODEL_LABEL,
+  GLOBAL_OPENCODE_CONFIG_PATH,
+  provisionConsciousProvider,
+  writeCharacterAgentFile,
 } from "./opencode-config.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
+import { Docker } from "../services/Docker.js"
 
 describe("hostInternalBaseUrl", () => {
   it("rewrites host loopback to host.docker.internal, preserving port and path", () => {
@@ -40,5 +48,47 @@ describe("buildCharacterAgentMarkdown", () => {
     expect(md).toContain("mode: primary")
     expect(md).toContain(`model: ${CONSCIOUS_MODEL_LABEL}`)
     expect(md.trimEnd().endsWith("You are Ada.")).toBe(true)
+  })
+})
+
+describe("provisionConsciousProvider", () => {
+  it("execs a command that writes the provider config to the global path", async () => {
+    const calls: string[][] = []
+    const StubDocker = Layer.succeed(
+      Docker,
+      Docker.of({
+        exec: (_id: string, command: string[]) => {
+          calls.push(command)
+          return Effect.succeed("")
+        },
+      } as unknown as typeof Docker.Service),
+    )
+
+    await Effect.runPromise(
+      Effect.provide(provisionConsciousProvider("cabc", DEFAULT_CORTEX_MODELS.conscious), StubDocker),
+    )
+
+    const joined = calls.flat().join(" ")
+    expect(joined).toContain(GLOBAL_OPENCODE_CONFIG_PATH)
+    // base64 of the generated config is present in the exec command
+    const b64 = Buffer.from(buildProviderConfigJson(DEFAULT_CORTEX_MODELS.conscious)).toString("base64")
+    expect(joined).toContain(b64)
+  })
+})
+
+describe("writeCharacterAgentFile", () => {
+  it("writes the agent markdown read-only into the character's .opencode dir", () => {
+    const playersDir = mkdtempSync(path.join(tmpdir(), "roci-players-"))
+    writeCharacterAgentFile({ playersDir, playerName: "ada", systemPrompt: "You are Ada." })
+    const file = path.join(playersDir, "ada", ".opencode", "agent", "conscious.md")
+    expect(readFileSync(file, "utf8")).toContain("You are Ada.")
+    expect(statSync(file).mode & 0o222).toBe(0) // no write bits
+  })
+  it("is re-runnable even though the previous file is read-only", () => {
+    const playersDir = mkdtempSync(path.join(tmpdir(), "roci-players-"))
+    writeCharacterAgentFile({ playersDir, playerName: "ada", systemPrompt: "v1" })
+    writeCharacterAgentFile({ playersDir, playerName: "ada", systemPrompt: "v2" })
+    const file = path.join(playersDir, "ada", ".opencode", "agent", "conscious.md")
+    expect(readFileSync(file, "utf8")).toContain("v2")
   })
 })
