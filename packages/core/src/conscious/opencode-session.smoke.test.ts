@@ -30,7 +30,8 @@ describe.skipIf(!containerId)("OpenCode conscious session (real container)", () 
     const oauthTokenLayer = OAuthTokenLive.pipe(
       Layer.provide(Layer.mergeAll(projectRootLayer, characterLogLayer)),
     )
-    const deps = Layer.mergeAll(NodeContext.layer, DockerLive, characterLogLayer, oauthTokenLayer)
+    const dockerLayer = DockerLive.pipe(Layer.provide(NodeContext.layer))
+    const deps = Layer.mergeAll(NodeContext.layer, dockerLayer, characterLogLayer, oauthTokenLayer)
 
     // Provision provider (global) + agent (project-local under <cwd>/players/<name>).
     writeCharacterAgentFile({

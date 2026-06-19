@@ -128,4 +128,14 @@ describe("buildOpenCodeSessionCommand", () => {
     const cmd = buildOpenCodeSessionCommand({ ...cfg, agentName: undefined })
     expect(cmd).toContain("--agent conscious")
   })
+
+  it("shell-special-char prompt survives shellEscape inside buildOpenCodeSessionCommand", () => {
+    const tricky = `say "hi" and $HOME and \`date\``
+    const cmd = buildOpenCodeSessionCommand({ ...cfg, prompt: tricky })
+    // The prompt appears inside $'...' ANSI-C quoting
+    expect(cmd).toMatch(/\$'.*say "hi".*'/)
+    // The $'...' wrapper means dollar sign and backtick are literal (no shell expansion)
+    // Confirm the exact escaped form is present in the command string
+    expect(cmd).toContain(`$'say "hi" and $HOME and \`date\`'`)
+  })
 })

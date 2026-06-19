@@ -5,7 +5,7 @@ import {
   normalizeOpenCode,
   type InternalEvent,
 } from "../../../logging/stream-normalizer.js"
-import { CONSCIOUS_AGENT_NAME } from "../../../cybernetics/opencode-config.js"
+import { CONSCIOUS_AGENT_NAME } from "../../../conscious/opencode-config.js"
 
 /** Shell-safe literal using $'...' ANSI-C quoting. */
 export function shellEscape(s: string): string {

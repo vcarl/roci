@@ -91,4 +91,24 @@ describe("writeCharacterAgentFile", () => {
     const file = path.join(playersDir, "ada", ".opencode", "agent", "conscious.md")
     expect(readFileSync(file, "utf8")).toContain("v2")
   })
+
+  it("second write overwrites with new content and restores 0o444", () => {
+    const playersDir = mkdtempSync(path.join(tmpdir(), "roci-players-"))
+    writeCharacterAgentFile({ playersDir, playerName: "ada", systemPrompt: "v1" })
+    writeCharacterAgentFile({ playersDir, playerName: "ada", systemPrompt: "v2" })
+    const file = path.join(playersDir, "ada", ".opencode", "agent", "conscious.md")
+    expect(readFileSync(file, "utf8")).toContain("v2")
+    expect(readFileSync(file, "utf8")).not.toContain("v1")
+    expect(statSync(file).mode & 0o222).toBe(0) // read-only after second write
+  })
+
+  it("shell-special-char system prompt round-trips through buildCharacterAgentMarkdown and writeCharacterAgentFile", () => {
+    const special = `He said "hello $USER" and \`echo hi\` was tried`
+    const md = buildCharacterAgentMarkdown({ systemPrompt: special })
+    expect(md).toContain(special)
+    const playersDir = mkdtempSync(path.join(tmpdir(), "roci-players-"))
+    writeCharacterAgentFile({ playersDir, playerName: "ada", systemPrompt: special })
+    const file = path.join(playersDir, "ada", ".opencode", "agent", "conscious.md")
+    expect(readFileSync(file, "utf8")).toContain(special)
+  })
 })
