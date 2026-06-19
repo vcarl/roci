@@ -357,6 +357,26 @@ pnpm exec vitest run \
 
 `DEFAULT_STEER_CADENCE_TICKS` (in `cortex/loop.ts`) is defined now but is consumed only in Phase 4. The following are deferred to Phase 4: cadence-throttled production of directives, hindbrain/forebrain running during a session, escalation, completion-marker detection, and an end-to-end steered/real-container smoke test.
 
+## Step 7: Conscious-Session Transport (Phase 4a)
+
+Exercises the resumable OpenCode conscious session against the local conscious model.
+
+**Prereqs:** a host `llama-server` (or MLX server) on the conscious port (8083), and a running roci container (see "Start a Domain Container").
+
+```bash
+# Provider config is provisioned into the container by the test; the agent file
+# is written under ./players/<name>/.opencode/agent/conscious.md (read-only).
+ROCI_OPENCODE_SESSION_CONTAINER=$(docker ps --filter label=roci-crew=true -q | head -1) \
+ROCI_OPENCODE_SESSION_PLAYER=test-pilot \
+  pnpm --filter @roci/core test opencode-session.smoke
+```
+
+**Expected:** the test opens a session (turn 1), resumes it by id (turn 2), and turn 2's output contains the turn-1 codeword — proving session continuity over re-invoke-per-turn. Without the env var the test skips.
+
+**Notes:**
+- A new session's first turn fires an extra internal "title" model call (≈2 model calls on turn 1, 1 per turn after).
+- On non-Docker-Desktop Linux the container needs `--add-host=host.docker.internal:host-gateway` to reach the host model server.
+
 ## Debugging & Observability
 
 ### Per-Tier Latency
