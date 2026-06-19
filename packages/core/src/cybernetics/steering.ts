@@ -1,5 +1,6 @@
-import { Effect, Queue } from "effect"
+import { Effect, Queue, Stream } from "effect"
 import type { Directive } from "./types.js"
+import { taskLine, steerLine, endLine } from "../core/limbic/hypothalamus/sdk-payload.js"
 
 /**
  * Create the host-side steering queue: coalescing, capacity 1. A newer directive
@@ -11,3 +12,21 @@ import type { Directive } from "./types.js"
  */
 export const makeSteeringQueue = (): Effect.Effect<Queue.Queue<Directive>> =>
   Queue.sliding<Directive>(1)
+
+/**
+ * Build the dynamic stdin for a steerable SDK session as a byte stream of NDJSON
+ * lines: the initial `task`, then one `steer` line per directive pulled from the
+ * (coalescing) queue, then the terminal `end` line once the queue is shut down.
+ * Shutting the queue down ends the session (the runner's generator returns →
+ * query() completes). Run-to-completion is the degenerate case: shut the queue
+ * down with nothing offered → `task` then `end`.
+ */
+export const buildSteeredStdinStream = (
+  task: string,
+  steering: Queue.Queue<Directive>,
+): Stream.Stream<Uint8Array> =>
+  Stream.make(`${taskLine(task)}\n`).pipe(
+    Stream.concat(Stream.fromQueue(steering).pipe(Stream.map((d) => `${steerLine(d.text)}\n`))),
+    Stream.concat(Stream.make(`${endLine()}\n`)),
+    Stream.encodeText,
+  )
