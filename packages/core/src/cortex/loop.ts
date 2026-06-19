@@ -55,6 +55,14 @@ const DEFAULT_TICK_MS = 30_000
 const DEFAULT_ORIENT_INTERVAL = 5
 const DEFAULT_WORKER_TIMEOUT_MS = 60 * 60 * 1000
 
+/**
+ * Push a `steer` line to the active session at most once every this-many ticks
+ * (§7) — a knob alongside DEFAULT_ORIENT_INTERVAL. Defined here in Phase 3;
+ * CONSUMED by the cortex loop in Phase 4. Exported so it is not an unused local.
+ * Tunable per cadence profile (spec §11 open question).
+ */
+export const DEFAULT_STEER_CADENCE_TICKS = 3
+
 const AVAILABLE_ACTIONS =
   "Each plan step is delegated to a Claude Code worker that does real work (shell, git, gh, file edits, game CLI). Plan concrete steps; each step.task names the action and step.goal describes the outcome."
 

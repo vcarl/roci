@@ -31,3 +31,13 @@ export interface DelegationResult {
   output: string
   durationMs: number
 }
+
+/**
+ * A single steering directive pushed to a live tool-using session. The text is a
+ * laundered (model-generated) forebrain synthesis — never raw inbound text (threat
+ * model §3). It becomes the *next* user turn after the current turn completes
+ * (soft queue-and-finish; the SDK has no mid-turn interrupt).
+ */
+export interface Directive {
+  text: string
+}
