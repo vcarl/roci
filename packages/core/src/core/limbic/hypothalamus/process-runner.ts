@@ -86,23 +86,16 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
     ),
   )
 
-/**
- * Run a frontier-worker SDK turn run-to-completion. Builds the NDJSON stdin
- * (`task` then `end`), the `docker exec … node sdk-runner.mjs` command (with the
- * SDK env + OAuth token injected via buildExecArgs), and delegates streaming /
- * race / kill to the shared transport with normalizeSdk. Phase 2: no steering.
- */
-export const runSdkTurn = (config: TurnConfig): Effect.Effect<
-  TurnResult,
-  ClaudeError,
-  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
-> =>
+/** Shared SDK transport composition given a prebuilt stdin byte stream. */
+const runSdkWithStdin = (
+  config: TurnConfig,
+  stdin: Stream.Stream<Uint8Array>,
+): Effect.Effect<TurnResult, ClaudeError, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
   Effect.gen(function* () {
     const oauthToken = yield* OAuthToken
     const { token } = yield* oauthToken.getToken
 
     const innerCmd = buildSdkInnerCommand()
-    // Inject the SDK env through buildExecArgs's custom-env loop.
     const execArgs = buildExecArgs({ ...config, env: sdkEnv(config) }, innerCmd, token)
 
     const redactedArgs = execArgs.map((a) =>
@@ -110,7 +103,6 @@ export const runSdkTurn = (config: TurnConfig): Effect.Effect<
     )
     yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
 
-    const stdin = Stream.encodeText(Stream.make(buildSdkStdin(config.prompt)))
     const command = Command.make("docker", ...execArgs).pipe(Command.stdin(stdin))
 
     return yield* runTransport({
@@ -124,3 +116,25 @@ export const runSdkTurn = (config: TurnConfig): Effect.Effect<
   }).pipe(
     Effect.mapError((e) => (e instanceof ClaudeError ? e : new ClaudeError("SDK runner failed", e))),
   )
+
+/**
+ * Run a frontier-worker SDK turn run-to-completion. Builds the static NDJSON stdin
+ * (`task` then `end`) and delegates to the shared transport composition.
+ */
+export const runSdkTurn = (config: TurnConfig): Effect.Effect<
+  TurnResult,
+  ClaudeError,
+  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
+> => runSdkWithStdin(config, Stream.encodeText(Stream.make(buildSdkStdin(config.prompt))))
+
+/**
+ * Run a steerable frontier-worker SDK session. The caller supplies the dynamic
+ * stdin byte stream (typically buildSteeredStdinStream over a steering queue):
+ * directives become `steer` lines mid-session, and shutting the queue down ends
+ * it. Run-to-completion is the degenerate case (a stdin that is just task+end).
+ */
+export const runSdkSession = (
+  config: TurnConfig,
+  stdin: Stream.Stream<Uint8Array>,
+): Effect.Effect<TurnResult, ClaudeError, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
+  runSdkWithStdin(config, stdin)
