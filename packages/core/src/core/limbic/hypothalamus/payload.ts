@@ -5,6 +5,7 @@ import {
   normalizeOpenCode,
   type InternalEvent,
 } from "../../../logging/stream-normalizer.js"
+import { CONSCIOUS_AGENT_NAME } from "../../../cybernetics/opencode-config.js"
 
 /** Shell-safe literal using $'...' ANSI-C quoting. */
 export function shellEscape(s: string): string {
@@ -95,4 +96,25 @@ export function buildInnerArgs(config: TurnConfig, runtime: AgentRuntime): strin
 export function buildInnerCommand(config: TurnConfig, runtime: AgentRuntime): string {
   const binary = runtime === "claude" ? "claude" : "opencode"
   return `${binary} ${buildInnerArgs(config, runtime).join(" ")}`
+}
+
+/**
+ * Inner command for a conscious-tier OpenCode session turn. First turn opens the
+ * session with the project-local agent and model; a resume turn continues an
+ * existing session by id (and must NOT re-pass --agent/-m — the session carries
+ * that context). `-s <id>` only; `--continue` is never used (orchestration-unsafe).
+ */
+export function buildOpenCodeSessionCommand(
+  config: TurnConfig,
+  resume?: { sessionId: string },
+): string {
+  const parts = ["opencode", "run", "--format", "json"]
+  if (resume) {
+    parts.push("-s", resume.sessionId)
+  } else {
+    parts.push("--agent", config.agentName ?? CONSCIOUS_AGENT_NAME)
+    parts.push("-m", String(config.model))
+  }
+  parts.push(shellEscape(config.prompt))
+  return parts.join(" ")
 }

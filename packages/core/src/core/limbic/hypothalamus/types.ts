@@ -26,6 +26,8 @@ export interface TurnConfig {
   noTools?: boolean
   /** Override which runtime binary to use; defaults to auto-detected from model. */
   runtime?: AgentRuntime
+  /** OpenCode agent name to run on a conscious-session first turn (`--agent`). */
+  agentName?: string
 }
 
 /** Result of a completed (or timed-out) turn. */
