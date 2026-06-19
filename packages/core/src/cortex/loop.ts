@@ -14,9 +14,9 @@ import type { TurnResult } from "../core/limbic/hypothalamus/types.js"
 import { ModelClient } from "../model/client.js"
 import type { ModelError } from "../model/errors.js"
 import { DEFAULT_CORTEX_MODELS, resolveHandle, type CortexModelConfig } from "../model/handles.js"
-import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "../core/model-config.js"
+import type { ModelConfig } from "../core/model-config.js"
 import type { Cadence } from "../skills/cadence.js"
-import type { Alert, PlanStep } from "../core/types.js"
+import type { Alert } from "../core/types.js"
 import { Docker } from "../services/Docker.js"
 import {
   runHindbrain,

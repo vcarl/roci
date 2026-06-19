@@ -1,5 +1,4 @@
-import type { DecideResult, WaitState } from "../skills/types.js"
-import type { OrientResult } from "../skills/types.js"
+import type { DecideResult, WaitState, OrientResult } from "../skills/types.js"
 import type { PlanStep } from "../core/types.js"
 
 export interface CortexState {

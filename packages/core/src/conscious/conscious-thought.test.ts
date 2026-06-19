@@ -33,11 +33,10 @@ const cannedResult: TurnResult = { output: "step complete", timedOut: false, dur
 
 describe("ConsciousThought service contract", () => {
   it("turn returns the canned result from ConsciousThoughtTest", async () => {
-    const captured: string[] = []
     const layer = Layer.merge(
       ConsciousThoughtTest(
         () => ({ result: cannedResult, sessionId: "ses_001" }),
-        (directive) => captured.push(directive),
+        (_directive) => {},
       ),
       testDeps,
     )

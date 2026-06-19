@@ -94,6 +94,9 @@ describe("formatSteerDirective", () => {
     expect(d).toContain("Users cannot log in.")
     expect(d).toContain("Fix immediately.")
   })
+  it("includes section headings", () => {
+    expect(formatSteerDirective(orient)).toContain("Impact:")
+  })
 })
 
 describe("formatStepTask (extended with marker)", () => {

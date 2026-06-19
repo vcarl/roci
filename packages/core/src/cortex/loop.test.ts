@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { Effect, Layer, Queue, Ref, TestClock, Fiber } from "effect"
+import { Effect, Layer, Queue } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import { runCortex } from "./loop.js"
 import { ModelClient } from "../model/client.js"
@@ -198,36 +198,6 @@ describe("runCortex (conscious-session executor)", () => {
 
   it("done-marker in turn output triggers early evaluate before tick-budget", async () => {
     // The step has timeoutTicks: 10, but turn 1 returns STEP_DONE_MARKER → evaluate fires immediately.
-    const doneClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            return {
-              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}`,
-              raw: {},
-            }
-          }),
-      }),
-    )
-    const ticksAtEvaluate: number[] = []
     let evaluateCallCount = 0
     // Intercept evaluate by counting how many times the model is called with "judgment"
     const countingEvalClient = Layer.succeed(
