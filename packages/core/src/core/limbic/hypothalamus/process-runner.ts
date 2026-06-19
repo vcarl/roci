@@ -144,6 +144,16 @@ export const firstSessionId = (raw: Record<string, unknown>): string | null =>
   typeof raw.sessionID === "string" ? raw.sessionID : null
 
 /**
+ * Message for the "no session id" failure. The resume path is distinct from the
+ * first-turn path so a lost-session resume is diagnosable (and string-matchable in 4c).
+ */
+export function sessionNotFoundMessage(resume?: { sessionId: string }): string {
+  return resume
+    ? `OpenCode resume failed: session id not available for session ${resume.sessionId}`
+    : "OpenCode session id not captured from run output"
+}
+
+/**
  * Run one conscious-tier OpenCode session turn over the shared docker-exec
  * transport. First turn (no `resume`) opens the session with the project-local
  * agent + local model and captures the new session id; a resume turn continues
@@ -184,7 +194,7 @@ export const runOpenCodeSessionTurn = (
 
     const sessionId = result.sessionId ?? resume?.sessionId
     if (!sessionId) {
-      return yield* Effect.fail(new ClaudeError("OpenCode session id not captured from run output"))
+      return yield* Effect.fail(new ClaudeError(sessionNotFoundMessage(resume)))
     }
     return { result, sessionId }
   }).pipe(

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { Effect, Layer, Stream } from "effect"
 import { Command } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
-import { buildExecArgs, runSdkTurn, runSdkSession, runOpenCodeSessionTurn, firstSessionId } from "./process-runner.js"
+import { buildExecArgs, runSdkTurn, runSdkSession, runOpenCodeSessionTurn, firstSessionId, sessionNotFoundMessage } from "./process-runner.js"
 import { buildInnerCommand } from "./payload.js"
 import type { TurnConfig } from "./types.js"
 import { runTransport } from "./transport.js"
@@ -150,5 +150,17 @@ describe("firstSessionId", () => {
 describe("runOpenCodeSessionTurn", () => {
   it("is exported as a function", () => {
     expect(typeof runOpenCodeSessionTurn).toBe("function")
+  })
+})
+
+describe("sessionNotFoundMessage", () => {
+  it("first-turn message (no resume) matches the original wording", () => {
+    expect(sessionNotFoundMessage()).toBe("OpenCode session id not captured from run output")
+  })
+  it("resume-path message names the resume and the session id, and differs from the first-turn message", () => {
+    const msg = sessionNotFoundMessage({ sessionId: "ses_abc" })
+    expect(msg).toContain("resume")
+    expect(msg).toContain("ses_abc")
+    expect(msg).not.toBe(sessionNotFoundMessage())
   })
 })
