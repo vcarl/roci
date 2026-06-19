@@ -17,10 +17,10 @@ import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
-import { selectRuntime, buildInnerCommand, normalizerFor } from "./payload.js"
+import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand } from "./payload.js"
 import { runTransport } from "./transport.js"
 import { buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
-import { normalizeSdk } from "../../../logging/stream-normalizer.js"
+import { normalizeSdk, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 
 /** Build the `docker exec` args: working dir, env (incl. OAuth token), inner command. */
 export function buildExecArgs(config: TurnConfig, innerCmd: string, token: string): string[] {
@@ -138,3 +138,55 @@ export const runSdkSession = (
   stdin: Stream.Stream<Uint8Array>,
 ): Effect.Effect<TurnResult, ClaudeError, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
   runSdkWithStdin(config, stdin)
+
+/** Capture predicate for the OpenCode sessionID field on a raw stream line. */
+export const firstSessionId = (raw: Record<string, unknown>): string | null =>
+  typeof raw.sessionID === "string" ? raw.sessionID : null
+
+/**
+ * Run one conscious-tier OpenCode session turn over the shared docker-exec
+ * transport. First turn (no `resume`) opens the session with the project-local
+ * agent + local model and captures the new session id; a resume turn continues
+ * `resume.sessionId`. Returns the turn result plus the (captured or carried)
+ * session id. Fails with ClaudeError if a first turn yields no session id.
+ */
+export const runOpenCodeSessionTurn = (
+  config: TurnConfig,
+  resume?: { sessionId: string },
+): Effect.Effect<
+  { result: TurnResult; sessionId: string },
+  ClaudeError,
+  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
+> =>
+  Effect.gen(function* () {
+    const oauthToken = yield* OAuthToken
+    const { token } = yield* oauthToken.getToken
+
+    const innerCmd = buildOpenCodeSessionCommand(config, resume)
+    const execArgs = buildExecArgs(config, innerCmd, token)
+
+    const redactedArgs = execArgs.map((a) =>
+      a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
+    )
+    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
+
+    const command = Command.make("docker", ...execArgs)
+
+    const result = yield* runTransport({
+      command,
+      normalize: normalizeOpenCode,
+      runtimeTag: "opencode",
+      char: config.char,
+      role: config.role,
+      timeoutMs: config.timeoutMs,
+      captureFromRaw: firstSessionId,
+    })
+
+    const sessionId = result.sessionId ?? resume?.sessionId
+    if (!sessionId) {
+      return yield* Effect.fail(new ClaudeError("OpenCode session id not captured from run output"))
+    }
+    return { result, sessionId }
+  }).pipe(
+    Effect.mapError((e) => (e instanceof ClaudeError ? e : new ClaudeError("OpenCode session runner failed", e))),
+  )

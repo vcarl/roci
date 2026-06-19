@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { Effect, Layer, Stream } from "effect"
 import { Command } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
-import { buildExecArgs, runSdkTurn, runSdkSession } from "./process-runner.js"
+import { buildExecArgs, runSdkTurn, runSdkSession, runOpenCodeSessionTurn, firstSessionId } from "./process-runner.js"
 import { buildInnerCommand } from "./payload.js"
 import type { TurnConfig } from "./types.js"
 import { runTransport } from "./transport.js"
@@ -135,4 +135,20 @@ describe("runSdkSession", () => {
     expect(result.timedOut).toBe(false)
     expect(result.output).toBe("do the thing\nnow do the other thing")
   }, 10000)
+})
+
+describe("firstSessionId", () => {
+  it("returns the sessionID string when present", () => {
+    expect(firstSessionId({ type: "step_start", sessionID: "ses_xyz" })).toBe("ses_xyz")
+  })
+  it("returns null when absent or non-string", () => {
+    expect(firstSessionId({ type: "text" })).toBeNull()
+    expect(firstSessionId({ sessionID: 123 })).toBeNull()
+  })
+})
+
+describe("runOpenCodeSessionTurn", () => {
+  it("is exported as a function", () => {
+    expect(typeof runOpenCodeSessionTurn).toBe("function")
+  })
 })
