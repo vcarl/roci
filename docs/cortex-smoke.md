@@ -314,6 +314,49 @@ This smoke uses a plain `docker run` (firewall init bypassed) so the container h
 
 The **steering channel (Phase 3)** and the **cortex loop rework (Phase 4)** are not yet wired. In Phase 2, the `steer` command is parsed by the runner but is never sent by the host — all turns are run-to-completion only (`task` then `end`). The frontier SDK worker is invoked via `runSdkTurn` (host side) for escalation; everyday character work continues to run on the conscious-tier OpenCode agent.
 
+### Steering Channel (Phase 3)
+
+Phase 3 activates the host-side steering path that Phase 2 left dormant: the `steer` wire message is now actually sent. The wire protocol itself is unchanged — `task` and `steer` remain structurally identical (versioned NDJSON, `v:1`; each becomes one user turn), and the runner treats them identically. What changed is host behavior: the host now builds a live stdin stream that interleaves `steer` lines between turns rather than sending a bare `task`/`end` pair.
+
+#### Steering Queue
+
+`makeSteeringQueue()` (in `packages/core/src/cybernetics/steering.ts`) returns a `Queue.sliding(1)` — a coalescing queue with capacity 1. A newer directive supersedes any un-consumed older one before it is delivered. `task` and `end` are control messages emitted directly by the stdin stream; they are never offered onto the queue and are therefore exempt from coalescing.
+
+The `Directive` type is `{ text: string }`. Directives must be model-generated (laundered text) — raw inbound user text is never placed on the queue directly.
+
+#### Dynamic Stdin Stream
+
+`buildSteeredStdinStream(task, queue)` (in `cybernetics/steering.ts`) produces the dynamic stdin for a steerable session:
+
+1. Send the initial `task` line.
+2. For each directive offered to the queue, send one `steer` line.
+3. When the queue is shut down, send `end` — which closes the input stream and causes the runner's async generator to return, ending the session.
+
+`runSdkSession(config, stdin)` (in `packages/core/src/core/limbic/hypothalamus/process-runner.ts`) runs this stream through the shared transport, unchanged from Phase 2.
+
+#### Routing in `delegate`
+
+`delegate(config, steering)` (in `cybernetics/delegate.ts`) routes to the steerable SDK session when a `Queue.Queue<Directive>` is passed as `steering`. Run-to-completion is the degenerate case: if no queue is provided, or if the queue is shut down before any directive is offered, the session receives only `task` then `end` — identical to Phase 2 behavior.
+
+#### Steering is Soft Queue-and-Finish
+
+Steering never preempts a turn in progress. A directive offered to the queue becomes the next user turn only after the current turn completes. The queue coalesces redundant directives so that a slow turn consuming many offered directives still receives only the most recent one.
+
+#### Host-Side Unit Tests (No Container Required)
+
+The steering layer can be fully exercised without Docker:
+
+```bash
+pnpm exec vitest run \
+  packages/core/src/cybernetics/steering.test.ts \
+  packages/core/src/cybernetics/delegate.test.ts \
+  packages/core/src/core/limbic/hypothalamus/process-runner.test.ts
+```
+
+#### Phase 4 Scope (Not Yet Built)
+
+`DEFAULT_STEER_CADENCE_TICKS` (in `cortex/loop.ts`) is defined now but is consumed only in Phase 4. The following are deferred to Phase 4: cadence-throttled production of directives, hindbrain/forebrain running during a session, escalation, completion-marker detection, and an end-to-end steered/real-container smoke test.
+
 ## Debugging & Observability
 
 ### Per-Tier Latency
