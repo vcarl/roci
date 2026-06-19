@@ -88,21 +88,7 @@ describe("ConsciousThought service contract", () => {
     expect(captured).toEqual(["steer: focus on the login flow"])
   })
 
-  it("a turn failure surfaces as a failed-style result (never throws)", async () => {
-    const layer = Layer.merge(
-      ConsciousThoughtTest(
-        () => { throw new Error("simulated turn error") },
-      ),
-      testDeps,
-    )
-    // ConsciousThoughtTest impl that throws — the error channel must still be never.
-    // We model this as an impl that returns a synthetic failed result, not throws.
-    // The test below verifies the layer's catchAll discipline via the Live path.
-    // For the Test path, the impl is provided directly, so throw is propagated unless
-    // ConsciousThoughtTest wraps with try/catch. The discipline is: impl MUST return
-    // { result, sessionId }; the test layer does not catch impl exceptions.
-    // This test instead verifies the Live path's catchAll via a ClaudeError injection.
-    // For service test purposes, verify that the Test layer accepts any { result, sessionId } shape.
+  it("ConsciousThoughtTest returns a canned error-shaped result without throwing", async () => {
     const errorLayer = Layer.merge(
       ConsciousThoughtTest(
         () => ({ result: { output: "auth error", timedOut: false, durationMs: 0 }, sessionId: "error-sentinel" }),

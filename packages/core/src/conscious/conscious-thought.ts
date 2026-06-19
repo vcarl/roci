@@ -66,22 +66,26 @@ export class ConsciousThought extends Context.Tag("ConsciousThought")<
   }
 >() {}
 
-const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker> => {
-  // Derive playersDir from char.dir: char.dir = players/<name>/me, grandparent = players/
-  const playersDir = path.resolve(opts.char.dir, "../..")
-  // Write the project-local agent file synchronously (host-side fs, no Effect service).
-  writeCharacterAgentFile({
-    playersDir,
-    playerName: opts.char.name,
-    systemPrompt: opts.systemPrompt,
-    modelLabel: CONSCIOUS_MODEL_LABEL,
-  })
-  // Provision the global in-container provider config (requires Docker).
-  return provisionConsciousProvider(opts.containerId, opts.handle).pipe(
-    Effect.asVoid,
+const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker> =>
+  Effect.gen(function* () {
+    // Write the project-local agent file (host-side fs). Deferred into the Effect so a
+    // filesystem failure becomes a swallowed error, not a synchronous throw / defect.
+    // char.dir = players/<name>/me, grandparent = players/.
+    yield* Effect.try(() =>
+      writeCharacterAgentFile({
+        playersDir: path.resolve(opts.char.dir, "../.."),
+        playerName: opts.char.name,
+        systemPrompt: opts.systemPrompt,
+        modelLabel: CONSCIOUS_MODEL_LABEL,
+      }),
+    )
+    // Provision the global in-container provider config (requires Docker).
+    yield* provisionConsciousProvider(opts.containerId, opts.handle)
+  }).pipe(
+    // Error channel is `never`: a write failure or DockerError is swallowed (idempotent;
+    // safe to retry next run) and surfaces downstream as a turn-1 failure.
     Effect.catchAll(() => Effect.void),
   )
-}
 
 const turnImpl = (
   config: ConsciousTurnConfig,
