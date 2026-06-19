@@ -30,6 +30,8 @@ export interface TransportInput {
   char: CharacterConfig
   role: "brain" | "body"
   timeoutMs: number
+  /** Optional: extract a value from each raw stdout line; the first non-null is kept. */
+  captureFromRaw?: (raw: Record<string, unknown>) => string | null
 }
 
 /**
@@ -49,6 +51,7 @@ export const runTransport = (input: TransportInput): Effect.Effect<
       const executor = yield* CommandExecutor.CommandExecutor
       const start = Date.now()
       const textAccumulator = yield* Ref.make<string[]>([])
+      const capturedSessionId = yield* Ref.make<string | null>(null)
       const log = yield* CharacterLog
 
       const process = yield* executor.start(input.command)
@@ -69,6 +72,13 @@ export const runTransport = (input: TransportInput): Effect.Effect<
           Effect.gen(function* () {
             const raw = parseStreamJson(line)
             if (raw) {
+              if (input.captureFromRaw) {
+                const already = yield* Ref.get(capturedSessionId)
+                if (already === null) {
+                  const v = input.captureFromRaw(raw)
+                  if (v) yield* Ref.set(capturedSessionId, v)
+                }
+              }
               const internal = input.normalize(raw)
               const system = input.role === "brain" ? "brain" : input.role
               const unified = toUnifiedEvents(internal, input.char.name, system, input.runtimeTag)
@@ -128,7 +138,8 @@ export const runTransport = (input: TransportInput): Effect.Effect<
       const textParts = yield* Ref.get(textAccumulator)
       const output = textParts.join("\n")
       const durationMs = Date.now() - start
-      return { output, timedOut, durationMs }
+      const sessionId = yield* Ref.get(capturedSessionId)
+      return { output, timedOut, durationMs, sessionId: sessionId ?? undefined }
     }),
   ).pipe(
     Effect.mapError((e) =>

@@ -33,6 +33,8 @@ export interface TurnResult {
   output: string
   timedOut: boolean
   durationMs: number
+  /** First captured stream value (e.g. OpenCode sessionID), when a capture hook ran. */
+  sessionId?: string
 }
 
 /** Configuration for a long-lived channel session. */
