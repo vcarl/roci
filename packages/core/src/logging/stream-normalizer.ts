@@ -102,3 +102,50 @@ export function normalizeOpenCode(raw: RawEvent): InternalEvent[] {
 
   return [{ type: "passthrough", rawType: type ?? "unknown" }]
 }
+
+/**
+ * Normalize a line from the SDK runner (Phase 2). The runner wraps each SDK
+ * message as `{ v:1, type:"event", event:<SDKMessage> }` and emits a terminal
+ * `{ v:1, type:"result", status, output }`. We unwrap the envelope and map the
+ * SDK assistant content the same way `normalizeClaude` maps stream-json
+ * assistant blocks. The result line yields nothing — the turn's output comes
+ * from accumulated text events (the transport already does this).
+ */
+export function normalizeSdk(raw: RawEvent): InternalEvent[] {
+  if (raw.type === "result") return []
+  if (raw.type !== "event") return []
+
+  const event = raw.event as RawEvent | undefined
+  if (!event) return []
+  const eventType = event.type as string | undefined
+
+  if (eventType === "system") {
+    return [{ type: "system", model: event.model as string | undefined }]
+  }
+  if (eventType === "rate_limit_event") {
+    const info = event.rate_limit_info as RawEvent | undefined
+    return [{ type: "rate_limit", status: String(info?.status ?? "unknown") }]
+  }
+  if (eventType === "result") {
+    return []
+  }
+  if (eventType === "assistant") {
+    const message = event.message as RawEvent | undefined
+    const content = message?.content as RawEvent[] | undefined
+    if (!content) return []
+    return content.map((block): InternalEvent => {
+      if (block.type === "thinking") return { type: "thinking", text: block.thinking as string }
+      if (block.type === "text") return { type: "text", text: block.text as string }
+      if (block.type === "tool_use") {
+        return {
+          type: "tool_use",
+          id: block.id as string,
+          name: block.name as string,
+          input: (block.input as Record<string, unknown>) ?? {},
+        }
+      }
+      return { type: "passthrough", rawType: String(block.type ?? "unknown") }
+    })
+  }
+  return [{ type: "passthrough", rawType: String(eventType ?? "unknown") }]
+}

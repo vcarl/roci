@@ -231,6 +231,89 @@ Verify that interrupts trigger correctly and the phase machine transitions appro
 
 This validates the amygdala interrupt mechanism and the cortex's ability to break ongoing plans when a critical event occurs.
 
+## Phase 2: SDK Frontier-Worker Runner
+
+Phase 2 adds a frontier-worker runner (`sdk-runner.mjs`) inside the domain container that drives the `@anthropic-ai/claude-agent-sdk` directly over an NDJSON wire protocol. It sits alongside the existing `claude -p` process-isolation path, which is deliberately retained (dormant) rather than removed. In Phase 2 the runner is exercised run-to-completion only; the persistent/streaming steering it is built for arrives in Phase 3. This section documents the wire protocol, the auth finding from Task 1, and the run-to-completion smoke command from Task 7.
+
+### Wire Protocol (NDJSON, `v:1`)
+
+All messages on both directions are newline-delimited JSON objects with a `"v":1` version field. The runner reads stdin and writes stdout; stderr is silent on healthy runs.
+
+**Host → Runner**
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| `{"v":1,"type":"task","text":"<prompt>"}` | one user turn | Unit of work; becomes the prompt fed to `query()`. |
+| `{"v":1,"type":"steer","text":"<prompt>"}` | one user turn | Structurally identical to `task`; reserved for Phase 3 steering (parsed but never sent in Phase 2). |
+| `{"v":1,"type":"end"}` | — | Closes the input stream; the runner's async generator returns, which terminates the `query()` loop. |
+
+**Runner → Host**
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| `{"v":1,"type":"event","event":<SDKMessage>}` | one per stream message | Wraps each raw SDK message (`system`/`init`, `rate_limit_event`, `assistant`, etc.). |
+| `{"v":1,"type":"result","status":"completed"\|"failed"\|"timed_out","output":"<text>"}` | terminal line | Single line that ends the turn; `status` reflects the SDK `ResultMessage` outcome. |
+
+**Run-to-completion pattern:** send one `task` then immediately send `end`. `task` and `steer` are structurally identical — each becomes one user turn — but in Phase 2 the host never sends `steer`.
+
+**Runner environment variables** (no CLI flags are accepted):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ROCI_SDK_MODEL` | — | Passed verbatim to the SDK; model aliases (`sonnet`, `opus`, `haiku`) are accepted as-is. |
+| `ROCI_SDK_SYSTEM_PROMPT` | — | System prompt injected into the session. |
+| `ROCI_SDK_MAX_TURNS` | `40` | Maximum turns per `query()` call before the runner stops. |
+
+The runner lives in the image at `/home/node/sdk-runner/sdk-runner.mjs`.
+
+### Task 1 Auth Finding
+
+The Agent SDK (`@anthropic-ai/claude-agent-sdk`, pinned to **0.3.183** in the image) authenticates from the **`CLAUDE_CODE_OAUTH_TOKEN`** environment variable. No `ANTHROPIC_API_KEY` is needed. The SDK's `system`/`init` event reports `apiKeySource: "none"`, confirming it is using the OAuth token rather than an API key.
+
+Model aliases work verbatim: `sonnet`, `opus`, and `haiku` are accepted without any alias-to-model-id mapping, so `ROCI_SDK_MODEL` carries `config.model` unchanged.
+
+Observed stream order for a healthy single-turn run: `system`/`init` → `rate_limit_event` → `assistant` → `result`, with zero stderr.
+
+### Run-to-Completion Container Smoke
+
+Build the test image (spacemolt domain shown; the GitHub domain image is built analogously from its own Dockerfile):
+
+```bash
+docker build -t roci-spacemolt-sdktest \
+  -f packages/domain-spacemolt/src/docker/Dockerfile \
+  packages/domain-spacemolt/src/docker
+```
+
+Read the OAuth token from `auth-token` and run a trivial task end-to-end:
+
+```bash
+TOKEN="$(cat auth-token)"
+printf '%s\n%s\n' '{"v":1,"type":"task","text":"Reply with exactly: OK"}' '{"v":1,"type":"end"}' \
+| docker run --rm -i \
+    -e CLAUDE_CODE_OAUTH_TOKEN="$TOKEN" \
+    -e ROCI_SDK_MODEL=sonnet \
+    -e ROCI_SDK_SYSTEM_PROMPT="You are a terse assistant." \
+    -e ROCI_SDK_MAX_TURNS=1 \
+    roci-spacemolt-sdktest node /home/node/sdk-runner/sdk-runner.mjs
+```
+
+**Expected output:** one or more `{"v":1,"type":"event",…}` lines (SDK stream messages), followed by the single terminal line:
+
+```json
+{"v":1,"type":"result","status":"completed","output":"OK"}
+```
+
+This smoke uses a plain `docker run` (firewall init bypassed) so the container has normal egress to the Anthropic API. The token is read from the `auth-token` file, not `.oauth-token` — never embed a literal token.
+
+**Failure modes:**
+- `status: "failed"` or no output: verify `CLAUDE_CODE_OAUTH_TOKEN` is valid and the image was built successfully.
+- `Cannot find module '/home/node/sdk-runner/sdk-runner.mjs'`: the image is stale or missing the SDK runner layer — rebuild.
+- No `result` line: `ROCI_SDK_MAX_TURNS=1` was not respected, or the runner exited before the generator returned `end` — check that both `task` and `end` lines were sent.
+
+### Phase Scope Note (Phase 3–4 Deferred)
+
+The **steering channel (Phase 3)** and the **cortex loop rework (Phase 4)** are not yet wired. In Phase 2, the `steer` command is parsed by the runner but is never sent by the host — all turns are run-to-completion only (`task` then `end`). The frontier SDK worker is invoked via `runSdkTurn` (host side) for escalation; everyday character work continues to run on the conscious-tier OpenCode agent.
+
 ## Debugging & Observability
 
 ### Per-Tier Latency

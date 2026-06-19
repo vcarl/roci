@@ -8,6 +8,7 @@ coverage/
 __pycache__/
 .env
 .oauth-token
+auth-token
 .claude-credentials.json
 .claude/
 repos/

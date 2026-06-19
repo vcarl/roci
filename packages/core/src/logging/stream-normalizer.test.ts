@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { normalizeClaude, normalizeOpenCode } from "./stream-normalizer.js"
+import { normalizeClaude, normalizeOpenCode, normalizeSdk } from "./stream-normalizer.js"
 
 describe("normalizeClaude", () => {
   it("normalizes system event", () => {
@@ -108,5 +108,60 @@ describe("normalizeOpenCode", () => {
   it("ignores step_finish", () => {
     const events = normalizeOpenCode({ type: "step_finish" })
     expect(events).toEqual([])
+  })
+})
+
+describe("normalizeSdk", () => {
+  it("unwraps an event line's assistant text blocks", () => {
+    const raw = {
+      v: 1,
+      type: "event",
+      event: { type: "assistant", message: { content: [{ type: "text", text: "hello" }] } },
+    }
+    expect(normalizeSdk(raw)).toEqual([{ type: "text", text: "hello" }])
+  })
+  it("maps assistant thinking and tool_use blocks", () => {
+    const raw = {
+      type: "event",
+      event: {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "thinking", thinking: "hmm" },
+            { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } },
+          ],
+        },
+      },
+    }
+    expect(normalizeSdk(raw)).toEqual([
+      { type: "thinking", text: "hmm" },
+      { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } },
+    ])
+  })
+  it("maps a system event to a system InternalEvent", () => {
+    const raw = { type: "event", event: { type: "system", subtype: "init", model: "claude-sonnet" } }
+    expect(normalizeSdk(raw)).toEqual([{ type: "system", model: "claude-sonnet" }])
+  })
+  it("maps a rate_limit_event to a rate_limit InternalEvent (spike observed this in-stream)", () => {
+    const raw = { type: "event", event: { type: "rate_limit_event", rate_limit_info: { status: "allowed" } } }
+    expect(normalizeSdk(raw)).toEqual([{ type: "rate_limit", status: "allowed" }])
+  })
+  it("returns [] for the terminal result line (output captured via accumulated text)", () => {
+    expect(normalizeSdk({ type: "result", status: "completed", output: "done" })).toEqual([])
+    expect(normalizeSdk({ type: "event", event: { type: "result", subtype: "success", result: "done" } })).toEqual([])
+  })
+  it("passes through unknown event types", () => {
+    expect(normalizeSdk({ type: "event", event: { type: "weird_thing" } })).toEqual([
+      { type: "passthrough", rawType: "weird_thing" },
+    ])
+  })
+  it("falls back to 'unknown' rawType for typeless events and content blocks (matches normalizeClaude)", () => {
+    expect(normalizeSdk({ type: "event", event: {} })).toEqual([{ type: "passthrough", rawType: "unknown" }])
+    expect(
+      normalizeSdk({ type: "event", event: { type: "assistant", message: { content: [{}] } } }),
+    ).toEqual([{ type: "passthrough", rawType: "unknown" }])
+  })
+  it("returns [] for malformed lines", () => {
+    expect(normalizeSdk({ foo: "bar" })).toEqual([])
   })
 })

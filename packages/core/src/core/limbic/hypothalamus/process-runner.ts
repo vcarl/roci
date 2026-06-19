@@ -1,253 +1,126 @@
 /**
- * Primary execution path for all domain-level Claude invocations.
+ * Primary execution path for all domain-level agent invocations.
  *
- * `runTurn` runs `claude -p` inside the Docker container with full tool access,
- * streaming output (stream-json), and configurable timeouts. Both SpaceMolt and
- * GitHub domains use this for their agent work (planning, evaluation, execution).
+ * `runTurn` composes a *payload* (the inner command + normalizer, per runtime —
+ * see `payload.ts`) with the reusable *transport* (`docker exec` + stream + race
+ * + kill — see `transport.ts`). It runs the agent inside the Docker container
+ * with full tool access, streaming output, and a timeout, returning the
+ * accumulated text.
  *
- * For orchestrator-internal tasks that don't need tool access (memory
- * consolidation, timeout summarization, reflection), use `Claude.invoke` from
- * `services/Claude.ts` instead — that runs on the host.
+ * For orchestrator-internal tasks that don't need tool access, use
+ * `Claude.invoke` from `services/Claude.ts` instead — that runs on the host.
  */
 
-import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
+import { Effect, Stream } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
-import { runtimeBinary, runtimeBaseArgs } from "./runtime.js"
-import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
-import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
+import { selectRuntime, buildInnerCommand, normalizerFor } from "./payload.js"
+import { runTransport } from "./transport.js"
+import { buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
+import { normalizeSdk } from "../../../logging/stream-normalizer.js"
 
-/**
- * Shell-safe literal using $'...' ANSI-C quoting.
- */
-function shellEscape(s: string): string {
-  let escaped = ""
-  for (const ch of s) {
-    const code = ch.charCodeAt(0)
-    if (ch === "\\") escaped += "\\\\"
-    else if (ch === "'") escaped += "\\'"
-    else if (ch === "\n") escaped += "\\n"
-    else if (ch === "\r") escaped += "\\r"
-    else if (ch === "\t") escaped += "\\t"
-    else if (code < 0x20 || code === 0x7f) escaped += `\\x${code.toString(16).padStart(2, "0")}`
-    else escaped += ch
+/** Build the `docker exec` args: working dir, env (incl. OAuth token), inner command. */
+export function buildExecArgs(config: TurnConfig, innerCmd: string, token: string): string[] {
+  const execArgs: string[] = ["exec", "-i", "-w", `/work/players/${config.playerName}`]
+  if (config.env) {
+    for (const [key, val] of Object.entries(config.env)) {
+      if (key === "CLAUDE_CODE_OAUTH_TOKEN") continue
+      execArgs.push("-e", `${key}=${val}`)
+    }
   }
-  return `$'${escaped}'`
+  execArgs.push("-e", `CLAUDE_CODE_OAUTH_TOKEN=${token}`)
+  execArgs.push(config.containerId, "bash", "-c", innerCmd)
+  return execArgs
 }
 
 /**
- * Parse a stream-json line, returning the parsed object or null.
- */
-function parseStreamJson(line: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(line) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-function isAuthError(text: string): boolean {
-  return /401|[Uu]nauthorized|[Aa]uthentication.*(error|fail)|[Ii]nvalid bearer token/i.test(text)
-}
-
-/**
- * Run `claude -p` inside a container with a timeout.
- * Streams output through the log demux for real-time console visibility.
- * Collects text blocks as the final output string.
- * On timeout, interrupts and returns whatever text was accumulated.
+ * Run one turn: build the payload, inject OAuth, exec inside the container,
+ * stream the result through the transport. Signature/behavior unchanged from the
+ * pre-split version — all existing callers are untouched.
  */
 export const runTurn = (config: TurnConfig): Effect.Effect<
   TurnResult,
   ClaudeError,
   CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
 > =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const executor = yield* CommandExecutor.CommandExecutor
-      const start = Date.now()
-      const oauthToken = yield* OAuthToken
-      const { token } = yield* oauthToken.getToken
+  Effect.gen(function* () {
+    const oauthToken = yield* OAuthToken
+    const { token } = yield* oauthToken.getToken
 
-      // Accumulate text output from assistant messages
-      const textAccumulator = yield* Ref.make<string[]>([])
+    const runtime = selectRuntime(config)
+    const innerCmd = buildInnerCommand(config, runtime)
+    const execArgs = buildExecArgs(config, innerCmd, token)
 
-      // Build runtime-aware flags
-      const runtime = config.runtime ?? runtimeBinary(config.model)
-      const claudeArgs: string[] = [...runtimeBaseArgs(runtime, config.model)]
+    // Diagnostic: token prefix/suffix to verify it matches the saved file.
+    yield* logToConsole(
+      config.char.name,
+      config.role,
+      `token len=${token.length} prefix=${token.slice(0, 15)}... suffix=...${token.slice(-10)}`,
+    )
+    // Log the full docker exec command (redact token values).
+    const redactedArgs = execArgs.map((a) =>
+      a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
+    )
+    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
 
-      if (runtime === "claude") {
-        if (config.model !== "sonnet") {
-          claudeArgs.push("--fallback-model", "sonnet")
-        }
-        claudeArgs.push("--output-format", "stream-json")
-        claudeArgs.push("--verbose")
+    const promptStream = Stream.encodeText(Stream.make(config.prompt))
+    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(promptStream))
 
-        // Brain (opus) uses full effort; body needs normal effort for multi-step
-        // workflows; only apply low effort to non-body, non-opus roles (old subagents)
-        if (config.model !== "opus" && config.role !== "body") {
-          claudeArgs.push("--effort", "low")
-        }
-
-        if (config.maxBudgetUsd) {
-          claudeArgs.push("--max-budget-usd", String(config.maxBudgetUsd))
-        }
-      }
-
-      // Tool access control
-      if (config.noTools) {
-        if (runtime === "claude") {
-          claudeArgs.push("--allowedTools", "")
-        }
-        // OpenCode: no tools by default in run mode unless explicitly declared
-      } else {
-        if (config.allowedTools && config.allowedTools.length > 0) {
-          claudeArgs.push("--allowedTools", config.allowedTools.join(","))
-        }
-        if (config.disallowedTools && config.disallowedTools.length > 0) {
-          claudeArgs.push("--disallowedTools", config.disallowedTools.join(","))
-        }
-      }
-
-      if (config.addDirs) {
-        for (const dir of config.addDirs) {
-          claudeArgs.push("--add-dir", dir)
-        }
-      }
-
-      if (config.systemPrompt) {
-        if (runtime === "claude") {
-          claudeArgs.push("--system-prompt", shellEscape(config.systemPrompt))
-        }
-        // OpenCode: system prompt handling TBD — for now, prepend to prompt
-      }
-
-      const binary = runtime === "claude" ? "claude" : "opencode"
-      const innerCmd = `${binary} ${claudeArgs.join(" ")}`
-      const promptStream = Stream.encodeText(Stream.make(config.prompt))
-
-      // Build docker exec args
-      const execArgs: string[] = ["exec", "-i", "-w", `/work/players/${config.playerName}`]
-      if (config.env) {
-        for (const [key, val] of Object.entries(config.env)) {
-          if (key === "CLAUDE_CODE_OAUTH_TOKEN") continue
-          execArgs.push("-e", `${key}=${val}`)
-        }
-      }
-      execArgs.push("-e", `CLAUDE_CODE_OAUTH_TOKEN=${token}`)
-      execArgs.push(config.containerId, "bash", "-c", innerCmd)
-
-      // Diagnostic: log token prefix/suffix so we can verify it matches the saved file
-      yield* logToConsole(config.char.name, config.role, `token len=${token.length} prefix=${token.slice(0, 15)}... suffix=...${token.slice(-10)}`)
-
-      // Log the full docker exec command (redact token values)
-      const redactedArgs = execArgs.map(a =>
-        a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a
-      )
-      yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
-
-      const cmd = Command.make("docker", ...execArgs).pipe(
-        Command.stdin(promptStream),
-      )
-
-      const process = yield* executor.start(cmd)
-
-      // Fork stderr drain
-      const stderrFiber = yield* process.stderr.pipe(
-        Stream.decodeText(),
-        Stream.runCollect,
-        Effect.map(Chunk.join("")),
-      ).pipe(Effect.fork)
-
-      // Process stdout: split into lines, demux each for console output,
-      // accumulate text blocks for the final output string
-      const source = config.role as "brain" | "body"
-      const log = yield* CharacterLog
-
-      const normalize = runtime === "opencode" ? normalizeOpenCode : normalizeClaude
-
-      const streamFiber = yield* process.stdout.pipe(
-        Stream.decodeText(),
-        Stream.splitLines,
-        Stream.filter((line) => line.trim().length > 0),
-        Stream.mapEffect((line) =>
-          Effect.gen(function* () {
-            const raw = parseStreamJson(line)
-            if (raw) {
-              const internal = normalize(raw)
-              const system = config.role === "brain" ? "brain" : config.role
-              const unified = toUnifiedEvents(internal, config.char.name, system, "claude")
-              for (const event of unified) {
-                yield* log.emit(config.char, event)
-                if (textAccumulator && event.kind === "text") {
-                  yield* Ref.update(textAccumulator, (arr) => [...arr, event.text])
-                }
-              }
-            } else if (line.trim()) {
-              yield* log.emit(config.char, {
-                ...eventBase(config.char.name, config.role, "claude"),
-                kind: "system",
-                message: line,
-              })
-            }
-          }),
-        ),
-        Stream.runDrain,
-      ).pipe(Effect.fork)
-
-      // Wait for the process to actually exit (not just stdout to drain).
-      // Stdout can close/drain mid-session (e.g. after a ToolSearch response)
-      // while the claude process is still running and waiting for the next API call.
-      const exitFiber = yield* process.exitCode.pipe(Effect.fork)
-
-      // Race: process exit vs timeout
-      const timeoutEffect = Effect.sleep(config.timeoutMs).pipe(
-        Effect.map(() => ({ timedOut: true as const })),
-      )
-
-      const completionEffect = Fiber.join(exitFiber).pipe(
-        Effect.map((exitCode) => ({ timedOut: false as const, exitCode: Number(exitCode) })),
-      )
-
-      const raceResult = yield* Effect.race(completionEffect, timeoutEffect)
-
-      let timedOut: boolean
-
-      if (raceResult.timedOut) {
-        timedOut = true
-        yield* Fiber.interrupt(exitFiber).pipe(Effect.catchAll(() => Effect.void))
-        yield* Fiber.interrupt(streamFiber).pipe(Effect.catchAll(() => Effect.void))
-        yield* Fiber.interrupt(stderrFiber).pipe(Effect.catchAll(() => Effect.void))
-        yield* logToConsole(config.char.name, config.role, "TIMED OUT — interrupting")
-      } else {
-        timedOut = false
-        const exitCode = "exitCode" in raceResult ? (raceResult as { exitCode: number }).exitCode : -1
-        const elapsed = Math.round((Date.now() - start) / 1000)
-        yield* logToConsole(config.char.name, config.role, `Process exited (code=${exitCode}) after ${elapsed}s`)
-        // Process exited — wait for stream to finish draining buffered output
-        yield* Fiber.join(streamFiber).pipe(Effect.catchAll(() => Effect.void))
-        const stderr = yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.succeed("")))
-        if (stderr && stderr.trim()) {
-          yield* logToConsole(config.char.name, config.role, `stderr: ${stderr.trim().slice(0, 500)}`)
-        }
-        if (exitCode !== 0 && isAuthError(stderr)) {
-          yield* logToConsole(config.char.name, config.role, "Auth error — token is invalid. Run 'claude setup-token' and update .oauth-token")
-          return yield* Effect.fail(new ClaudeError("OAuth token rejected by Claude. Run 'claude setup-token' and update .oauth-token"))
-        }
-      }
-
-      // Collect accumulated text
-      const textParts = yield* Ref.get(textAccumulator)
-      const output = textParts.join("\n")
-
-      const durationMs = Date.now() - start
-
-      return { output, timedOut, durationMs }
-    }),
-  ).pipe(
+    // NOTE: runtimeTag is intentionally "claude" for both runtimes here, matching
+    // pre-split behavior (Phase 1 is behavior-preserving). Phase 2 corrects the
+    // tag for the opencode payload.
+    return yield* runTransport({
+      command,
+      normalize: normalizerFor(runtime),
+      runtimeTag: "claude",
+      char: config.char,
+      role: config.role,
+      timeoutMs: config.timeoutMs,
+    })
+  }).pipe(
     Effect.mapError((e) =>
       e instanceof ClaudeError ? e : new ClaudeError("Process runner failed", e),
     ),
+  )
+
+/**
+ * Run a frontier-worker SDK turn run-to-completion. Builds the NDJSON stdin
+ * (`task` then `end`), the `docker exec … node sdk-runner.mjs` command (with the
+ * SDK env + OAuth token injected via buildExecArgs), and delegates streaming /
+ * race / kill to the shared transport with normalizeSdk. Phase 2: no steering.
+ */
+export const runSdkTurn = (config: TurnConfig): Effect.Effect<
+  TurnResult,
+  ClaudeError,
+  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
+> =>
+  Effect.gen(function* () {
+    const oauthToken = yield* OAuthToken
+    const { token } = yield* oauthToken.getToken
+
+    const innerCmd = buildSdkInnerCommand()
+    // Inject the SDK env through buildExecArgs's custom-env loop.
+    const execArgs = buildExecArgs({ ...config, env: sdkEnv(config) }, innerCmd, token)
+
+    const redactedArgs = execArgs.map((a) =>
+      a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
+    )
+    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
+
+    const stdin = Stream.encodeText(Stream.make(buildSdkStdin(config.prompt)))
+    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(stdin))
+
+    return yield* runTransport({
+      command,
+      normalize: normalizeSdk,
+      runtimeTag: "sdk",
+      char: config.char,
+      role: config.role,
+      timeoutMs: config.timeoutMs,
+    })
+  }).pipe(
+    Effect.mapError((e) => (e instanceof ClaudeError ? e : new ClaudeError("SDK runner failed", e))),
   )

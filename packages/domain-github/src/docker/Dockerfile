@@ -34,6 +34,12 @@ RUN mkdir -p /home/node/.opencode && \
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
 
+# Install the Agent SDK frontier-worker runner (Phase 2)
+RUN mkdir -p /home/node/sdk-runner
+COPY --chown=node:node sdk-runner.mjs sdk-runner-protocol.mjs /home/node/sdk-runner/
+COPY --chown=node:node sdk-runner-package.json /home/node/sdk-runner/package.json
+RUN cd /home/node/sdk-runner && npm install --omit=dev
+
 # Use iptables-legacy for WSL2 compatibility (nf_tables has limited kernel support)
 USER root
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \

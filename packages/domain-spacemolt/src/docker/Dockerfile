@@ -98,6 +98,12 @@ RUN mkdir -p /home/node/.opencode && \
 RUN echo '{"hasCompletedOnboarding":true,"numStartups":1,"projects":{"/work":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}' \
     > /home/node/.claude.json
 
+# Install the Agent SDK frontier-worker runner (Phase 2)
+RUN mkdir -p /home/node/sdk-runner
+COPY --chown=node:node sdk-runner.mjs sdk-runner-protocol.mjs /home/node/sdk-runner/
+COPY --chown=node:node sdk-runner-package.json /home/node/sdk-runner/package.json
+RUN cd /home/node/sdk-runner && npm install --omit=dev
+
 # Enable channels + activity logging hooks (user-level so they apply to subagents too).
 # All tool calls and subagent lifecycle events append to logs/activity.log (relative to cwd).
 COPY --chown=node:node claude-settings.json /home/node/.claude/settings.json
