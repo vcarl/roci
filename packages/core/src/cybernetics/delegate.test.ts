@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Queue } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import { Cybernetics, CyberneticsTest } from "./delegate.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import type { DelegationConfig } from "./types.js"
+import type { Directive } from "./types.js"
+import { makeSteeringQueue } from "./steering.js"
 
 // Minimal no-op stubs to satisfy the service interface requirements that the
 // Cybernetics Tag declares on delegate's return type. The CyberneticsTest layer
@@ -73,5 +75,29 @@ describe("Cybernetics service contract", () => {
       ),
     )
     expect(result.status).toBe("failed")
+  })
+
+  it("CyberneticsTest captures steer directives offered before delegation", async () => {
+    const captured: Directive[] = []
+    const program = Effect.gen(function* () {
+      const cyb = yield* Cybernetics
+      const q = yield* makeSteeringQueue()
+      yield* Queue.offer(q, { text: "steer A" })
+      return yield* cyb.delegate(cfg, q)
+    })
+    const result = await Effect.runPromise(
+      Effect.provide(
+        program,
+        Layer.merge(
+          CyberneticsTest(
+            () => ({ status: "completed", output: "ok", durationMs: 1 }),
+            (d) => captured.push(d),
+          ),
+          testDeps,
+        ),
+      ),
+    )
+    expect(result.status).toBe("completed")
+    expect(captured).toEqual([{ text: "steer A" }])
   })
 })
