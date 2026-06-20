@@ -17,6 +17,7 @@
 - NEVER pass `--bare` with `claude -p`. Worker flags use `-p --permission-mode bypassPermissions --model <model>` (exactly as `runtimeBaseArgs(runtime: "claude", model)` produces).
 - Laundering (Vector-A): the `start` task and every `steer` directive are model-generated tool arguments authored by the conscious LLM — never raw inbound event text. This is structural (no runtime check); the plan must not pass raw world text to the worker.
 - No MCP. The capability is a bash CLI / subprocess only — no OpenCode tool/mcp schema changes, no `opencode.jsonc` edits.
+- Container/player identity is ALWAYS a per-call parameter, never an env var or process global. The harness is a scheduler: `runOrchestrator` creates one container per domain and forks a fiber per character, threading the scheduler-assigned `containerId`/`playerName` through `PhaseContext → runCortex → provision → process-runner` (`apps/roci/src/orchestrator.ts:117-156`). A single `process.env.X` cannot name N concurrent `(player, container)` pairs whose ids are generated at runtime. Do NOT add a `ROCI_FRONTIER_CONTAINER`-style identity gate; the `ROCI_*_CONTAINER` vars in existing `*.smoke.test.ts` are a manual test wart the production path never reads — do not propagate it.
 - Build ALL FOUR projects for any task touching app wiring or the conscious requirement channel (Task 1, Task 5) — a core-only build misses the `ConsciousThoughtLive` requirement gap surfaced only when `apps/roci` is type-checked.
 - Do NOT modify or delete the dormant `cybernetics/{delegate,steering,result,types}.ts` machinery this phase (spec §7). Reuse only the wire/payload helpers, never the host `delegate` Effect. `CyberneticsLive` stays composed.
 - Do NOT remove the `.claude/worktrees/agent-sdk` worktree. Run all commands in `/Users/vcarl/workspace/roci/.claude/worktrees/agent-sdk`.
@@ -576,105 +577,61 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Gated container smoke test
+### Task 5: Document live frontier verification via the orchestrator runbook
 
-A `skipIf`-gated smoke (mirroring `opencode-session.smoke.test.ts` and `delegate.smoke.test.ts`): provision the CLI into a real container, then drive `frontier start → poll → steer → wait` directly via `Docker.exec`, asserting a result returns and a `status:` line is present (and that a `steer` is accepted mid-run).
+**No standalone env-gated container test.** Container id + player name are assigned by the scheduler at runtime (`runOrchestrator` creates one container per domain and threads the id as a per-call parameter — see `apps/roci/src/orchestrator.ts:117-156`); a `process.env.ROCI_FRONTIER_CONTAINER`-style identity gate is a process-global singleton that cannot represent the scheduler's many concurrent `(player, container)` pairs and does not reflect the real path. So the automated coverage stays at the string/unit level already built in Tasks 2–3 (no container needed), and **live** frontier behavior is verified by running the real scheduler and observing the conscious mind reach for `frontier`. This mirrors the existing live-loop verification (`docs/cortex-smoke.md` Step 5: `apps/roci/src/main.ts start <char> --domain <domain>`), NOT the env-gated delegate smoke (Step 4) — that env var is a manual hand-provisioned gate the production path never reads, and we are deliberately not propagating it.
 
 **Files:**
-- Create: `packages/core/src/conscious/frontier-cli.smoke.test.ts`
-
-**Interfaces:**
-- Consumes: `provisionFrontierCli`, `FRONTIER_CLI_PATH` (Task 3); `Docker`/`DockerLive` from `../services/Docker.js`; `NodeContext` from `@effect/platform-node`. Env: `ROCI_FRONTIER_CONTAINER` (gate), `ROCI_FRONTIER_PLAYER` (default `test-pilot`).
+- Modify: `docs/cortex-smoke.md` — add a frontier-tool verification step in the live-run section (after Step 5 "Live Character Session + Cortex Loop", near `docs/cortex-smoke.md:153-218`).
 
 **Steps:**
 
-- [ ] Create `packages/core/src/conscious/frontier-cli.smoke.test.ts`:
-  ```ts
-  import { describe, it, expect } from "vitest"
-  import { Effect, Layer } from "effect"
-  import { NodeContext } from "@effect/platform-node"
-  import { Docker, DockerLive } from "../services/Docker.js"
-  import { provisionFrontierCli, FRONTIER_CLI_PATH } from "./frontier-cli.js"
+- [ ] Read the existing live-run section (`docs/cortex-smoke.md` Step 5, ~lines 153-218: the `main.ts start … --domain …` invocation and the "Expected Log Markers" / "Healthy Run Indicators" subsections) to match its format.
+- [ ] Add a new subsection (or a "Step 5b: Frontier delegation") describing the live verification — text along these lines (adapt headings to match the file's style):
+  ```markdown
+  ### Step 5b: Frontier Delegation Tool (live)
 
-  // ROCI_FRONTIER_CONTAINER=<id> npx vitest run packages/core/src/conscious/frontier-cli.smoke.test.ts
-  const containerId = process.env.ROCI_FRONTIER_CONTAINER
-  const playerName = process.env.ROCI_FRONTIER_PLAYER ?? "test-pilot"
+  During a live character session (Step 5), the conscious OpenCode mind can
+  reach for the in-container `frontier` CLI when a sub-task exceeds its local
+  reach. The container id and player name are assigned by the orchestrator and
+  threaded as parameters — there is **no** env var to set (unlike the Step 4
+  delegate smoke); the tool is provisioned automatically by
+  `ConsciousThought.provision`.
 
-  describe.skipIf(!containerId)("frontier CLI against a real container", () => {
-    it("provisions, starts a worker, polls, steers, and waits for a result", async () => {
-      const dockerLayer = DockerLive.pipe(Layer.provide(NodeContext.layer))
-      const cid = containerId as string
-      const wd = `-w /work/players/${playerName}`
+  **To verify:**
+  1. Run a live session against a domain container:
+     `npx tsx apps/roci/src/main.ts start test-pilot --domain spacemolt --tick-interval 15000`
+  2. In another terminal, confirm the CLI was provisioned into the container:
+     `docker exec $(docker ps -q -f name=roci-spacemolt) bash -lc 'test -x /usr/local/bin/frontier && echo OK'`
+     → expect `OK`.
+  3. Watch the session logs for the conscious mind invoking the tool — a Bash
+     tool call to `frontier start …`, followed by `frontier poll`/`steer`/`wait`.
+  4. Confirm each `poll`/`wait` prints a trailing `status:` line
+     (`running` | `done` | `timed_out` | `failed`) and that the final `wait`
+     output is folded back into the conscious mind's reasoning.
 
-      const program = Effect.gen(function* () {
-        const docker = yield* Docker
-        yield* provisionFrontierCli(cid, { model: "sonnet", timeoutMs: 120000 })
-        // start
-        const id = (yield* docker.exec(cid, [
-          "bash", "-lc",
-          `${FRONTIER_CLI_PATH} start "Write the single word: pong. Then wait for further instructions."`,
-        ])).trim()
-        // poll (status line must be present)
-        const polled = yield* docker.exec(cid, ["bash", "-lc", `${FRONTIER_CLI_PATH} poll "${id}"`])
-        // steer (must be accepted)
-        const steered = yield* docker.exec(cid, [
-          "bash", "-lc",
-          `${FRONTIER_CLI_PATH} steer "${id}" "Now also print the word: ack."`,
-        ])
-        // wait for final
-        const waited = yield* docker.exec(cid, ["bash", "-lc", `${FRONTIER_CLI_PATH} wait "${id}"`])
-        return { id, polled, steered, waited }
-      })
+  **Healthy indicators:** `frontier` is on PATH in the container; `start` returns
+  a non-empty handle id; `poll` streams partial worker output; the conscious
+  session continues after `wait` with the worker's result in context.
 
-      const { id, polled, steered, waited } = await Effect.runPromise(
-        Effect.provide(program, dockerLayer),
-      )
-      expect(id.length).toBeGreaterThan(0)
-      expect(polled).toMatch(/status:/)
-      expect(steered).toMatch(/status:/)
-      expect(waited).toMatch(/status:\s*(done|timed_out|failed)/)
-    }, 180_000)
-  })
+  **Failure modes:** `frontier: command not found` → provisioning did not run
+  (check `ConsciousThought.provision` was reached); `status: failed` immediately
+  → worker auth/spawn failure (verify `CLAUDE_CODE_OAUTH_TOKEN` is injected into
+  the container exec env, `process-runner.ts` `buildExecArgs`).
   ```
-  (The `wd` local is documentation of the worker's cwd; `provisionFrontierCli` writes to a global path so the working dir does not affect provisioning. Keep or drop `wd` to taste — if dropped, remove the unused local to satisfy lint.)
-- [ ] Run it expecting SKIP (no container locally): `npx vitest run packages/core/src/conscious/frontier-cli.smoke.test.ts` — expect `1 skipped` (the `skipIf(!containerId)` gate; this is the expected "failure"/no-op without a container, exactly like `delegate.smoke.test.ts`).
-- [ ] Build all four projects: `npx nx run-many -t build`.
-- [ ] Commit:
-  ```
-  git add packages/core/src/conscious/frontier-cli.smoke.test.ts
-  git commit -m "test(conscious): gated frontier CLI container smoke (Phase 4c.5)
-
-skipIf-gated on ROCI_FRONTIER_CONTAINER: provisions the CLI, drives
-start/poll/steer/wait against a real container, asserting a status line
-and a final result. Mirrors delegate/opencode-session smokes.
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-  ```
-
-**Deliverable:** A gated smoke that, given a real container, proves the `frontier` CLI drives a real worker through `start/poll/steer/wait`; skipped (no-op) without a container so CI/local unit runs stay green.
-
----
-
-### Task 6: Document the smoke in `docs/cortex-smoke.md`
-
-Add the new gated smoke to the smoke runbook so the live verification path (spec §9) is discoverable. Docs-only commit (`--no-verify`).
-
-**Files:**
-- Modify: `docs/cortex-smoke.md` — add a row/section for the frontier smoke alongside the existing delegate/opencode-session entries (see the table near `docs/cortex-smoke.md:444`).
-
-**Steps:**
-
-- [ ] Read the existing smoke table (`docs/cortex-smoke.md` around lines 440-450 and the delegate/opencode-session sections) to match formatting.
-- [ ] Add an entry: `| N | Frontier CLI | \`ROCI_FRONTIER_CONTAINER=$ID npx vitest run packages/core/src/conscious/frontier-cli.smoke.test.ts\` |` and a short prose section describing the `start/poll/steer/wait` drive and the expected `status:` lines.
 - [ ] Commit (docs-only, hooks skipped):
   ```
   git add docs/cortex-smoke.md
-  git commit --no-verify -m "docs(cortex): document the frontier CLI smoke (Phase 4c.6)
+  git commit --no-verify -m "docs(cortex): document live frontier verification via orchestrator runbook (Phase 4c.5)
+
+Verify the frontier tool through the real scheduler path (main.ts start →
+runOrchestrator, container/player threaded as params), not an env-gated
+standalone test. No ROCI_FRONTIER_CONTAINER identity env var.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   ```
 
-**Deliverable:** The frontier smoke is documented in the runbook with its exact gated invocation.
+**Deliverable:** The runbook documents how to verify the `frontier` tool live through the real scheduler — provisioning check + observed `start/poll/steer/wait` usage during a `main.ts start` session — with no env-var container identity.
 
 ---
 
@@ -685,10 +642,10 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - §3 (tool contract `start/poll/steer/wait`, plain-text stdout, `status:` line, no `run` alias) → Task 2 generator + tests; surface decision baked into Global Constraints.
 - §4 (driver mechanism: fifo, detached `setsid`, `out` file, taskLine/steerLine/endLine reuse, cross-turn file-backed handle, DRY flag construction via `payload.ts`/`runtime.ts` + `sdk-payload.ts`) → Task 2 (`buildFrontierWorkerFlags` reuses `runtimeBaseArgs`; script reuses NDJSON shapes; `endLine()` asserted equal).
 - §5 (laundering Vector-A) → Global Constraint + the agent-markdown reminder (Task 4) + the comment in `frontier-cli.ts` (Task 2). No raw event text path exists.
-- §6.1 (wire `ConsciousThoughtLive`) → Task 1. §6.2 (generate + provision) → Tasks 2+3+4. §6.3 (teach the agent) → Task 4. §6.4 (gated smoke) → Task 5.
+- §6.1 (wire `ConsciousThoughtLive`) → Task 1. §6.2 (generate + provision) → Tasks 2+3+4. §6.3 (teach the agent) → Task 4. §6.4 (smoke) → Task 5, reframed: the spec's "gated smoke" wording predates the scheduler-identity decision; live verification is now via the orchestrator runbook (no env-var container identity), with automated coverage at the string/unit level (Tasks 2–3).
 - §7 (disposition of host machinery) → Global Constraint: reuse only `sdk-payload.ts`/`runtime.ts` helpers; do not touch `cybernetics/{delegate,steering,result,types}.ts`; `CyberneticsLive` stays composed. No task modifies those files.
 - §8 (error handling: failed/timed_out status, orphaned handles → failed/unknown rather than hang) → Task 2 script (`poll`/`wait` emit `failed` when dir/fifo missing or `rc!=0`; `124` → `timed_out`; `wait` is deadline-bounded).
-- §9 (testing: generated-script unit tests, gated smoke, manual live) → Tasks 2/3 unit, Task 5 smoke, Task 6 docs the manual path.
+- §9 (testing: generated-script unit tests + live verification) → Tasks 2/3 unit (string assertions, no container); Task 5 documents the live orchestrator-runbook verification. The spec's "gated smoke per domain" is superseded by the scheduler-identity decision (no env-var container id); live coverage runs through `main.ts start` / `runOrchestrator`.
 - §10 (open questions decided): `run` alias = no; status encoding = trailing `status:` line; timeout knob = reuse `workerTimeoutMs`. All in Global Constraints. Dormant-machinery cleanup = explicitly deferred (not this phase).
 - §11 (decisions log) → reflected in architecture/constraints.
 
