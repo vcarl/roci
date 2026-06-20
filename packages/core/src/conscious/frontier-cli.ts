@@ -111,6 +111,9 @@ for line in sys.stdin:
     try:
         o=json.loads(line)
         t=o.get(\\"text\\") or (o.get(\\"message\\",{}) or {}).get(\\"text\\")
+        if not t:
+            items=(o.get(\\"message\\",{}) or {}).get(\\"content\\") or []
+            t=\\\"\\\\n\\\".join(i[\\"text\\"] for i in items if isinstance(i,dict) and i.get(\\"type\\")==\\"text\\" and i.get(\\"text\\"))
         if t: print(t, flush=True)
     except Exception: pass" >> "$d/out" 2>/dev/null &
       # keep the fifo open for writers (steer/wait); the writer fd holder:

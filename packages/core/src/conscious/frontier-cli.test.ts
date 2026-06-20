@@ -62,6 +62,14 @@ describe("buildFrontierCliScript", () => {
   it("bakes the wall-clock budget from timeoutMs (no new knob)", () => {
     expect(script).toContain("600000")
   })
+  it("stream-json extractor walks message.content[] for type:text items (shape 3)", () => {
+    // The old two-path extractor only checked o.get("text") and o.get("message").get("text").
+    // The real claude stream-json assistant frame nests text under message.content[].
+    // These assertions FAIL on the old extractor (no "content" path) but PASS on the new one.
+    // The script string contains bash-level escaping: \" appears as \\"  in the TS string.
+    expect(script).toContain('.get(\\"content\\")')
+    expect(script).toContain('i.get(\\"type\\")==\\"text\\"')
+  })
 })
 
 describe("provisionFrontierCli", () => {
