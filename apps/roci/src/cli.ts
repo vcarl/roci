@@ -10,7 +10,7 @@ import { Docker, DockerLive } from "@roci/core/services/Docker.js"
 import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { CharacterLogLive } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
-import { ModelClientLive, CyberneticsLive } from "@roci/core"
+import { ModelClientLive, CyberneticsLive, ConsciousThoughtLive } from "@roci/core"
 import { runOrchestrator } from "./orchestrator.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
@@ -629,6 +629,7 @@ const serviceLayer = Layer.mergeAll(
   characterLogLayer,
   ModelClientLive,
   CyberneticsLive,
+  ConsciousThoughtLive,
 )
 
 export { rociCommand, serviceLayer }

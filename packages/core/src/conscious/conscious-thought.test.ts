@@ -136,3 +136,11 @@ describe("ConsciousThought service contract", () => {
     ).resolves.not.toThrow()
   })
 })
+
+import * as core from "../index.js"
+describe("index re-exports ConsciousThought", () => {
+  it("exports ConsciousThought tag and ConsciousThoughtLive layer", () => {
+    expect(core.ConsciousThought).toBeDefined()
+    expect(core.ConsciousThoughtLive).toBeDefined()
+  })
+})

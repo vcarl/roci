@@ -87,3 +87,7 @@ export { freshCortexState } from "./cortex/state.js"
 export type { CortexState } from "./cortex/state.js"
 export { runHindbrain, runForebrain, runConsciousDecide, runConsciousEvaluate } from "./cortex/tiers.js"
 export type { CortexRunnerConfig } from "./cortex/tiers.js"
+
+// Conscious tier — local-model OpenCode executor session
+export { ConsciousThought, ConsciousThoughtLive, ConsciousThoughtTest } from "./conscious/conscious-thought.js"
+export type { ConsciousTurnConfig, ProvisionOpts } from "./conscious/conscious-thought.js"
