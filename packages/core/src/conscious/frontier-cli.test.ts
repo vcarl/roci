@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest"
+import { Effect, Layer } from "effect"
 import {
   buildFrontierWorkerFlags,
   buildFrontierCliScript,
   FRONTIER_CLI_PATH,
   FRONTIER_RUN_DIR,
+  provisionFrontierCli,
 } from "./frontier-cli.js"
 import { taskLine, steerLine, endLine } from "../core/limbic/hypothalamus/sdk-payload.js"
+import { Docker } from "../services/Docker.js"
 
 describe("buildFrontierWorkerFlags", () => {
   const flags = buildFrontierWorkerFlags("sonnet")
@@ -58,5 +61,29 @@ describe("buildFrontierCliScript", () => {
   })
   it("bakes the wall-clock budget from timeoutMs (no new knob)", () => {
     expect(script).toContain("600000")
+  })
+})
+
+describe("provisionFrontierCli", () => {
+  it("execs a command that base64-writes the script to the CLI path and chmods it executable", async () => {
+    const calls: string[][] = []
+    const StubDocker = Layer.succeed(
+      Docker,
+      Docker.of({
+        exec: (_id: string, command: string[]) => {
+          calls.push(command)
+          return Effect.succeed("")
+        },
+      } as unknown as typeof Docker.Service),
+    )
+    await Effect.runPromise(
+      Effect.provide(provisionFrontierCli("cabc", { model: "sonnet", timeoutMs: 600000 }), StubDocker),
+    )
+    const joined = calls.flat().join(" ")
+    expect(joined).toContain(FRONTIER_CLI_PATH)
+    expect(joined).toContain("base64 -d")
+    expect(joined).toContain("chmod 0755")
+    const b64 = Buffer.from(buildFrontierCliScript({ model: "sonnet", timeoutMs: 600000 })).toString("base64")
+    expect(joined).toContain(b64)
   })
 })

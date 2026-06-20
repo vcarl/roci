@@ -1,5 +1,7 @@
+import { Effect } from "effect"
 import { runtimeBaseArgs, type AnyModel } from "../core/limbic/hypothalamus/runtime.js"
 import { endLine } from "../core/limbic/hypothalamus/sdk-payload.js"
+import { Docker } from "../services/Docker.js"
 
 /** Where the generated CLI is installed inside the container (on PATH). */
 export const FRONTIER_CLI_PATH = "/usr/local/bin/frontier"
@@ -161,4 +163,24 @@ for line in sys.stdin:
     ;;
 esac
 `
+}
+
+/**
+ * Write the generated `frontier` CLI into the container and make it executable.
+ * Base64-pipes the script to sidestep shell quoting (mirrors
+ * provisionConsciousProvider). Idempotent — safe to run before each loop.
+ * Error channel is `never`: a Docker failure is swallowed (a later `frontier`
+ * call surfaces it as a tool failure the conscious mind reads, per spec §8).
+ */
+export function provisionFrontierCli(
+  containerId: string,
+  opts: { model: AnyModel; timeoutMs: number },
+): Effect.Effect<void, never, Docker> {
+  const script = buildFrontierCliScript(opts)
+  const b64 = Buffer.from(script).toString("base64")
+  const sh = `echo ${b64} | base64 -d > ${FRONTIER_CLI_PATH} && chmod 0755 ${FRONTIER_CLI_PATH}`
+  return Effect.gen(function* () {
+    const docker = yield* Docker
+    yield* docker.exec(containerId, ["bash", "-lc", sh])
+  }).pipe(Effect.catchAll(() => Effect.void))
 }
