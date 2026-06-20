@@ -46,8 +46,10 @@ export function buildFrontierCliScript(opts: { model: AnyModel; timeoutMs: numbe
   const flags = buildFrontierWorkerFlags(opts.model)
   const budgetMs = String(opts.timeoutMs)
   // endLine() is reused at GENERATE time for the static `end` frame embedded in the script.
-  // The task/steer text is substituted at RUN time from $1/$2 via a tiny json escaper,
-  // keeping framing identical to the sdk-payload.ts builders (single source of truth).
+  // The task/steer text is json-escaped at RUN time from $1/$2 by the outer shell's
+  // json_str (where the text is a safe "$arg"), keeping framing identical to the
+  // sdk-payload.ts builders (single source of truth). The detached worker never sees
+  // raw task text spliced into its source — it reads the pre-built NDJSON from a file.
   const END = endLine() // {"v":1,"type":"end"}
   // NOTE: keep the embedded shapes in lockstep with sdk-payload.ts builders.
   return `#!/usr/bin/env bash
@@ -66,6 +68,15 @@ end_line()   { printf '${END}\\n'; }
 
 dir_for() { printf '%s-%s' "$RUN_ROOT_PREFIX" "$1"; }
 
+# Write to the fifo without hanging if no reader (the claude worker) is alive.
+# A fifo open-for-write blocks until a reader opens the other end; once the
+# worker exits, that never happens, so a naive open-for-write would hang the caller
+# forever. Bound it with a short timeout and swallow failure.
+fifo_write() {
+  # $1 = fifo path; stdin = bytes to write
+  timeout 2 bash -c 'cat > "$1"' _ "$1" 2>/dev/null || true
+}
+
 cmd="\${1:-}"; shift || true
 case "$cmd" in
   start)
@@ -75,28 +86,36 @@ case "$cmd" in
     mkdir -p "$d"
     mkfifo "$d/in.fifo"
     : > "$d/out"
+    # Pre-build the task NDJSON line in THIS shell, where "$task" is a safe arg
+    # and task_line/json_str are defined. The detached child below runs under a
+    # fresh \`bash -c\` and does NOT inherit these shell functions, and we never
+    # splice task text into its source (an apostrophe would break the quoting),
+    # so we hand the child a finished file + env vars only.
+    task_line "$task" > "$d/task.ndjson"
     # Detached worker: reads NDJSON from the fifo, tees streamed assistant text to out.
     # setsid + redirect so it survives this docker-exec process (cross-turn reattach).
-    setsid bash -c '
-      d="'"$d"'"
-      ( timeout "$(( '"$BUDGET_MS"' / 1000 ))" claude ${flags} < "$d/in.fifo" > "$d/raw" 2>&1; echo $? > "$d/rc" ) &
+    # \$d and the budget cross the boundary via the ENVIRONMENT (no quote-splicing).
+    FRONTIER_D="$d" FRONTIER_BUDGET_S="$(( BUDGET_MS / 1000 ))" setsid bash -c '
+      d="$FRONTIER_D"
+      ( timeout "$FRONTIER_BUDGET_S" claude ${flags} < "$d/in.fifo" > "$d/raw" 2>&1; echo $? > "$d/rc" ) &
       worker=$!
-      # extract assistant text lines into out as they stream (best-effort tee)
-      tail -F "$d/raw" 2>/dev/null | while IFS= read -r line; do
-        printf "%s\\n" "$line" | python3 -c "import json,sys;
-try:
-  o=json.loads(sys.stdin.read())
-  t=o.get(\\"text\\") or (o.get(\\"message\\",{}) or {}).get(\\"text\\")
-  import sys as s
-  print(t) if t else None
-except Exception: pass" >> "$d/out" 2>/dev/null || true
-      done &
+      # extract assistant text into out as it streams: ONE long-lived python
+      # reader over tail -F, parsing each line and flushing so out accumulates
+      # incrementally (best-effort; parse errors are ignored).
+      tail -F "$d/raw" 2>/dev/null | python3 -u -c "import json,sys
+for line in sys.stdin:
+    line=line.strip()
+    if not line: continue
+    try:
+        o=json.loads(line)
+        t=o.get(\\"text\\") or (o.get(\\"message\\",{}) or {}).get(\\"text\\")
+        if t: print(t, flush=True)
+    except Exception: pass" >> "$d/out" 2>/dev/null &
       # keep the fifo open for writers (steer/wait); the writer fd holder:
       exec 9> "$d/in.fifo"
-      printf "%s" "$(task_line "'"$task"'")" >&9 2>/dev/null || true
+      cat "$d/task.ndjson" >&9 2>/dev/null || true
       wait "$worker"
     ' >/dev/null 2>&1 &
-    # record the fifo write fd path via a side helper file for steer/wait
     printf '%s' "$id"
     ;;
   poll)
@@ -113,14 +132,13 @@ except Exception: pass" >> "$d/out" 2>/dev/null || true
   steer)
     id="\${1:-}"; directive="\${2:-}"; d="$(dir_for "$id")"
     if [ ! -p "$d/in.fifo" ]; then echo "status: failed"; exit 0; fi
-    steer_line "$directive" > "$d/in.fifo"
+    steer_line "$directive" | fifo_write "$d/in.fifo"
     echo "status: running"
     ;;
   wait)
     id="\${1:-}"; d="$(dir_for "$id")"
     if [ ! -d "$d" ]; then echo "status: failed"; exit 0; fi
-    end_line() { printf '${END}\\n'; }
-    [ -p "$d/in.fifo" ] && end_line > "$d/in.fifo" || true
+    [ -p "$d/in.fifo" ] && end_line | fifo_write "$d/in.fifo" || true
     # block until the worker records a return code, bounded by the budget
     deadline=$(( $(date +%s) + BUDGET_MS / 1000 + 5 ))
     while [ ! -f "$d/rc" ]; do
