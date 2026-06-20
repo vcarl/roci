@@ -11,11 +11,11 @@ import { taskLine, steerLine, endLine } from "../core/limbic/hypothalamus/sdk-pa
 import { Docker } from "../services/Docker.js"
 
 describe("buildFrontierWorkerFlags", () => {
-  const flags = buildFrontierWorkerFlags("sonnet")
-  it("reuses the claude base flags (no --bare)", () => {
+  const flags = buildFrontierWorkerFlags()
+  it("reuses the claude base flags but NOT a baked --model (model is runtime-variable)", () => {
     expect(flags).toContain("-p")
     expect(flags).toContain("--permission-mode bypassPermissions")
-    expect(flags).toContain("--model sonnet")
+    expect(flags).not.toContain("--model")
     expect(flags).not.toContain("--bare")
   })
   it("runs in streaming-input + streaming-output json mode", () => {
@@ -43,8 +43,17 @@ describe("buildFrontierCliScript", () => {
     // setsid or nohup — detached + file-backed by handle id
     expect(script).toMatch(/setsid|nohup/)
   })
-  it("embeds the worker invocation flags", () => {
-    expect(script).toContain(buildFrontierWorkerFlags("sonnet"))
+  it("embeds the static worker invocation flags (no baked --model)", () => {
+    expect(script).toContain(buildFrontierWorkerFlags())
+  })
+  it("bakes the provided default model and selects it at runtime via FRONTIER_MODEL", () => {
+    expect(script).toContain('DEFAULT_MODEL="sonnet"')
+    expect(script).toContain('--model "$FRONTIER_MODEL"')
+    expect(script).toContain('FRONTIER_MODEL=')
+  })
+  it("start parses an optional --model override, defaulting to DEFAULT_MODEL", () => {
+    expect(script).toContain('--model)')
+    expect(script).toContain('override="${override:-$DEFAULT_MODEL}"')
   })
   it("frames start as a task line and wait as an end line via the shared builders", () => {
     // start writes taskLine(task); wait appends endLine()

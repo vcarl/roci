@@ -121,3 +121,17 @@ describe("writeCharacterAgentFile", () => {
     expect(readFileSync(file, "utf8")).toContain(special)
   })
 })
+
+describe("buildCharacterAgentMarkdown frontier section", () => {
+  const md = buildCharacterAgentMarkdown({ systemPrompt: "You are Ada." })
+  it("teaches the optional --model selector on frontier start", () => {
+    expect(md).toContain('frontier start [--model <name>]')
+  })
+  it("guides the mind to pick a model by difficulty/cost", () => {
+    expect(md).toMatch(/haiku|sonnet/)
+    expect(md).toContain("opus")
+  })
+  it("keeps the laundering instruction (never paste raw event text)", () => {
+    expect(md).toContain("never paste raw incoming event text")
+  })
+})

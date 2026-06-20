@@ -242,7 +242,8 @@ the script are model-generated strings, never spliced from the event queue.
    ```
    → expect `OK`.
 3. Watch the session logs for the conscious mind invoking the tool — a Bash
-   tool call to `frontier start "<task>"`, followed by one or more
+   tool call to `frontier start "<task>"` (or `frontier start --model opus "<task>"` for
+   hard-reasoning sub-tasks), followed by one or more
    `frontier poll`/`steer`/`wait` calls on the returned handle id.
 4. Confirm each `poll`/`wait` prints a trailing `status:` line
    (`running` | `done` | `timed_out` | `failed`) and that the final `wait`

@@ -9,13 +9,20 @@ export const FRONTIER_CLI_PATH = "/usr/local/bin/frontier"
 export const FRONTIER_RUN_DIR = "/tmp/frontier"
 
 /**
- * The `claude` worker invocation flags. Reuses runtimeBaseArgs (the single
- * source of truth for `-p --permission-mode bypassPermissions --model <m>`),
- * then adds streaming-input mode so the worker reads NDJSON (taskLine/steerLine/
- * endLine) from the fifo. NEVER passes --bare.
+ * The STATIC `claude` worker invocation flags — everything EXCEPT `--model`.
+ * The model is runtime-variable (selected per `frontier start` and passed into the
+ * detached worker via FRONTIER_MODEL), so it is composed separately in the script.
+ * Streaming-input mode so the worker reads NDJSON (taskLine/steerLine/endLine) from
+ * the fifo. NEVER passes --bare.
  */
-export function buildFrontierWorkerFlags(model: AnyModel): string {
-  const base = runtimeBaseArgs("claude", model) // -p --permission-mode bypassPermissions --model <m>
+export function buildFrontierWorkerFlags(): string {
+  // runtimeBaseArgs requires a model; we strip the `--model <m>` pair by index so
+  // the model can be supplied at runtime. Position-independent: locate "--model" by
+  // value rather than assuming its position (slice(0,-2) would silently break if arg
+  // order ever changes). runtimeBaseArgs remains the single source of truth (DRY).
+  const base = runtimeBaseArgs("claude", "sonnet") // -p --permission-mode bypassPermissions --model <m>
+  const i = base.indexOf("--model")
+  if (i >= 0) base.splice(i, 2) // remove "--model" and its value
   return [
     ...base,
     "--input-format",
@@ -45,8 +52,9 @@ export function buildFrontierWorkerFlags(model: AnyModel): string {
  * not unit tests — the unit tests assert the script string shape only.
  */
 export function buildFrontierCliScript(opts: { model: AnyModel; timeoutMs: number }): string {
-  const flags = buildFrontierWorkerFlags(opts.model)
+  const flags = buildFrontierWorkerFlags()
   const budgetMs = String(opts.timeoutMs)
+  const defaultModel = opts.model
   // endLine() is reused at GENERATE time for the static `end` frame embedded in the script.
   // The task/steer text is json-escaped at RUN time from $1/$2 by the outer shell's
   // json_str (where the text is a safe "$arg"), keeping framing identical to the
@@ -59,6 +67,7 @@ set -euo pipefail
 
 RUN_ROOT_PREFIX="${FRONTIER_RUN_DIR}"
 BUDGET_MS=${budgetMs}
+DEFAULT_MODEL="${defaultModel}"
 
 # json-escape a single argument's text into a NDJSON string value
 json_str() {
@@ -82,6 +91,12 @@ fifo_write() {
 cmd="\${1:-}"; shift || true
 case "$cmd" in
   start)
+    # Optional leading \`--model <name>\` selector (model-authored tool arg, laundered).
+    override=""
+    case "\${1:-}" in
+      --model) shift; override="\${1:-}"; shift || true ;;
+    esac
+    override="\${override:-\$DEFAULT_MODEL}"
     task="\${1:-}"
     id="$(date +%s%N)-$RANDOM"
     d="$(dir_for "$id")"
@@ -96,10 +111,11 @@ case "$cmd" in
     task_line "$task" > "$d/task.ndjson"
     # Detached worker: reads NDJSON from the fifo, tees streamed assistant text to out.
     # setsid + redirect so it survives this docker-exec process (cross-turn reattach).
-    # \$d and the budget cross the boundary via the ENVIRONMENT (no quote-splicing).
-    FRONTIER_D="$d" FRONTIER_BUDGET_S="$(( BUDGET_MS / 1000 ))" setsid bash -c '
+    # \$d, the budget, and the resolved model cross the boundary via the ENVIRONMENT
+    # (no quote-splicing of runtime values into the child source).
+    FRONTIER_D="$d" FRONTIER_BUDGET_S="$(( BUDGET_MS / 1000 ))" FRONTIER_MODEL="\$override" setsid bash -c '
       d="$FRONTIER_D"
-      ( timeout "$FRONTIER_BUDGET_S" claude ${flags} < "$d/in.fifo" > "$d/raw" 2>&1; echo $? > "$d/rc" ) &
+      ( timeout "$FRONTIER_BUDGET_S" claude ${flags} --model "$FRONTIER_MODEL" < "$d/in.fifo" > "$d/raw" 2>&1; echo $? > "$d/rc" ) &
       worker=$!
       # extract assistant text into out as it streams: ONE long-lived python
       # reader over tail -F, parsing each line and flushing so out accumulates
