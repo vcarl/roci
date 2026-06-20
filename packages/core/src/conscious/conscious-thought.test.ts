@@ -1,10 +1,16 @@
 import { describe, it, expect } from "vitest"
 import { Effect, Layer } from "effect"
 import { CommandExecutor } from "@effect/platform"
-import { ConsciousThought, ConsciousThoughtTest } from "./conscious-thought.js"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import nodePath from "node:path"
+import { ConsciousThought, ConsciousThoughtTest, ConsciousThoughtLive } from "./conscious-thought.js"
+import { FRONTIER_CLI_PATH } from "./frontier-cli.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { Docker } from "../services/Docker.js"
+import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
+import * as core from "../index.js"
 import type { TurnResult } from "../core/limbic/hypothalamus/types.js"
 
 // Minimal stubs — ConsciousThoughtTest never calls the real transport.
@@ -139,20 +145,12 @@ describe("ConsciousThought service contract", () => {
   })
 })
 
-import * as core from "../index.js"
 describe("index re-exports ConsciousThought", () => {
   it("exports ConsciousThought tag and ConsciousThoughtLive layer", () => {
     expect(core.ConsciousThought).toBeDefined()
     expect(core.ConsciousThoughtLive).toBeDefined()
   })
 })
-
-import { ConsciousThoughtLive } from "./conscious-thought.js"
-import { FRONTIER_CLI_PATH } from "./frontier-cli.js"
-import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
-import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
-import nodePath from "node:path"
 
 describe("ConsciousThought.provision writes the frontier CLI", () => {
   it("execs a docker command writing the frontier CLI path", async () => {
