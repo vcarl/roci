@@ -216,6 +216,55 @@ As the loop ticks, watch for these log lines in order:
 | **Worker timeout** | Delegation logs show task but worker never completes. | Set `workerTimeoutMs` higher (default 1 hour) or simplify task. |
 | **Critical interrupt fires** | Loop returns `Interrupted` abruptly. | Inspect logs for alert message. This is correct behavior — the amygdala detected a threat. The phase machine will decide the next transition. |
 
+## Step 5b: Frontier Delegation Tool (live)
+
+During a live character session (Step 5), the conscious OpenCode mind can reach
+for the in-container `frontier` CLI when a sub-task exceeds its local reach.
+The container id and player name are assigned by the orchestrator and threaded
+as parameters — there is **no** env var to set (unlike the Step 4 delegate
+smoke); the tool is provisioned automatically by `ConsciousThought.provision`
+before each tick, idempotently writing `/usr/local/bin/frontier` into the
+container.
+
+**Laundering invariant:** the conscious mind authors every task text and steer
+directive — no raw inbound event text reaches the worker. All `$1`/`$2` args to
+the script are model-generated strings, never spliced from the event queue.
+
+### To verify
+
+1. Run a live session against a domain container (same command as Step 5):
+   ```bash
+   npx tsx apps/roci/src/main.ts start test-pilot --domain spacemolt --tick-interval 15000
+   ```
+2. In another terminal, confirm the CLI was provisioned into the container:
+   ```bash
+   docker exec $(docker ps -q -f name=roci-spacemolt) bash -lc 'test -x /usr/local/bin/frontier && echo OK'
+   ```
+   → expect `OK`.
+3. Watch the session logs for the conscious mind invoking the tool — a Bash
+   tool call to `frontier start "<task>"`, followed by one or more
+   `frontier poll`/`steer`/`wait` calls on the returned handle id.
+4. Confirm each `poll`/`wait` prints a trailing `status:` line
+   (`running` | `done` | `timed_out` | `failed`) and that the final `wait`
+   output is folded back into the conscious mind's reasoning.
+
+### Healthy indicators
+
+- ✅ `frontier` is on PATH in the container (`test -x /usr/local/bin/frontier` → `OK`).
+- ✅ `start` returns a non-empty handle id (a `<epoch_ns>-<random>` string).
+- ✅ `poll` or `wait` prints partial or full worker assistant text before the `status:` line.
+- ✅ Conscious session continues after `wait` with the worker's result in context.
+
+### Failure modes
+
+| Failure | Symptom | Fix |
+|---------|---------|-----|
+| **`frontier: command not found`** | Tool call fails immediately with path error. | `ConsciousThought.provision` did not run. Check that `provisionFrontierCli` is called inside `provisionImpl` before the session tick. |
+| **`status: failed` immediately on `start`** | Handle is returned but `poll` shows `status: failed` at once. | Worker auth/spawn failure. Verify `CLAUDE_CODE_OAUTH_TOKEN` is present in the container exec env (`process-runner.ts` `buildExecArgs`). |
+| **`poll`/`wait` returns `status:` but no worker text** | The status line is present but no assistant output precedes it. | The streamed-output extractor in `frontier-cli.ts` reads top-level `text` and `message.text` JSON fields (lines ~107–115 of the generated script). The real `claude --output-format stream-json` assistant frame nests text under `message.content[].text`. If the body is empty, adjust the Python extractor to also walk `(o.get("message",{}) or {}).get("content",[])` and concatenate `item["text"]` for each `item` where `item.get("type")=="text"`. Validate the fix by capturing a raw `stream-json` sample from inside the container: `docker exec <id> bash -lc 'echo '\''{"v":1,"type":"task","text":"say hi"}'\'' \| claude -p --input-format stream-json --output-format stream-json --permission-mode bypassPermissions --model sonnet 2>/dev/null \| head -20'` — inspect the shape of the assistant event before patching the path. |
+| **Steer is dropped (no effect)** | `steer` returns `status: running` but the directive never reaches the worker. | The fifo-write is bounded by a 2-second timeout heuristic (`timeout 2 bash -c 'cat > "$1"'`). A steer arriving while the worker is mid-read on the same fifo may race and be dropped. This is a best-effort semantic; retrying `steer` is safe. |
+| **Worker timeout** | `wait` returns `status: timed_out`. | Worker ran past the budget. Increase `frontierTimeoutMs` in the character's domain config, or simplify the delegated task. |
+
 ## Step 6: Critical Interrupt Lifecycle
 
 Verify that interrupts trigger correctly and the phase machine transitions appropriately:
