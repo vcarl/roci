@@ -14,6 +14,8 @@ import {
   CONSCIOUS_MODEL_LABEL,
   CONSCIOUS_AGENT_NAME,
 } from "./opencode-config.js"
+import type { AnyModel } from "../core/limbic/hypothalamus/runtime.js"
+import { provisionFrontierCli } from "./frontier-cli.js"
 
 /** Config for a single conscious-tier OpenCode turn. */
 export interface ConsciousTurnConfig {
@@ -32,6 +34,10 @@ export interface ProvisionOpts {
   char: CharacterConfig
   handle: ModelHandle
   systemPrompt: string
+  /** Model the frontier worker runs on (e.g. "sonnet"). */
+  frontierModel: AnyModel
+  /** Wall-clock budget baked into the frontier worker (reuses workerTimeoutMs). */
+  frontierTimeoutMs: number
 }
 
 export class ConsciousThought extends Context.Tag("ConsciousThought")<
@@ -81,6 +87,11 @@ const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker> 
     )
     // Provision the global in-container provider config (requires Docker).
     yield* provisionConsciousProvider(opts.containerId, opts.handle)
+    // Provision the frontier CLI (heavy-lifting delegation tool) into the container.
+    yield* provisionFrontierCli(opts.containerId, {
+      model: opts.frontierModel,
+      timeoutMs: opts.frontierTimeoutMs,
+    })
   }).pipe(
     // Error channel is `never`: a write failure or DockerError is swallowed (idempotent;
     // safe to retry next run) and surfaces downstream as a turn-1 failure.

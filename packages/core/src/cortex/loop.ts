@@ -117,6 +117,8 @@ export const runCortex = (config: CortexLoopConfig) =>
       char: config.char,
       handle,
       systemPrompt,
+      frontierModel: "sonnet",
+      frontierTimeoutMs: workerTimeoutMs,
     })
 
     while (true) {

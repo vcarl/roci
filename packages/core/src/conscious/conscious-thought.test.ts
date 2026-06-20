@@ -128,6 +128,8 @@ describe("ConsciousThought service contract", () => {
               char: { name: "ada", dir: "/work/players/ada/me" },
               handle: { tier: "conscious", provider: "mlx", baseUrl: "http://127.0.0.1:8083/v1", model: "qwen3" },
               systemPrompt: "you are ada",
+              frontierModel: "sonnet",
+              frontierTimeoutMs: 60_000,
             })
           }),
           layer,
@@ -142,5 +144,42 @@ describe("index re-exports ConsciousThought", () => {
   it("exports ConsciousThought tag and ConsciousThoughtLive layer", () => {
     expect(core.ConsciousThought).toBeDefined()
     expect(core.ConsciousThoughtLive).toBeDefined()
+  })
+})
+
+import { ConsciousThoughtLive } from "./conscious-thought.js"
+import { FRONTIER_CLI_PATH } from "./frontier-cli.js"
+import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import nodePath from "node:path"
+
+describe("ConsciousThought.provision writes the frontier CLI", () => {
+  it("execs a docker command writing the frontier CLI path", async () => {
+    const calls: string[][] = []
+    const StubDockerCapturing = Layer.succeed(
+      Docker,
+      Docker.of({
+        exec: (_id: string, command: string[]) => {
+          calls.push(command)
+          return Effect.succeed("")
+        },
+      } as unknown as typeof Docker.Service),
+    )
+    const tempDir = mkdtempSync(nodePath.join(tmpdir(), "roci-test-"))
+    const program = Effect.gen(function* () {
+      const ct = yield* ConsciousThought
+      yield* ct.provision({
+        containerId: "cabc",
+        char: { name: "ada", dir: nodePath.join(tempDir, "me") },
+        handle: DEFAULT_CORTEX_MODELS.conscious,
+        systemPrompt: "You are Ada.",
+        frontierModel: "sonnet",
+        frontierTimeoutMs: 600000,
+      })
+    })
+    await Effect.runPromise(Effect.provide(program, Layer.merge(ConsciousThoughtLive, StubDockerCapturing)))
+    const joined = calls.flat().join(" ")
+    expect(joined).toContain(FRONTIER_CLI_PATH)
   })
 })

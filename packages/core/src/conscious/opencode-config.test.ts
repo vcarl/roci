@@ -47,7 +47,16 @@ describe("buildCharacterAgentMarkdown", () => {
     const md = buildCharacterAgentMarkdown({ systemPrompt: "You are Ada." })
     expect(md).toContain("mode: primary")
     expect(md).toContain(`model: ${CONSCIOUS_MODEL_LABEL}`)
-    expect(md.trimEnd().endsWith("You are Ada.")).toBe(true)
+    expect(md).toContain("You are Ada.")
+  })
+
+  it("teaches the frontier start/poll/steer/wait tool workflow", () => {
+    const md = buildCharacterAgentMarkdown({ systemPrompt: "You are Ada." })
+    expect(md).toContain("frontier")
+    expect(md).toMatch(/frontier start/)
+    expect(md).toMatch(/frontier poll/)
+    expect(md).toMatch(/frontier steer/)
+    expect(md).toMatch(/frontier wait/)
   })
 })
 

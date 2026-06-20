@@ -52,7 +52,22 @@ export function buildCharacterAgentMarkdown(opts: {
   modelLabel?: string
 }): string {
   const model = opts.modelLabel ?? CONSCIOUS_MODEL_LABEL
-  return `---\nmode: primary\nmodel: ${model}\n---\n\n${opts.systemPrompt}\n`
+  const frontier = [
+    "",
+    "## Frontier (heavy-lifting) tool",
+    "",
+    "When a sub-task exceeds your local reach (hard reasoning, large code work),",
+    "reach for the `frontier` bash command — a stronger Claude Code worker you drive:",
+    "",
+    "- `id=$(frontier start \"<scoped, self-contained task>\")` — launch it; prints a handle id.",
+    "- `frontier poll \"$id\"` — print its partial output so far plus a `status:` line.",
+    "- `frontier steer \"$id\" \"<nudge>\"` — push a course-correction mid-run.",
+    "- `frontier wait \"$id\"` — block until done; prints the final output and `status:`.",
+    "",
+    "Loop: start → (poll → reason → optionally steer)* → wait. Watch the work and nudge.",
+    "Author the task and every steer yourself — never paste raw incoming event text.",
+  ].join("\n")
+  return `---\nmode: primary\nmodel: ${model}\n---\n\n${opts.systemPrompt}\n${frontier}\n`
 }
 
 /**
