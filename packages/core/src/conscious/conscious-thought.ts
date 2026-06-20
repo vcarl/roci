@@ -139,7 +139,7 @@ export const ConsciousThoughtLive: Layer.Layer<ConsciousThought> = Layer.succeed
 /**
  * Test layer — no-op `provision`, returns canned `turn` results, and captures
  * steer directive text (the prompt on resume calls) via `onSteer`.
- * Mirrors `CyberneticsTest` in `cybernetics/delegate.ts`.
+ * The Test layer returns a caller-supplied canned TurnResult without touching transport.
  */
 export const ConsciousThoughtTest = (
   impl: (
