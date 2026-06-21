@@ -162,3 +162,89 @@ full suite 252 passed. **Not yet proven multi-tick on metal** — next QA pass v
 forebrain orient no longer hits the parse-failure fallback. Still **deferred**: transport
 retry/backoff for the fetch-failed-fatal gap, and the `markers.ts` ERROR-detector additions. Repro
 artifacts (`players/kvothe/qa/repro-orient.ts`, `repro-out.txt`) discarded.
+
+## 2026-06-21 (run 3) — kvothe/spacemolt (behavior-quality phase)
+
+First run targeting **play quality** after the instruct-model swap. The **122B conscious tier**
+(`mlx-community/Qwen3.5-122B-A10B-4bit`) crashed all 3 sessions at tick 0 — cold-load race on the
+on-demand `:8083` umbrella server (`firstForebrainMs` ~183s; likely timeout/OOM on the shared
+128 GB pool). Conscious swapped to `mlx-community/QwQ-32B-4bit` (commit `dceb202`) and all 3
+tiers pre-warmed before launch. Result: session survived ~12 ticks with 2 DECISIONs and a
+dispatched body action vs 0 ticks before. QwQ-32B produces clean parseable decisions — **not** a
+reasoning-only fallback. Prompt laundering verified clean: no raw inbound event text reaches
+conscious prompts; the invariant now has a named test (`loop.test.ts:634`).
+
+### Misses → new detectors (`apps/roci/src/qa/feed.ts`)
+
+- **FATAL_ERROR** (commit `035425f`; `AnomalyType += FATAL_ERROR`). Fatal errors arrive as
+  `kind:"system"` with text matching `Fatal error:` / `Model call failed [tier=…]`. The existing
+  ERROR detector only fires on `kind:"error"`, so all 3 deaths this run were invisible to the
+  monitor — caught only by the PROCESS_DIED watchdog. New branch parses tier + model into `refs`.
+  Confirms the queued detector note from run 1 and run 2.
+- **DEGRADED_TIER** (commit `1083591`; `AnomalyType += DEGRADED_TIER`; severity warn). Real
+  fixture from this run: `hindbrain: undefined undefined` (`events.jsonl` line 22) — a
+  `parseOr`-swallowed tier-parse failure that was silently dropped before. This is the
+  "silent fallback hides a degraded tier" failure mode flagged at kickoff. Regex
+  `/^(hindbrain|forebrain|conscious): undefined\b/`; tier extracted into `refs`. Both detectors
+  implemented TDD with reviewed tests.
+
+### False positives / chattiness
+
+None this run. The WebSocket `Reconnect failed: Timed out waiting for welcome` at t4 correctly
+fired as an ERROR anomaly (`kind:error`) and the session recovered — detector working as intended.
+No threshold changes needed.
+
+### Digest blind spots → new field (`apps/roci/src/qa/digest.ts`)
+
+- **`terminalCause: string | null`** (commits `fcd7980` + leak-fix `7aabcfa`). Precedence order
+  `FATAL_ERROR > PROCESS_DIED > SESSION_END`, so the root cause is reported rather than its
+  downstream consequence. Not yet exercised end-to-end on a real terminal event: the current run
+  was still alive when the digest was written, and prior on-disk digests predate the field. A leak
+  bug (internal `_terminalRank` being serialized into `run-digest.json`) was caught in review and
+  fixed via `toPublicDigest()`.
+
+### Deferred detector candidates (evidence recorded; awaiting greenlight)
+
+These were observed but **not implemented** — fuzzier signal, higher false-positive risk, or
+pending a design decision before touching the threshold knobs.
+
+- **REPETITIVE_ORIENT / stagnant headline.** In-session forebrain headline collapses to the
+  tautology `docked — docked` within ~3 ticks of plan start (7 of 11 FOREBRAIN events after t3).
+  Proposed: flag N consecutive identical/near-identical forebrain headlines; threshold tunable
+  (risk: genuinely static game states are real). Companion digest field: distinct-headline count /
+  forebrain headline diversity. **Most important play-quality signal miss this run.**
+- **WASTED_CYCLE / plan-never-executed.** Tick 1 produced `DECISION → STEP_SALVAGE → EVALUATE
+  (failed → replan)` with no `STEP_START` between them — a plan was created but the step body
+  expired on a 1-tick budget before opencode could launch (cold Docker/opencode body start). Proposed:
+  flag a DECISION not followed by STEP_START before the next FOREBRAIN. Also surfaces a possible
+  real bug: a step tick-budget of 1 is too tight for cold body starts.
+- **Decision context poverty (semantic; hard to auto-detect).** Forebrain orient never surfaced
+  kvothe's active mission chain (Crimson Resonance / Signal Propagation Survey / Parallel
+  Installations — accepted missions with cargo loaded, all in `DIARY.md`); conscious chose
+  mechanical "Refuel Ship" with no destination or mission rationale. Record as a prompt / orient-tuning
+  observation rather than a detector.
+
+### Carry-forward (re-confirmed open from prior retros)
+
+- **SESSION_END is never emitted.** The enum value exists but nothing in the loop or orchestrator
+  emits it → `terminalCause` can never report a clean end; end is only detectable via PROCESS_DIED.
+  Emitting SESSION_END at graceful shutdown would complete the feature.
+- **`classifyEvent` silent-swallows** `hindbrain:` non-escalate dispositions, `loop_start`, and
+  `Entering phase:` — unchanged from run 2.
+- **No tier cold-load latency detector.** `firstForebrainMs` ~183s went unflagged; the run digest
+  has no per-tier health or latency fields.
+
+### Operational / model decision for the human
+
+- **Conscious-tier strategy.** Keep QwQ-32B-4bit (stable, clean decisions, fits warm alongside the
+  other tiers), **or** restore the 122B on a dedicated warm port with a pre-warm call and longer
+  per-call timeout. The 122B is not viable on the shared on-demand `:8083` umbrella server — it
+  must be the sole large model resident on that port.
+- **Character file gap.** `players/kvothe/me/background.md` and `VALUES.md` are unfilled
+  boilerplate — all of kvothe's identity lives in `DIARY.md`. It's worth confirming whether the
+  character pipeline actually reads `DIARY.md` in the orient/decide prompts; if not, coherence and
+  values are not reaching the model.
+
+**Status:** FATAL_ERROR + DEGRADED_TIER detectors and `terminalCause` digest field applied (TDD,
+reviewed). Deferred candidates (REPETITIVE_ORIENT, WASTED_CYCLE, context-poverty observation)
+queued. Carry-forward items and operational decisions remain open.
