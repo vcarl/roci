@@ -74,7 +74,7 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
     tier: "conscious",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8083/v1",
-    model: "mlx-community/Qwen3.5-122B-A10B-4bit",
+    model: "mlx-community/QwQ-32B-4bit",
     params: { temperature: 0.7, maxTokens: 8192 },
   },
 }
