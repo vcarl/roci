@@ -46,6 +46,35 @@ export function reduce(
     return { state: { tick, started }, records }
   }
 
+  if (ev.kind === "system" && /^Fatal error:/.test(ev.message)) {
+    const modelMatch = ev.message.match(
+      /^Fatal error: Model call failed \[tier=(\w+) model=([^ \]]+)/,
+    )
+    if (modelMatch) {
+      const [, tier, model] = modelMatch
+      records.push({
+        ts: ev.timestamp,
+        kind: "anomaly",
+        type: "FATAL_ERROR",
+        severity: "error",
+        tick,
+        summary: `fatal: Model call failed (tier=${tier})`,
+        refs: { tier, model },
+      })
+    } else {
+      const rest = ev.message.slice("Fatal error: ".length)
+      records.push({
+        ts: ev.timestamp,
+        kind: "anomaly",
+        type: "FATAL_ERROR",
+        severity: "error",
+        tick,
+        summary: `fatal: ${rest}`,
+      })
+    }
+    return { state: { tick, started }, records }
+  }
+
   const marker = classifyEvent(ev)
   if (marker) {
     records.push({

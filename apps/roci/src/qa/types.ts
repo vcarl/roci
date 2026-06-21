@@ -12,7 +12,7 @@ export type TransitionType =
   | "CRITICAL"
   | "SESSION_END"
 
-export type AnomalyType = "PROCESS_DIED" | "STALL" | "ERROR"
+export type AnomalyType = "PROCESS_DIED" | "STALL" | "ERROR" | "FATAL_ERROR"
 
 export type Severity = "info" | "warn" | "error"
 

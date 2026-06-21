@@ -45,4 +45,28 @@ describe("reduce", () => {
     expect(err?.severity).toBe("error")
     expect(err?.summary).toContain("boom")
   })
+
+  it("emits a FATAL_ERROR anomaly for a model-call fatal system event", () => {
+    const msg =
+      "Fatal error: Model call failed [tier=conscious model=mlx-community/Qwen3.5-122B-A10B-4bit endpoint=http://127.0.0.1:8083/v1]: request failed (endpoint unreachable?): TypeError: fetch failed"
+    const { records } = run([ev({ kind: "system", message: msg })])
+    const anomaly = records.find((r) => r.kind === "anomaly")
+    expect(anomaly?.type).toBe("FATAL_ERROR")
+    expect(anomaly?.severity).toBe("error")
+    expect(anomaly?.summary).toContain("tier=conscious")
+    expect(anomaly?.refs?.tier).toBe("conscious")
+  })
+
+  it("emits a FATAL_ERROR anomaly for a non-model-call fatal system event", () => {
+    const { records } = run([ev({ kind: "system", message: "Fatal error: something unexpected" })])
+    const anomaly = records.find((r) => r.kind === "anomaly")
+    expect(anomaly?.type).toBe("FATAL_ERROR")
+    expect(anomaly?.summary).toContain("something unexpected")
+  })
+
+  it("does not emit a FATAL_ERROR anomaly for a normal system event", () => {
+    const { records } = run([ev({ kind: "system", message: "hindbrain: discard 😐" })])
+    const anomaly = records.find((r) => r.kind === "anomaly" && r.type === "FATAL_ERROR")
+    expect(anomaly).toBeUndefined()
+  })
 })
