@@ -168,7 +168,8 @@ shape), **Ground truth** (how the correct answer is computed), **Grading** (whic
 - **Ground truth:** the planted salient facts + arc.
 - **Grading:** programmatic **recall** of planted facts + drop-of-noise (precision); **embedding**
   similarity to reference synthesis; **LLM-judge** for the irreducibly-open prose/narrative quality
-  and faithfulness. Emotional-arc preservation graded via the §4 lexicon parser.
+  and faithfulness. Emotional-arc preservation graded via the §4 palette (which poles the mood
+  lines lean toward across the arc).
 
 ### 3.6 Event-stream triage (hindbrain)
 - **Generate:** an event stream with **planted escalation-worthy events among chaff**. Knobs: stream
@@ -177,40 +178,44 @@ shape), **Ground truth** (how the correct answer is computed), **Grading** (whic
 - **Ground truth:** the planted escalation events.
 - **Grading:** **set/exact** on disposition class + programmatic **recall/precision** over the stream
   (escalation **recall** is safety-critical: missing a real decision point is the dangerous error;
-  precision controls cost). Emotional weight graded via the §4 lexicon parser.
+  precision controls cost). Emotional weight graded via the §4 palette (pole lean + intensity).
 
-## 4. Emotional-Valence Encoding
+## 4. Emotional-Valence Encoding (the character's nonverbal "voice")
 
-Valence is encoded as positions on **bipolar poetic axes** — a lexicon of pole *pairings*, each read
-*"on a scale from X to Y: Z"*, where `Z` is the valence position between the two poles. Poles are
-evocative anchors (emoji or words): `joy / cry`, `baby / old-person`, `city / forest`, `ocean / sky`.
-A character's emotional state at any moment is a position on one or more axes — a point in its
-personal axis-space. Emoji remain the natural anchor/expression at the poles; the **axes** are the
-structure that makes the expression measurable. The encoding is deliberately *poetic*, not clinical:
-the metaphor is the point.
+The hindbrain is essentially **nonverbal** — it expresses feeling by **painting with emoji**, not by
+describing it. Valence is encoded as a short **mood line**: a run of emoji drawn from the character's
+**palette** of pole-pairs. Position and intensity are pictorial, not numeric:
 
-- **Fixed template lexicons (provided).** A small set of starter axis-sets with defined pole
-  semantics. They serve two roles: the **seed** every character starts from, and the **stable eval
-  reference** — challenges grade against template axes, never against an idiosyncratic personal one.
-- **Characters invent and iterate their own lexicon.** Over a lifetime a character adds and refines
-  its own poetic axes — its particular sensibility — recorded as part of identity and evolving. This
-  is where the encoding becomes characterful: two characters in the same situation may reach for
-  different axes.
-- **Parser (the "decoder"):** parses the model's *"from X to Y: Z"* statements into axis positions.
-  For template axes the poles carry known semantics; for personal axes the position is tracked
-  relative to the character's own declared poles. Open, expressive vocabulary in; structured axis
-  positions out.
-- **Lifetime emotional-range record:** a **streaming accumulation** of axis-positions over time → the
-  character's range, extremes, and modal region within its own axis-space. The **dream cycle
-  narrativizes** it into the diary in the character's own vocabulary (*"lately I have lived nearer the
-  ocean than the sky"*). Parser + running accumulator, maintained continuously and cheaply — this is
-  the "automation gathering a lifetime record."
-- **Grading.** Eval challenges use a **fixed template lexicon** so ground truth is stable: each
-  scenario carries **expected axis-positions** (with tolerance), and the model's expressed
-  *"from X to Y: Z"* is parsed and checked programmatically (numeric tolerance, or set-match on
-  discretized bands). Invented **personal axes are not graded against universal truth** — they are
-  graded for **internal consistency** (does the character apply its own lexicon coherently across
-  time?), a separate check the lifetime record enables.
+- the **balance** toward a pole = where the character sits on that axis;
+- the **count** of emoji = how hard it's felt;
+- **mixing** poles = a tangled / chord feeling.
+
+```
+🌊🌊🌊🌊        heavy, sunk deep
+🧊🧊🔥           gone cold — the warmth going
+☁️😊👶           light, glad, wide open
+😢😢🌊🌊🌊       grief, and sinking under it   (a chord across two axes)
+```
+
+A **palette** is a small list of emoji pole-pairs (`🌊 ↔ ☁️  # sinking ↔ soaring`) — the axes a
+character feels along. The word glosses are for *us* and the verbal forebrain; the hindbrain only ever
+emits emoji.
+
+- **Palette is character voice, born at creation.** `scaffoldCharacter` already generates
+  `background.md` + `VALUES.md` from a character description in one LLM call; the palette is generated
+  in that same call and written to `players/<name>/me/PALETTE.md`. A **template-seed palette** is the
+  graceful-degradation fallback (same path as background/values), and doubles as the stable eval
+  reference. Implemented: `core/palette.ts` (`TEMPLATE_PALETTE`, `paletteFile`).
+- **The hindbrain paints with it.** `observe.md` carries the painting instructions with the
+  character's palette rendered in (`{{palette}}`, loaded once into `CortexRunnerConfig.palette` via
+  `CharacterFs.readPalette`). Implemented.
+- **Lifetime emotional-range record (lightweight, later).** A character's emitted mood lines can be
+  rolled up over time into a felt range that the **dream cycle** narrativizes into the diary. This is
+  a *light* aggregation, not a parser/coordinate system — deliberately deferred; do not over-build it.
+- **Grading.** Challenges check emotional appropriateness against the **template palette** — set/recall
+  over which poles the mood line leans toward (e.g. did a threat scenario pull toward the fear/cold
+  pole?), plus intensity by count. No numeric valence-arousal decoding; the embedding/LLM-judge
+  primitives (§3) cover anything fuzzier.
 
 ## 5. System-Prompt Shape
 
@@ -238,9 +243,13 @@ This spec specifies the sections; **authoring the prose is the follow-on impleme
   difficulty scales by knobs; the same sets become distillation targets.
 - **Grading by cheapest-right primitive** — programmatic for computable answers, set/exact for
   classification, embedding for summary closeness, LLM-judge only for irreducibly-open prose.
-- **Bipolar poetic-axis lexicon** (not a universal valence-arousal palette) — emotional state is a
-  position on pole pairings (*"from X to Y: Z"*). **Fixed template lexicons** seed characters and
-  anchor grading; characters then **invent and iterate** their own poetic axes.
+- **Nonverbal pictorial valence** — the hindbrain paints feeling as **emoji mood lines** (pole lean =
+  position, count = intensity, mixing = chord), not words or numbers. The **palette** of emoji
+  pole-pairs is **character voice generated at creation** (`scaffoldCharacter` → `PALETTE.md`), with a
+  template seed as fallback + eval reference. *(Implemented — `core/palette.ts`, `observe.md`,
+  `CharacterFs.readPalette`, `CortexRunnerConfig.palette`.)* A prior over-engineered design (a
+  bipolar-axis lexicon with a `"from X to Y: Z"` parser + coordinate accumulator) was **scrapped** as
+  too heavy for an essentially-nonverbal model.
 - **decide/evaluate model handle allows a per-callsite override; default shared** — they are
   generation vs verification; evals decide whether to split.
 - **Delegation-calibration family kept in** — the only challenge testing the conscious tier's
@@ -251,8 +260,8 @@ This spec specifies the sections; **authoring the prose is the follow-on impleme
 
 ## 7. Open Questions (carry to implementation)
 
-- **Template lexicon contents** — which poetic axes ship as defaults, their pole semantics, and how a
-  character's *invented* axes are declared/stored against identity (§4).
+- **Lifetime emotional-range roll-up** — the light aggregation of a character's mood lines that the
+  dream cycle narrativizes into the diary (§4). Deferred; keep it lightweight.
 - **The cost/latency budget for any hindbrain/forebrain local-vs-remote swap** — numbers come from the
   user's hardware + framework runs (conscious is settled local, §6).
 - **Difficulty-knob defaults** per generator family — the curriculum (easy→hard bands) is tuned once
