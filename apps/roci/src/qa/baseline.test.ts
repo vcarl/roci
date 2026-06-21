@@ -9,6 +9,7 @@ const digest = (counts: Record<string, number>): RunDigest => ({
   sequence: [],
   timings: { firstForebrainMs: null, firstPlanMs: null },
   startTs: null,
+  terminalCause: null,
 })
 
 describe("compareBaseline", () => {

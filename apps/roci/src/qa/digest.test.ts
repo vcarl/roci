@@ -34,4 +34,39 @@ describe("foldDigest", () => {
     expect(d.sequence).toEqual(["SESSION_START"])
     expect(d.counts.ERROR).toBe(1)
   })
+
+  describe("terminalCause", () => {
+    it("FATAL_ERROR anomaly sets terminalCause to its summary", () => {
+      const d = fold([
+        rec({ type: "SESSION_START" }),
+        rec({ kind: "anomaly", type: "FATAL_ERROR", summary: "fatal: Model call failed (tier=conscious)" }),
+      ])
+      expect(d.terminalCause).toContain("tier=conscious")
+    })
+
+    it("FATAL_ERROR wins over subsequent PROCESS_DIED (precedence)", () => {
+      const d = fold([
+        rec({ type: "SESSION_START" }),
+        rec({ kind: "anomaly", type: "FATAL_ERROR", summary: "fatal: Model call failed (tier=conscious)" }),
+        rec({ kind: "anomaly", type: "PROCESS_DIED", summary: "session process 45107 exited" }),
+      ])
+      expect(d.terminalCause).toContain("tier=conscious")
+    })
+
+    it("PROCESS_DIED-only sets terminalCause to its summary", () => {
+      const d = fold([
+        rec({ type: "SESSION_START" }),
+        rec({ kind: "anomaly", type: "PROCESS_DIED", summary: "session process 45107 exited" }),
+      ])
+      expect(d.terminalCause).toContain("session process 45107 exited")
+    })
+
+    it("no terminal records yields terminalCause null", () => {
+      const d = fold([
+        rec({ type: "SESSION_START" }),
+        rec({ kind: "anomaly", type: "STALL", summary: "stall detected" }),
+      ])
+      expect(d.terminalCause).toBeNull()
+    })
+  })
 })

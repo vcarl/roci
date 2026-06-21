@@ -6,16 +6,37 @@ export interface RunDigest {
   sequence: TransitionType[]
   timings: { firstForebrainMs: number | null; firstPlanMs: number | null }
   startTs: string | null
+  terminalCause: string | null
+}
+
+const TERMINAL_RANK: Partial<Record<string, number>> = {
+  FATAL_ERROR: 3,
+  PROCESS_DIED: 2,
+  SESSION_END: 1,
+}
+
+const TERMINAL_CAUSE: Partial<Record<string, (r: FeedRecord) => string>> = {
+  FATAL_ERROR: (r) => r.summary,
+  PROCESS_DIED: (r) => r.summary,
+  SESSION_END: () => "session ended",
+}
+
+// Internal shape extends RunDigest with a rank tracker so the fold stays pure.
+interface RunDigestInternal extends RunDigest {
+  _terminalRank: number
 }
 
 export function emptyDigest(env: RunDigest["env"]): RunDigest {
-  return {
+  const d: RunDigestInternal = {
     env,
     counts: {},
     sequence: [],
     timings: { firstForebrainMs: null, firstPlanMs: null },
     startTs: null,
+    terminalCause: null,
+    _terminalRank: 0,
   }
+  return d
 }
 
 export function foldDigest(d: RunDigest, r: FeedRecord): RunDigest {
@@ -31,5 +52,23 @@ export function foldDigest(d: RunDigest, r: FeedRecord): RunDigest {
   if (timings.firstPlanMs === null && r.type === "DECISION" && r.summary.includes("plan")) {
     timings.firstPlanMs = sinceStart
   }
-  return { ...d, counts, sequence, timings, startTs }
+
+  const currentRank = (d as RunDigestInternal)._terminalRank ?? 0
+  const incomingRank = TERMINAL_RANK[r.type] ?? 0
+  const terminalCause =
+    incomingRank > currentRank
+      ? (TERMINAL_CAUSE[r.type]?.(r) ?? d.terminalCause)
+      : d.terminalCause
+  const nextRank = incomingRank > currentRank ? incomingRank : currentRank
+
+  const next: RunDigestInternal = {
+    ...d,
+    counts,
+    sequence,
+    timings,
+    startTs,
+    terminalCause,
+    _terminalRank: nextRank,
+  }
+  return next
 }
