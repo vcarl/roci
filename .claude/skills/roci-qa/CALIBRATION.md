@@ -248,3 +248,37 @@ pending a design decision before touching the threshold knobs.
 **Status:** FATAL_ERROR + DEGRADED_TIER detectors and `terminalCause` digest field applied (TDD,
 reviewed). Deferred candidates (REPETITIVE_ORIENT, WASTED_CYCLE, context-poverty observation)
 queued. Carry-forward items and operational decisions remain open.
+
+### Addendum — full run to clean shutdown (26 ticks)
+
+A subsequent session ran to graceful SIGTERM after **26 ticks / ~30 min / 2 decisions**. Key
+findings:
+
+**Pre-warm is a worthwhile launch step.** Warming all 3 tiers before launch dropped
+`firstForebrainMs` from ~183s (cold) to **~60s**, and `firstPlanMs` landed at **~103s — the
+first run to ever reach a plan** (all 3 prior runs died before the conscious/plan phase). Add a
+pre-warm step to the standard preflight.
+
+**KEY FINDING — body step HUNG (most important play-quality miss).** `STEP_START` fired at tick
+3; `STEP_DONE` was **never emitted**; fuel stayed frozen at 51% for the remaining ~22 ticks. A
+WebSocket error at tick 4 (`Reconnect failed: Timed out waiting for welcome`) appears to have
+stranded or lost the body process. The in-session loop never bounded the running step — no
+timeout, no salvage, no replan — it continued emitting in-session FOREBRAIN orientations on a
+frozen game state. The `docked — docked` forebrain headline collapse noted as REPETITIVE_ORIENT
+above is the **symptom** of this stuck step, not an independent problem.
+
+**Sharpens the WASTED_CYCLE candidate into two distinct patterns:**
+- (a) **immediate salvage** — a DECISION whose step never starts (the tick-1 1-tick-budget expiry
+  from this run)
+- (b) **STUCK_STEP** — a `STEP_START` with no `STEP_DONE` within N ticks and no replan. Pattern
+  (b) is the more severe failure and the **strongest detector candidate from this run.** It likely
+  reflects a real bug: the in-session loop does not bound a running body step and does not recover
+  when a WS reconnect failure strands the body. Recommend both a STUCK_STEP anomaly detector and a
+  code investigation of in-session step lifecycle / WS-reconnect recovery.
+
+**Operational hygiene gaps at shutdown:**
+1. On graceful session SIGTERM, the session did **not** stop its Docker container — `roci-spacemolt`
+   lingered "Up" after the session exited. Container teardown on graceful shutdown is incomplete.
+2. The monitor did **not** self-finalise on session death via its `--session-pid` probe — needed an
+   explicit kill before it wrote the digest. The PROCESS_DIED → finalise path may not be firing
+   reliably. Both worth a look.
