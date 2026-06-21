@@ -28,6 +28,17 @@ describe("DEFAULT_CORTEX_MODELS", () => {
       expect(h.model.length).toBeGreaterThan(0)
     }
   })
+
+  // Bug B defense-in-depth: the local tiers may be backed by reasoning models
+  // that spend tokens on chain-of-thought. Without a generous max_tokens budget
+  // they can exhaust the server default before emitting a final answer. Pin a
+  // budget so reasoning models have room to produce `content`.
+  it("pins a generous maxTokens budget on every local tier", () => {
+    for (const tier of ["hindbrain", "forebrain", "conscious"] as const) {
+      const h = DEFAULT_CORTEX_MODELS[tier]
+      expect(h.params?.maxTokens).toBeGreaterThanOrEqual(2048)
+    }
+  })
 })
 
 describe("mergeCortexModels", () => {
