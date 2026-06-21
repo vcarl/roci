@@ -14,7 +14,7 @@ interface Args {
   stallMultiple: number
   pollMs: number
   sessionPid: number | null
-  digestOut: string | null
+  digestOut: string
   baseline: string | null
   env: RunDigest["env"]
 }
@@ -51,6 +51,8 @@ function parseArgs(raw: string[]): Args {
     env,
   }
 }
+
+let finalised = false
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
@@ -106,7 +108,9 @@ async function main(): Promise<void> {
   }
 
   const finalise = async (): Promise<void> => {
-    await writeFile(args.digestOut!, `${JSON.stringify(digest, null, 2)}\n`)
+    if (finalised) return
+    finalised = true
+    await writeFile(args.digestOut, `${JSON.stringify(digest, null, 2)}\n`)
     console.log(`run-digest written to ${args.digestOut}`)
     if (args.baseline) {
       try {
@@ -132,7 +136,9 @@ async function main(): Promise<void> {
     const idleMs = Date.now() - lastActivity
     if (idleMs > args.stallMultiple * args.tickIntervalMs) {
       stalled = true
-      await write(anomaly("STALL", "warn", `stall — no event in ${Math.round(idleMs / 1000)}s`))
+      const rec = anomaly("STALL", "warn", `stall — no event in ${Math.round(idleMs / 1000)}s`)
+      await write(rec)
+      digest = foldDigest(digest, rec)
     }
   }
 
@@ -142,7 +148,9 @@ async function main(): Promise<void> {
       process.kill(args.sessionPid, 0) // signal 0 = liveness probe; throws if gone
     } catch {
       ended = true
-      await write(anomaly("PROCESS_DIED", "error", `session process ${args.sessionPid} exited`))
+      const rec = anomaly("PROCESS_DIED", "error", `session process ${args.sessionPid} exited`)
+      await write(rec)
+      digest = foldDigest(digest, rec)
       await finalise()
     }
   }
