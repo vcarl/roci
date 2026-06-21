@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import { createServer, type Server } from "node:http"
-import { Effect, Either } from "effect"
-import { ModelClient, ModelClientLive } from "./client.js"
+import { Effect, Either, Layer } from "effect"
+import { ModelClient, makeModelClient } from "./client.js"
 import { ModelError } from "./errors.js"
 import type { ModelHandle } from "./handles.js"
+
+// Real-fetch client against the local mock server, but with instant backoff so
+// the transient-failure cases below don't pay real retry delays.
+const TestClientLive = Layer.succeed(
+  ModelClient,
+  makeModelClient({ sleep: () => Promise.resolve(), retry: { maxAttempts: 3, baseDelayMs: 0, timeoutMs: 1000 } }),
+)
 
 // A mock OpenAI-compatible server whose behavior is switched per-test.
 let server: Server
@@ -44,7 +51,7 @@ function handle(p: number): ModelHandle {
 }
 
 const run = <A, E>(eff: Effect.Effect<A, E, ModelClient>) =>
-  Effect.runPromise(Effect.provide(eff, ModelClientLive))
+  Effect.runPromise(Effect.provide(eff, TestClientLive))
 
 describe("ModelClient.complete — auth and params", () => {
   it("sends Authorization header and max_tokens when handle has apiKey and params.maxTokens", async () => {
