@@ -37,3 +37,51 @@ The `_terminalRank: number` internal field is stored on the digest object (typed
 ## Concerns
 
 None. Implementation is straightforward and all tests pass cleanly.
+
+---
+
+## Fix: _terminalRank leak
+
+### Problem
+
+`monitor.ts` serialized the raw `digest` object with `JSON.stringify(digest, null, 2)`, and `_terminalRank` is an enumerable own property on the internal `RunDigestInternal` type, so it leaked into every `run-digest.json` output as `"_terminalRank": 3`.
+
+### Changes
+
+**`apps/roci/src/qa/digest.ts`** — Added and exported `toPublicDigest(d: RunDigest): RunDigest` immediately before `foldDigest`. It destructures `_terminalRank` off the internal shape and returns the remaining fields as a plain `RunDigest`:
+
+```ts
+export function toPublicDigest(d: RunDigest): RunDigest {
+  const { _terminalRank: _, ...rest } = d as RunDigestInternal
+  return rest
+}
+```
+
+The fold logic and `RunDigestInternal` internals are unchanged — `_terminalRank` is still threaded through the fold for precedence tracking; it is only stripped at the serialization boundary.
+
+**`apps/roci/src/qa/monitor.ts`** — Updated the single `writeFile` call in `finalise()` to serialize `toPublicDigest(digest)` instead of raw `digest`. Also added `toPublicDigest` to the import. There is only one place the digest is written to disk.
+
+**`apps/roci/src/qa/digest.test.ts`** — Added a new `describe("toPublicDigest", ...)` block with one test that:
+- Folds a sequence ending in `FATAL_ERROR` (so `_terminalRank` is set to 3 on the internal object)
+- (a) Asserts `pub.terminalCause` still contains `"tier=conscious"`
+- (b) Asserts `Object.prototype.hasOwnProperty.call(pub, "_terminalRank") === false`
+- (c) Asserts `JSON.stringify(pub)` does not contain the substring `"_terminalRank"`
+
+### Test Command Output
+
+```
+pnpm vitest --run apps/roci/src/qa/digest.test.ts
+✓ |roci| src/qa/digest.test.ts (8 tests) 2ms
+Test Files  1 passed (1)
+     Tests  8 passed (8)
+
+pnpm vitest --run apps/roci/src/qa/
+✓ |roci| src/qa/render.test.ts (2 tests) 1ms
+✓ |roci| src/qa/baseline.test.ts (4 tests) 1ms
+✓ |roci| src/qa/feed.test.ts (6 tests) 2ms
+✓ |roci| src/qa/markers.test.ts (7 tests) 2ms
+✓ |roci| src/qa/digest.test.ts (8 tests) 2ms
+✓ |roci| src/qa/ingest.test.ts (3 tests) 2ms
+Test Files  6 passed (6)
+     Tests  30 passed (30)
+```

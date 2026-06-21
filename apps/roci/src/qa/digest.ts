@@ -39,6 +39,11 @@ export function emptyDigest(env: RunDigest["env"]): RunDigest {
   return d
 }
 
+export function toPublicDigest(d: RunDigest): RunDigest {
+  const { _terminalRank: _, ...rest } = d as RunDigestInternal
+  return rest
+}
+
 export function foldDigest(d: RunDigest, r: FeedRecord): RunDigest {
   const counts = { ...d.counts, [r.type]: (d.counts[r.type] ?? 0) + 1 }
   const sequence =

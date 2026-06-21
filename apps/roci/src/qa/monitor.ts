@@ -2,7 +2,7 @@
 import { appendFile, open, readFile, writeFile } from "node:fs/promises"
 import process from "node:process"
 import { compareBaseline } from "./baseline.js"
-import { emptyDigest, foldDigest, type RunDigest } from "./digest.js"
+import { emptyDigest, foldDigest, toPublicDigest, type RunDigest } from "./digest.js"
 import { type IngestState, ingestChunk, initialIngestState } from "./ingest.js"
 import { renderFeedLine } from "./render.js"
 import type { AnomalyType, FeedRecord, Severity } from "./types.js"
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
   const finalise = async (): Promise<void> => {
     if (finalised) return
     finalised = true
-    await writeFile(args.digestOut, `${JSON.stringify(digest, null, 2)}\n`)
+    await writeFile(args.digestOut, `${JSON.stringify(toPublicDigest(digest), null, 2)}\n`)
     console.log(`run-digest written to ${args.digestOut}`)
     if (args.baseline) {
       try {

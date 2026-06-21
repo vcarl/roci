@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import type { FeedRecord } from "./types.js"
-import { emptyDigest, foldDigest } from "./digest.js"
+import { emptyDigest, foldDigest, toPublicDigest } from "./digest.js"
 
 const env = { character: "ada", domain: "spacemolt", tickIntervalMs: 30000, gitSha: "abc1234" }
 const rec = (over: Partial<FeedRecord>): FeedRecord =>
@@ -68,5 +68,28 @@ describe("foldDigest", () => {
       ])
       expect(d.terminalCause).toBeNull()
     })
+  })
+})
+
+describe("toPublicDigest", () => {
+  it("strips _terminalRank from the serialized output while preserving all real fields", () => {
+    const d = fold([
+      rec({ type: "SESSION_START" }),
+      rec({ kind: "anomaly", type: "FATAL_ERROR", summary: "fatal: Model call failed (tier=conscious)" }),
+    ])
+    const pub = toPublicDigest(d)
+
+    // (a) real fields intact
+    expect(pub.terminalCause).toContain("tier=conscious")
+    expect(pub.env).toEqual(env)
+    expect(pub.counts).toBeDefined()
+    expect(pub.sequence).toBeDefined()
+    expect(pub.timings).toBeDefined()
+
+    // (b) _terminalRank not present as own property
+    expect(Object.prototype.hasOwnProperty.call(pub, "_terminalRank")).toBe(false)
+
+    // (c) serialized form excludes _terminalRank
+    expect(JSON.stringify(pub)).not.toContain("_terminalRank")
   })
 })
