@@ -5,6 +5,7 @@ import type { ModelError } from "../model/errors.js"
 import { resolveHandle, type CortexModelConfig } from "../model/handles.js"
 import { loadSkillSync } from "../skills/loader.js"
 import { getCadenceGuidance, type Cadence } from "../skills/cadence.js"
+import { TEMPLATE_PALETTE } from "../core/palette.js"
 import type {
   ObserveResult,
   OrientResult,
@@ -29,6 +30,8 @@ export interface CortexRunnerConfig {
   char: CharacterConfig
   cadence: Cadence
   models: CortexModelConfig
+  /** The character's emotional palette (emoji pole-pairs). Defaults to TEMPLATE_PALETTE. */
+  palette?: string
 }
 
 export interface EvaluateInput {
@@ -66,6 +69,7 @@ export function runHindbrain(
     waitState: waitState
       ? `Waiting for: ${waitState.waitingFor}\nResolution signal: ${waitState.resolutionSignal}\nDisposition: ${waitState.disposition}`
       : "None — not currently waiting.",
+    palette: config.palette ?? TEMPLATE_PALETTE,
   })
   return callTier(config, "hindbrain", prompt).pipe(
     Effect.map((text) =>

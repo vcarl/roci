@@ -134,6 +134,7 @@ const fakeFs = Layer.succeed(
     readCredentials: () => Effect.succeed({ username: "", password: "" }),
     readBackground: () => Effect.succeed(""),
     readValues: () => Effect.succeed(""),
+    readPalette: () => Effect.succeed(""),
     characterExists: () => Effect.succeed(true),
   }),
 )

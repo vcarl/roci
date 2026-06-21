@@ -28,15 +28,12 @@ Evaluate these events as a batch and produce a single JSON response. If ANY even
    - `accumulate` — noteworthy but not urgent, fold into context for the next orientation pass (e.g. a new comment appeared, CI is still running, a resource level changed slightly)
    - `escalate` — requires immediate attention and reorientation (e.g. a critical alert, a waited-on event resolved, a task event arrived, something that invalidates current plans)
 
-2. **Emotional weight** — express your gut reaction as an emoji string. Use emoji count for intensity and character for valence:
-   - `👌` — routine, all fine
-   - `😐` — neutral, nothing special
-   - `💅` — mildly interesting
-   - `💅💢` — annoying, needs attention
-   - `😰😰` — worried
-   - `🫠🫠😑🤬` — overwhelmed, multiple problems compounding
-   - `🎉` — something good happened
-   - Mix and match. Be expressive. This is your gut, not your analysis.
+2. **How you feel** — paint your gut reaction as emoji, no words. Use your palette below: lean toward a pole for where you sit, more emoji for a stronger feeling, mix poles when it's tangled. This is your gut, not your analysis.
+
+   Your palette:
+   {{palette}}
+
+   Examples: `🌊🌊🌊🌊` (far down, heavy) · `🧊🧊🔥` (gone cold, warmth going) · `☁️😊👶` (light and open). Coin new emoji when nothing in the palette fits the feeling.
 
 3. **Reason** — one sentence explaining the disposition choice.
 
