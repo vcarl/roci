@@ -115,6 +115,46 @@ describe("ModelClient retry — transient failures", () => {
     expect(calls).toBe(3)
   })
 
+  it("aborts a request whose body read hangs, then retries it", async () => {
+    let calls = 0
+    const layer = clientLayer({
+      fetchImpl: (_url, init) => {
+        calls++
+        const signal = (init as RequestInit | undefined)?.signal
+        if (calls >= 2) return Promise.resolve(jsonResponse(200, okBody))
+        // First call: headers arrive (200), but the body never resolves on its
+        // own — only the abort signal ends it. This models a server that sends
+        // status then stalls the body.
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              if (signal) {
+                signal.addEventListener("abort", () =>
+                  reject(new DOMException("aborted", "AbortError")),
+                )
+              }
+            }),
+          text: () => Promise.resolve(""),
+        } as unknown as Response)
+      },
+      sleep: () => Promise.resolve(),
+      retry: { maxAttempts: 3, baseDelayMs: 1, timeoutMs: 10 },
+    })
+
+    const result = await run(
+      Effect.gen(function* () {
+        const client = yield* ModelClient
+        return yield* client.complete(handle, [{ role: "user", content: "ping" }])
+      }),
+      layer,
+    )
+
+    expect(result.text).toBe("pong")
+    expect(calls).toBe(2)
+  })
+
   it("aborts a hung request via per-call timeout and retries it", async () => {
     let calls = 0
     const layer = clientLayer({

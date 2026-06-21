@@ -87,6 +87,14 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => set
  * and classifies any failure as retryable (network/timeout/5xx/429) or genuine
  * (malformed/invalid-JSON/4xx). Genuine failures are never retried.
  */
+/** A genuine (non-retryable) failure raised mid-attempt, tunnelled through the
+ *  transport promise so the single per-attempt timer still covers the body read. */
+class GenuineFailure extends Error {
+  constructor(readonly reason: string, readonly httpStatus?: number) {
+    super(reason)
+  }
+}
+
 const attempt = (
   deps: Required<Pick<ModelClientDeps, "fetchImpl">> & { timeoutMs: number },
   handle: ModelHandle,
@@ -103,12 +111,15 @@ const attempt = (
       ...(handle.params?.extraBody ?? {}),
     }
 
-    const response = yield* Effect.tryPromise({
-      try: async () => {
+    // The per-call timeout spans the WHOLE attempt — request AND body read — so a
+    // server that sends status then stalls the body is also aborted (a retryable
+    // failure), not just a connection that never opens.
+    const result = yield* Effect.tryPromise({
+      try: async (): Promise<CompletionResult> => {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), deps.timeoutMs)
         try {
-          return await deps.fetchImpl(url, {
+          const response = await deps.fetchImpl(url, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -117,46 +128,55 @@ const attempt = (
             body: JSON.stringify(body),
             signal: controller.signal,
           })
+
+          if (!response.ok) {
+            const text = await response.text().catch(() => "")
+            throw new GenuineFailure(`HTTP ${response.status}: ${text.slice(0, 200)}`, response.status)
+          }
+
+          let json: OpenAIChatResponse
+          try {
+            json = (await response.json()) as OpenAIChatResponse
+          } catch (cause) {
+            // A timeout abort during the body read must stay transient; only a
+            // real parse error of a fully-received body is a genuine failure.
+            if (controller.signal.aborted) throw cause
+            throw new GenuineFailure("invalid JSON response")
+          }
+
+          const content = json?.choices?.[0]?.message?.content
+          if (typeof content !== "string") {
+            throw new GenuineFailure("malformed response: missing choices[0].message.content")
+          }
+
+          return {
+            text: content,
+            usage: {
+              promptTokens: json.usage?.prompt_tokens,
+              completionTokens: json.usage?.completion_tokens,
+            },
+            raw: json,
+          }
         } finally {
           clearTimeout(timer)
         }
       },
-      // A network error, socket hangup, or timeout abort: all transient.
-      catch: (cause) =>
-        err(handle, `request failed (endpoint unreachable?): ${String(cause)}`, {
+      catch: (cause) => {
+        // A deliberate genuine failure: classify by HTTP status (5xx/429 retry).
+        if (cause instanceof GenuineFailure) {
+          return err(handle, cause.reason, {
+            retryable: cause.httpStatus !== undefined && isRetryableStatus(cause.httpStatus),
+          })
+        }
+        // A network error, socket hangup, or timeout abort: all transient.
+        return err(handle, `request failed (endpoint unreachable?): ${String(cause)}`, {
           cause,
           retryable: true,
-        }),
-    })
-
-    if (!response.ok) {
-      const text = yield* Effect.promise(() => response.text().catch(() => ""))
-      return yield* Effect.fail(
-        err(handle, `HTTP ${response.status}: ${text.slice(0, 200)}`, {
-          retryable: isRetryableStatus(response.status),
-        }),
-      )
-    }
-
-    const json = yield* Effect.tryPromise({
-      try: () => response.json() as Promise<OpenAIChatResponse>,
-      // A 200 that won't parse as JSON is a genuine protocol error, not transient.
-      catch: (cause) => err(handle, `invalid JSON response: ${String(cause)}`, { cause }),
-    })
-
-    const content = json?.choices?.[0]?.message?.content
-    if (typeof content !== "string") {
-      return yield* Effect.fail(err(handle, "malformed response: missing choices[0].message.content"))
-    }
-
-    return {
-      text: content,
-      usage: {
-        promptTokens: json.usage?.prompt_tokens,
-        completionTokens: json.usage?.completion_tokens,
+        })
       },
-      raw: json,
-    }
+    })
+
+    return result
   })
 
 /**
@@ -168,7 +188,9 @@ const attempt = (
 export function makeModelClient(deps: ModelClientDeps = {}): { complete: ModelClient["Type"]["complete"] } {
   const fetchImpl = deps.fetchImpl ?? fetch
   const sleep = deps.sleep ?? defaultSleep
-  const policy = deps.retry ?? DEFAULT_RETRY_POLICY
+  const base = deps.retry ?? DEFAULT_RETRY_POLICY
+  // Always make at least one attempt — a 0/negative config must not silently skip the call.
+  const policy: RetryPolicy = { ...base, maxAttempts: Math.max(1, base.maxAttempts) }
 
   const complete = (
     handle: ModelHandle,
