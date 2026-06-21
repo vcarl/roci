@@ -17,7 +17,8 @@
     "pack": "node scripts/pack.js",
     "typecheck": "tsc --noEmit",
     "start": "tsx src/main.ts",
-    "roci": "tsx src/main.ts"
+    "roci": "tsx src/main.ts",
+    "qa-monitor": "tsx src/qa/monitor.ts"
   },
   "dependencies": {
     "@roci/core": "workspace:*",
