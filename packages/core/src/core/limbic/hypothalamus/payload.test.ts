@@ -101,3 +101,41 @@ describe("shellEscape", () => {
     expect(shellEscape("a\nb")).toBe("$'a\\nb'")
   })
 })
+
+import { buildOpenCodeSessionCommand } from "./payload.js"
+
+describe("buildOpenCodeSessionCommand", () => {
+  const cfg: TurnConfig = { ...base, model: "local/conscious", agentName: "conscious", prompt: "do the thing" }
+
+  it("first turn carries --agent, -m, --format json, and the escaped prompt", () => {
+    const cmd = buildOpenCodeSessionCommand(cfg)
+    expect(cmd.startsWith("opencode run")).toBe(true)
+    expect(cmd).toContain("--format json")
+    expect(cmd).toContain("--agent conscious")
+    expect(cmd).toContain("-m local/conscious")
+    expect(cmd).toContain("$'do the thing'")
+  })
+
+  it("resume turn carries -s and the prompt but NOT --agent or -m", () => {
+    const cmd = buildOpenCodeSessionCommand({ ...cfg, prompt: "now do this" }, { sessionId: "ses_abc" })
+    expect(cmd).toContain("-s ses_abc")
+    expect(cmd).toContain("$'now do this'")
+    expect(cmd).not.toContain("--agent")
+    expect(cmd).not.toContain("-m ")
+  })
+
+  it("falls back to the default agent name when none is set", () => {
+    const cmd = buildOpenCodeSessionCommand({ ...cfg, agentName: undefined })
+    expect(cmd).toContain("--agent conscious")
+  })
+
+  it("shell-special-char prompt survives shellEscape inside buildOpenCodeSessionCommand", () => {
+    const tricky = `say "hi" and $HOME and \`date\``
+    const cmd = buildOpenCodeSessionCommand({ ...cfg, prompt: tricky })
+    // The prompt appears inside $'...' ANSI-C quoting
+    expect(cmd).toMatch(/\$'.*say "hi".*'/)
+    // The $'...' wrapper means dollar sign and backtick are literal (no shell expansion)
+    // Confirm the exact escaped form is present in the command string
+    expect(cmd).toContain(`$'say "hi" and $HOME and \`date\`'`)
+  })
+})

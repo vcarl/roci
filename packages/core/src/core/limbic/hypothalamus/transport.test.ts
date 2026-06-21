@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect"
 import { Command } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
 import { runTransport, parseStreamJson, isAuthError } from "./transport.js"
-import { normalizeClaude } from "../../../logging/stream-normalizer.js"
+import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 
 const StubCharacterLog = Layer.succeed(
@@ -70,5 +70,41 @@ describe("runTransport", () => {
       ),
     )
     expect(result.timedOut).toBe(true)
+  })
+})
+
+describe("runTransport captureFromRaw", () => {
+  it("captures the first non-null value and returns it as sessionId", async () => {
+    const l1 = '{"type":"step_start","sessionID":"ses_abc","part":{"model":"local/conscious"}}'
+    const l2 = '{"type":"text","part":{"text":"hello"}}'
+    const command = Command.make("bash", "-c", `printf '%s\\n%s\\n' '${l1}' '${l2}'`)
+
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTransport({
+          command,
+          normalize: normalizeOpenCode,
+          runtimeTag: "opencode",
+          char,
+          role: "body",
+          timeoutMs: 5000,
+          captureFromRaw: (raw) => (typeof raw.sessionID === "string" ? raw.sessionID : null),
+        }),
+        deps,
+      ),
+    )
+    expect(result.sessionId).toBe("ses_abc")
+    expect(result.output).toContain("hello")
+  })
+
+  it("leaves sessionId undefined when no capture hook is given", async () => {
+    const command = Command.make("bash", "-c", `printf '%s\\n' '{"type":"text","part":{"text":"hi"}}'`)
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char, role: "body", timeoutMs: 5000 }),
+        deps,
+      ),
+    )
+    expect(result.sessionId).toBeUndefined()
   })
 })

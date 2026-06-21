@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { SDK_RUNNER_PATH, buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
+import { SDK_RUNNER_PATH, buildSdkInnerCommand, buildSdkStdin, sdkEnv, taskLine, steerLine, endLine } from "./sdk-payload.js"
 import type { TurnConfig } from "./types.js"
 
 const base: TurnConfig = {
@@ -28,6 +28,14 @@ describe("buildSdkStdin", () => {
   it("safely escapes task text with quotes/newlines", () => {
     const lines = buildSdkStdin('say "hi"\nthen stop').trimEnd().split("\n")
     expect(JSON.parse(lines[0])).toEqual({ v: 1, type: "task", text: 'say "hi"\nthen stop' })
+  })
+})
+
+describe("NDJSON line builders", () => {
+  it("produce the host→runner wire shapes (no trailing newline)", () => {
+    expect(JSON.parse(taskLine("do it"))).toEqual({ v: 1, type: "task", text: "do it" })
+    expect(JSON.parse(steerLine("redirect"))).toEqual({ v: 1, type: "steer", text: "redirect" })
+    expect(JSON.parse(endLine())).toEqual({ v: 1, type: "end" })
   })
 })
 

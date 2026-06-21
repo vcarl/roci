@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest"
 import { Effect, Layer, Stream } from "effect"
 import { Command } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
-import { buildExecArgs, runSdkTurn } from "./process-runner.js"
+import { buildExecArgs, runSdkTurn, runSdkSession, runOpenCodeSessionTurn, firstSessionId, sessionNotFoundMessage } from "./process-runner.js"
 import { buildInnerCommand } from "./payload.js"
 import type { TurnConfig } from "./types.js"
 import { runTransport } from "./transport.js"
 import { normalizeSdk } from "../../../logging/stream-normalizer.js"
-import { buildSdkStdin } from "./sdk-payload.js"
+import { buildSdkStdin, taskLine, steerLine, endLine } from "./sdk-payload.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 
 const base: TurnConfig = {
@@ -102,5 +102,65 @@ describe("SDK payload over the transport (run-to-completion)", () => {
 describe("runSdkTurn", () => {
   it("is exported as a function with the runTurn-style signature", () => {
     expect(typeof runSdkTurn).toBe("function")
+  })
+})
+
+describe("runSdkSession", () => {
+  it("is exported as a function", () => {
+    expect(typeof runSdkSession).toBe("function")
+  })
+
+  it("delivers task + steer lines from a static steered stdin and accumulates both turns", async () => {
+    // runSdkSession hardcodes Command.make("docker", …) so it cannot run host-side;
+    // prove the seam (steered stdin → transport → normalizeSdk) via runTransport with
+    // a fake runner, exactly as the Phase-2 composition tests do. The stdin here is a
+    // STATIC task+steer+end stream (the live queue→stream mapping is covered in Task 2).
+    const stdinText = `${taskLine("do the thing")}\n${steerLine("now do the other thing")}\n${endLine()}\n`
+    const stdin = Stream.encodeText(Stream.make(stdinText))
+    // Fake runner: read every stdin line; echo each task/steer line's text as an
+    // assistant event; emit a terminal result on stdin EOF.
+    const script =
+      `node -e 'const rl=require("readline").createInterface({input:process.stdin});` +
+      `rl.on("line",l=>{try{const o=JSON.parse(l);if(o.type==="task"||o.type==="steer")` +
+      `process.stdout.write(JSON.stringify({v:1,type:"event",event:{type:"assistant",message:{content:[{type:"text",text:o.text}]}}})+"\\n")}catch{}});` +
+      `rl.on("close",()=>process.stdout.write(JSON.stringify({v:1,type:"result",status:"completed",output:"done"})+"\\n"))'`
+    const command = Command.make("bash", "-c", script).pipe(Command.stdin(stdin))
+
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTransport({ command, normalize: normalizeSdk, runtimeTag: "sdk", char, role: "body", timeoutMs: 5000 }),
+        sdkDeps,
+      ),
+    )
+    expect(result.timedOut).toBe(false)
+    expect(result.output).toBe("do the thing\nnow do the other thing")
+  }, 10000)
+})
+
+describe("firstSessionId", () => {
+  it("returns the sessionID string when present", () => {
+    expect(firstSessionId({ type: "step_start", sessionID: "ses_xyz" })).toBe("ses_xyz")
+  })
+  it("returns null when absent or non-string", () => {
+    expect(firstSessionId({ type: "text" })).toBeNull()
+    expect(firstSessionId({ sessionID: 123 })).toBeNull()
+  })
+})
+
+describe("runOpenCodeSessionTurn", () => {
+  it("is exported as a function", () => {
+    expect(typeof runOpenCodeSessionTurn).toBe("function")
+  })
+})
+
+describe("sessionNotFoundMessage", () => {
+  it("first-turn message (no resume) matches the original wording", () => {
+    expect(sessionNotFoundMessage()).toBe("OpenCode session id not captured from run output")
+  })
+  it("resume-path message names the resume and the session id, and differs from the first-turn message", () => {
+    const msg = sessionNotFoundMessage({ sessionId: "ses_abc" })
+    expect(msg).toContain("resume")
+    expect(msg).toContain("ses_abc")
+    expect(msg).not.toBe(sessionNotFoundMessage())
   })
 })

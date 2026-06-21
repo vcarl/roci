@@ -9,14 +9,15 @@ import { SituationClassifierTag } from "../core/limbic/thalamus/situation-classi
 import { InterruptRegistryTag } from "../core/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../core/state-renderer.js"
 import { PromptBuilderTag } from "../core/prompt-builder.js"
-import { Cybernetics } from "../cybernetics/delegate.js"
-import type { DelegationResult } from "../cybernetics/types.js"
+import { ConsciousThought } from "../conscious/conscious-thought.js"
+import type { TurnResult } from "../core/limbic/hypothalamus/types.js"
 import { ModelClient } from "../model/client.js"
 import type { ModelError } from "../model/errors.js"
-import { DEFAULT_CORTEX_MODELS, type CortexModelConfig } from "../model/handles.js"
+import { DEFAULT_CORTEX_MODELS, resolveHandle, type CortexModelConfig } from "../model/handles.js"
 import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "../core/model-config.js"
 import type { Cadence } from "../skills/cadence.js"
-import type { Alert, PlanStep } from "../core/types.js"
+import type { Alert } from "../core/types.js"
+import { Docker } from "../services/Docker.js"
 import {
   runHindbrain,
   runForebrain,
@@ -30,6 +31,9 @@ import {
   planSteps,
   formatStepTask,
   formatExecutionReport,
+  formatSteerDirective,
+  detectCompletion,
+  STEP_DONE_MARKER,
 } from "./state.js"
 
 export interface CortexLoopConfig {
@@ -53,10 +57,20 @@ export type CortexResult =
 
 const DEFAULT_TICK_MS = 30_000
 const DEFAULT_ORIENT_INTERVAL = 5
+// workerTimeoutMs is reused as the per-turn wall-clock timeout in 4b.
+// (Previously it bounded a whole delegation step; now it bounds each conscious turn.
+// A dedicated consciousTurnTimeoutMs knob is deferred tuning — Phase 4c.)
 const DEFAULT_WORKER_TIMEOUT_MS = 60 * 60 * 1000
 
+/**
+ * Push a `steer` line to the active session at most once every this-many ticks
+ * (§7) — a knob alongside DEFAULT_ORIENT_INTERVAL. Exported so it is not an unused local.
+ * Tunable per cadence profile (spec §11 open question).
+ */
+export const DEFAULT_STEER_CADENCE_TICKS = 3
+
 const AVAILABLE_ACTIONS =
-  "Each plan step is delegated to a Claude Code worker that does real work (shell, git, gh, file edits, game CLI). Plan concrete steps; each step.task names the action and step.goal describes the outcome."
+  "Each plan step is executed by the conscious agent (local LLM in an OpenCode session with full tool access). Plan concrete steps; each step.task names the action and step.goal describes the outcome."
 
 export const runCortex = (config: CortexLoopConfig) =>
   Effect.gen(function* () {
@@ -65,14 +79,13 @@ export const runCortex = (config: CortexLoopConfig) =>
     const interrupts = yield* InterruptRegistryTag
     const renderer = yield* StateRendererTag
     const promptBuilder = yield* PromptBuilderTag
-    const cybernetics = yield* Cybernetics
+    const consciousThought = yield* ConsciousThought
     const charFs = yield* CharacterFs
 
     const cadence: Cadence = config.cadence ?? "planned-action"
     const orientInterval = config.orientInterval ?? DEFAULT_ORIENT_INTERVAL
     const tickMs = config.tickIntervalMs ?? DEFAULT_TICK_MS
     const workerTimeoutMs = config.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS
-    const workerModels = config.workerModels ?? DEFAULT_MODEL_CONFIG
     const runnerConfig: CortexRunnerConfig = {
       char: config.char,
       cadence,
@@ -84,35 +97,29 @@ export const runCortex = (config: CortexLoopConfig) =>
     let tick = 0
     let stepStartTick = 0
     let stepStartSnapshot = renderer.richSnapshot(state as never)
-    // Orient headline of the in-progress plan — reused as context for every step.
+    // Orient headline of the in-progress plan — context for every step.
     let planHeadline = ""
-    // Fiber running the current delegation, or null.
-    let delegationFiber: Fiber.RuntimeFiber<DelegationResult, never> | null = null
 
-    // Fork the current step (steps[currentStepIndex]) of the in-progress plan as a
-    // cybernetic delegation. Shared by the first step (step 0, just after decide)
-    // and every subsequent step advanced into by an evaluate → next_step transition,
-    // so every step is forked through one identical code path.
-    const forkStep = (step: PlanStep) =>
-      Effect.gen(function* () {
-        const systemPrompt = promptBuilder.systemPrompt("select", "")
-        stepStartTick = tick
-        stepStartSnapshot = renderer.richSnapshot(state as never)
-        yield* logToConsole(config.char.name, "orchestrator", `delegating: ${step.task}`)
-        return yield* Effect.fork(
-          cybernetics.delegate({
-            containerId: config.containerId,
-            playerName: config.char.name,
-            char: config.char,
-            task: formatStepTask(step, planHeadline),
-            systemPrompt,
-            model: workerModels.tiers[step.tier],
-            timeoutMs: workerTimeoutMs,
-            addDirs: config.addDirs,
-            env: config.containerEnv,
-          }),
-        )
-      })
+    // Conscious-session state (replaces delegationFiber / forkStep machinery).
+    let consciousFiber: Fiber.RuntimeFiber<{ result: TurnResult; sessionId: string }, never> | null = null
+    let sessionId: string | null = null
+    let stepReport = ""
+    let stepDoneSignaled = false
+    // Steering state: capacity-1 coalescing (overwrite = newest wins).
+    let pendingDirective: string | null = null
+    let lastSteerTick = 0
+
+    // Provision the conscious agent once before the first tick.
+    const handle = resolveHandle(runnerConfig.models, "conscious")
+    const systemPrompt = promptBuilder.systemPrompt("select", "")
+    yield* consciousThought.provision({
+      containerId: config.containerId,
+      char: config.char,
+      handle,
+      systemPrompt,
+      frontierModel: (config.workerModels ?? DEFAULT_MODEL_CONFIG).tiers.reasoning,
+      frontierTimeoutMs: workerTimeoutMs,
+    })
 
     while (true) {
       tick++
@@ -149,31 +156,143 @@ export const runCortex = (config: CortexLoopConfig) =>
           "orchestrator",
           `Critical: ${criticals.map((a) => a.message).join("; ")}`,
         )
-        if (delegationFiber) yield* Fiber.interrupt(delegationFiber)
+        if (consciousFiber) yield* Fiber.interrupt(consciousFiber)
         return { _tag: "Interrupted" as const, finalState: state, criticals }
       }
 
-      // 3. If a delegation is in flight, check whether it finished.
-      if (delegationFiber) {
-        const done = yield* Fiber.poll(delegationFiber).pipe(Effect.map(Option.isSome))
+      // 3. If a conscious turn is in flight, check whether it finished.
+      if (consciousFiber) {
+        const done = yield* Fiber.poll(consciousFiber).pipe(Effect.map(Option.isSome))
         if (done) {
-          const result = yield* Fiber.join(delegationFiber)
-          delegationFiber = null
-          // EVALUATE the step outcome.
-          const after = renderer.richSnapshot(state as never)
-          const stepIdx = cortex.currentStepIndex
-          const steps = planSteps(cortex.currentPlan)
-          const step = steps[stepIdx]
-          if (step) {
+          const turnOutcome: { result: TurnResult; sessionId: string } = yield* Fiber.join(consciousFiber)
+          consciousFiber = null
+          sessionId = turnOutcome.sessionId
+          // Append turn output to the accumulated step report.
+          const turnOutput = turnOutcome.result.output ?? ""
+          stepReport = stepReport ? `${stepReport}\n${turnOutput}` : turnOutput
+          // Check whether the agent signaled completion.
+          if (detectCompletion(turnOutput)) {
+            stepDoneSignaled = true
+          }
+        }
+        // While a turn runs, fall through to triage the world, then sleep.
+      }
+
+      // 4. HINDBRAIN triage — ungated: runs whenever there are events, even mid-session.
+      let escalate = tick === 1
+      let nonDiscard = false
+      if (tickEvents.length > 0) {
+        const observe = yield* runHindbrain(runnerConfig, tickEvents, cortex.waitState)
+        yield* logToConsole(
+          config.char.name,
+          "cortex",
+          `hindbrain: ${observe.disposition} ${observe.emotionalWeight}`,
+        )
+        cortex.emotionalWeight = observe.emotionalWeight
+        if (observe.disposition !== "discard") {
+          cortex.accumulatedEvents.push(...tickEvents)
+          nonDiscard = true
+        }
+        if (observe.disposition === "escalate") escalate = true
+      }
+      if (!escalate && shouldForceOrient(cortex, tick, orientInterval)) escalate = true
+
+      // 5. FOREBRAIN — two disjoint call sites, never both in the same tick.
+      if (cortex.currentPlan === null) {
+        // 5a. Idle path: orient → decide → plan (unchanged from pre-4b).
+        if (escalate) {
+          const background = yield* charFs
+            .readBackground(config.char)
+            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const values = yield* charFs
+            .readValues(config.char)
+            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const diary = yield* charFs
+            .readDiary(config.char)
+            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const orient = yield* runForebrain(
+            runnerConfig,
+            cortex.accumulatedEvents,
+            JSON.stringify(summary, null, 2),
+            { background, values, diary },
+            cortex.emotionalWeight,
+          )
+          yield* logToConsole(config.char.name, "cortex", `forebrain: ${orient.headline}`)
+          const decide = yield* runConsciousDecide(runnerConfig, orient, "No active plan.", AVAILABLE_ACTIONS)
+          yield* logToConsole(config.char.name, "cortex", `conscious: ${decide.decision}`)
+          cortex.accumulatedEvents = []
+          cortex.lastOrientTick = tick
+
+          if (decide.decision === "terminate") return { _tag: "Completed" as const, finalState: state }
+          if (decide.decision === "wait") {
+            cortex.waitState = decide.wait
+            if (decide.wait.disposition === "terminate")
+              return { _tag: "Completed" as const, finalState: state }
+          } else if (decide.decision === "plan" && decide.steps.length > 0) {
+            cortex.currentPlan = decide
+            cortex.currentStepIndex = 0
+            planHeadline = orient.headline
+          }
+        }
+      } else {
+        // 5b. In-session path: on a NON-DISCARD hindbrain disposition,
+        // run forebrain → formatSteerDirective → store as pendingDirective (overwrite = coalesce).
+        // Runs on EVERY non-discard tick (spec §3-5b / §4); the cadence throttle
+        // (DEFAULT_STEER_CADENCE_TICKS) + capacity-1 coalescing bound the actual steer turns.
+        if (nonDiscard) {
+          const background = yield* charFs
+            .readBackground(config.char)
+            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const values = yield* charFs
+            .readValues(config.char)
+            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const diary = yield* charFs
+            .readDiary(config.char)
+            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const orient = yield* runForebrain(
+            runnerConfig,
+            cortex.accumulatedEvents,
+            JSON.stringify(summary, null, 2),
+            { background, values, diary },
+            cortex.emotionalWeight,
+          )
+          yield* logToConsole(config.char.name, "cortex", `forebrain (in-session): ${orient.headline}`)
+          // Laundered directive: formatSteerDirective formats model-generated forebrain output.
+          pendingDirective = formatSteerDirective(orient)
+          cortex.accumulatedEvents = []
+          cortex.lastOrientTick = tick
+        }
+      }
+
+      // 6. Step execution — when a plan is active and no conscious turn is in flight.
+      if (cortex.currentPlan !== null && !consciousFiber) {
+        const steps = planSteps(cortex.currentPlan)
+        const step = steps[cortex.currentStepIndex]
+        if (step) {
+          const ticksConsumed = tick - stepStartTick
+          const budgetElapsed = ticksConsumed >= step.timeoutTicks
+
+          // 6a. Evaluate now if the agent signaled done OR the tick-budget expired.
+          if (stepDoneSignaled || budgetElapsed) {
+            if (stepDoneSignaled) {
+              yield* logToConsole(config.char.name, "orchestrator", `step done-marker detected; evaluating`)
+            } else {
+              yield* logToConsole(config.char.name, "orchestrator", `step tick-budget elapsed (${ticksConsumed}/${step.timeoutTicks}); salvage evaluate`)
+            }
+            const after = renderer.richSnapshot(state as never)
+            const stepIdx = cortex.currentStepIndex
+            const conditionCheck = stepDoneSignaled
+              ? `Agent signaled completion (${STEP_DONE_MARKER}) after ${ticksConsumed} ticks`
+              : `Tick budget elapsed: ${ticksConsumed} ticks consumed of ${step.timeoutTicks} budgeted; no completion signal`
             const evalResult = yield* runConsciousEvaluate(runnerConfig, {
               task: step.task,
               goal: step.goal,
               successCondition: step.successCondition,
               ticksBudgeted: step.timeoutTicks,
-              ticksConsumed: tick - stepStartTick,
-              executionReport: formatExecutionReport(result.output),
+              ticksConsumed,
+              executionReport: formatExecutionReport(stepReport),
               stateDiff: renderer.stateDiff(stepStartSnapshot, after),
-              conditionCheck: `worker status: ${result.status}`,
+              conditionCheck,
               emotionalState: cortex.emotionalWeight,
               remainingSteps:
                 steps
@@ -210,74 +329,64 @@ export const runCortex = (config: CortexLoopConfig) =>
               cortex.currentPlan = null
               cortex.lastOrientTick = 0
             } else {
-              // next_step
+              // next_step: advance and reset session state for the new step.
               cortex.currentStepIndex++
-              if (cortex.currentStepIndex >= steps.length) cortex.currentPlan = null
+              if (cortex.currentStepIndex >= steps.length) {
+                cortex.currentPlan = null
+              }
             }
+            // Reset per-step session state for the next step (or next plan).
+            sessionId = null
+            stepReport = ""
+            stepDoneSignaled = false
+            pendingDirective = null
+            lastSteerTick = 0
+            stepStartTick = tick
+            stepStartSnapshot = renderer.richSnapshot(state as never)
+          } else {
+            // 6b. Budget not elapsed, no done-signal — fork the next turn.
+            if (sessionId === null) {
+              // Turn 1: open the session.
+              stepStartTick = tick
+              stepStartSnapshot = renderer.richSnapshot(state as never)
+              yield* logToConsole(config.char.name, "orchestrator", `conscious turn 1: ${step.task}`)
+              consciousFiber = yield* Effect.fork(
+                consciousThought.turn(
+                  {
+                    containerId: config.containerId,
+                    playerName: config.char.name,
+                    char: config.char,
+                    prompt: formatStepTask(step, planHeadline),
+                    timeoutMs: workerTimeoutMs,
+                  },
+                  // No resume on turn 1.
+                ),
+              )
+            } else if (
+              pendingDirective !== null &&
+              tick - lastSteerTick >= DEFAULT_STEER_CADENCE_TICKS
+            ) {
+              // Steer turn: send the latest coalesced directive to the existing session.
+              const directive = pendingDirective
+              pendingDirective = null
+              lastSteerTick = tick
+              yield* logToConsole(config.char.name, "orchestrator", `conscious steer turn (session ${sessionId})`)
+              consciousFiber = yield* Effect.fork(
+                consciousThought.turn(
+                  {
+                    containerId: config.containerId,
+                    playerName: config.char.name,
+                    char: config.char,
+                    prompt: directive,
+                    timeoutMs: workerTimeoutMs,
+                  },
+                  { sessionId },
+                ),
+              )
+            }
+            // Otherwise: session is open, waiting for turn result or cadence window.
           }
         }
-        // While a delegation runs, fall through to keep triaging the world, then sleep.
-      }
-
-      // 4. HINDBRAIN triage (only when idle of a running plan and there are events).
-      let escalate = tick === 1
-      if (!delegationFiber && tickEvents.length > 0) {
-        const observe = yield* runHindbrain(runnerConfig, tickEvents, cortex.waitState)
-        yield* logToConsole(
-          config.char.name,
-          "cortex",
-          `hindbrain: ${observe.disposition} ${observe.emotionalWeight}`,
-        )
-        cortex.emotionalWeight = observe.emotionalWeight
-        if (observe.disposition !== "discard") cortex.accumulatedEvents.push(...tickEvents)
-        if (observe.disposition === "escalate") escalate = true
-      }
-      if (!delegationFiber && !escalate && shouldForceOrient(cortex, tick, orientInterval))
-        escalate = true
-
-      // 5. FOREBRAIN + CONSCIOUS(decide) — only when no plan is executing.
-      if (escalate && !delegationFiber && cortex.currentPlan === null) {
-        const background = yield* charFs
-          .readBackground(config.char)
-          .pipe(Effect.catchAll(() => Effect.succeed("")))
-        const values = yield* charFs
-          .readValues(config.char)
-          .pipe(Effect.catchAll(() => Effect.succeed("")))
-        const diary = yield* charFs
-          .readDiary(config.char)
-          .pipe(Effect.catchAll(() => Effect.succeed("")))
-        const orient = yield* runForebrain(
-          runnerConfig,
-          cortex.accumulatedEvents,
-          JSON.stringify(summary, null, 2),
-          { background, values, diary },
-          cortex.emotionalWeight,
-        )
-        yield* logToConsole(config.char.name, "cortex", `forebrain: ${orient.headline}`)
-        const decide = yield* runConsciousDecide(runnerConfig, orient, "No active plan.", AVAILABLE_ACTIONS)
-        yield* logToConsole(config.char.name, "cortex", `conscious: ${decide.decision}`)
-        cortex.accumulatedEvents = []
-        cortex.lastOrientTick = tick
-
-        if (decide.decision === "terminate") return { _tag: "Completed" as const, finalState: state }
-        if (decide.decision === "wait") {
-          cortex.waitState = decide.wait
-          if (decide.wait.disposition === "terminate")
-            return { _tag: "Completed" as const, finalState: state }
-        } else if (decide.decision === "plan" && decide.steps.length > 0) {
-          cortex.currentPlan = decide
-          cortex.currentStepIndex = 0
-          planHeadline = orient.headline
-        }
-      }
-
-      // 6. Fork the current step whenever a plan has a remaining, not-yet-running
-      // step. Reached for step 0 (just after decide) and for every later step the
-      // evaluate → next_step transition advanced into, so all steps fork identically.
-      if (!delegationFiber && cortex.currentPlan !== null) {
-        const steps = planSteps(cortex.currentPlan)
-        const step = steps[cortex.currentStepIndex]
-        if (step) delegationFiber = yield* forkStep(step)
       }
 
       // 7. Sleep one tick.
@@ -294,7 +403,8 @@ export const runCortex = (config: CortexLoopConfig) =>
     | CharacterFs
     | CharacterLog
     | ModelClient
-    | Cybernetics
+    | ConsciousThought
+    | Docker
     | CommandExecutor.CommandExecutor
     | OAuthToken
   >

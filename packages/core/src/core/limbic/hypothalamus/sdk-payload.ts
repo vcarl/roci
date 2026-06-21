@@ -11,14 +11,27 @@ export function buildSdkInnerCommand(): string {
   return `node ${SDK_RUNNER_PATH}`
 }
 
+/** A single host→runner `task` NDJSON line (no trailing newline). */
+export function taskLine(text: string): string {
+  return JSON.stringify({ v: 1, type: "task", text })
+}
+
+/** A single host→runner `steer` NDJSON line (no trailing newline). */
+export function steerLine(text: string): string {
+  return JSON.stringify({ v: 1, type: "steer", text })
+}
+
+/** The host→runner `end` control NDJSON line (no trailing newline). */
+export function endLine(): string {
+  return JSON.stringify({ v: 1, type: "end" })
+}
+
 /**
  * The NDJSON stdin for a run-to-completion SDK turn: one `task`, then `end`.
  * Phase 2 never emits `steer` (that is Phase 3).
  */
 export function buildSdkStdin(task: string): string {
-  const taskLine = JSON.stringify({ v: 1, type: "task", text: task })
-  const endLine = JSON.stringify({ v: 1, type: "end" })
-  return `${taskLine}\n${endLine}\n`
+  return `${taskLine(task)}\n${endLine()}\n`
 }
 
 /**
