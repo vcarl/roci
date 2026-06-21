@@ -51,21 +51,24 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8081/v1",
     model: "mlx-community/Qwen3.5-9B-4bit",
-    params: { temperature: 0.3 },
+    // A reasoning model spends tokens on chain-of-thought before the final
+    // answer; an unset/small budget can leave `content` empty (Bug B). Give it
+    // generous headroom so the triage JSON still lands after the reasoning.
+    params: { temperature: 0.3, maxTokens: 4096 },
   },
   forebrain: {
     tier: "forebrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8082/v1",
     model: "mlx-community/GLM-4.7-Flash-4bit",
-    params: { temperature: 0.5 },
+    params: { temperature: 0.5, maxTokens: 4096 },
   },
   conscious: {
     tier: "conscious",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8083/v1",
     model: "mlx-community/Qwen3.5-122B-A10B-4bit",
-    params: { temperature: 0.7 },
+    params: { temperature: 0.7, maxTokens: 8192 },
   },
 }
 

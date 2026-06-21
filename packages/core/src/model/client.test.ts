@@ -8,7 +8,15 @@ import type { ModelHandle } from "./handles.js"
 // A mock OpenAI-compatible server whose behavior is switched per-test.
 let server: Server
 let port: number
-let mode: "ok" | "500" | "garbage" = "ok"
+let mode:
+  | "ok"
+  | "500"
+  | "garbage"
+  | "reasoning-only"
+  | "reasoning-content-field"
+  | "reasoning-empty-content"
+  | "reasoning-and-content"
+  | "truly-empty" = "ok"
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -22,6 +30,59 @@ beforeAll(async () => {
     }
     if (mode === "garbage") {
       res.writeHead(200, { "Content-Type": "application/json" }).end('{"unexpected":true}')
+      return
+    }
+    // A reasoning model that spent its budget thinking: `content` is missing
+    // but the answer text lives in `message.reasoning`.
+    if (mode === "reasoning-only") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", reasoning: '{"disposition":"discard"}' } }],
+          usage: { prompt_tokens: 3, completion_tokens: 7 },
+        }),
+      )
+      return
+    }
+    // Same, but the field is named `reasoning_content` (vLLM / some MLX builds).
+    if (mode === "reasoning-content-field") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", reasoning_content: '{"disposition":"escalate"}' } }],
+          usage: { prompt_tokens: 3, completion_tokens: 7 },
+        }),
+      )
+      return
+    }
+    // `content` is present but an empty string; reasoning has the real text.
+    if (mode === "reasoning-empty-content") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          choices: [
+            { message: { role: "assistant", content: "", reasoning: '{"disposition":"accumulate"}' } },
+          ],
+          usage: { prompt_tokens: 3, completion_tokens: 5 },
+        }),
+      )
+      return
+    }
+    // Both present: `content` must win over `reasoning`.
+    if (mode === "reasoning-and-content") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "real-answer", reasoning: "thinking..." } }],
+          usage: { prompt_tokens: 3, completion_tokens: 2 },
+        }),
+      )
+      return
+    }
+    // No usable text anywhere — still a hard error.
+    if (mode === "truly-empty") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant" } }],
+          usage: { prompt_tokens: 3, completion_tokens: 0 },
+        }),
+      )
       return
     }
     res.writeHead(200, { "Content-Type": "application/json" }).end(
@@ -146,5 +207,51 @@ describe("ModelClient.complete", () => {
     )
     expect(Either.isLeft(result)).toBe(true)
     if (Either.isLeft(result)) expect(result.left.reason).toMatch(/request failed|unreachable/i)
+  })
+})
+
+describe("ModelClient.complete — reasoning-model tolerance", () => {
+  const completeOk = (p: number) =>
+    run(
+      Effect.gen(function* () {
+        const client = yield* ModelClient
+        return yield* client.complete(handle(p), [{ role: "user", content: "ping" }])
+      }),
+    )
+
+  it("falls back to message.reasoning when content is missing (does not fatal)", async () => {
+    mode = "reasoning-only"
+    const result = await completeOk(port)
+    expect(result.text).toBe('{"disposition":"discard"}')
+  })
+
+  it("falls back to message.reasoning_content when content is missing", async () => {
+    mode = "reasoning-content-field"
+    const result = await completeOk(port)
+    expect(result.text).toBe('{"disposition":"escalate"}')
+  })
+
+  it("falls back to reasoning when content is an empty string", async () => {
+    mode = "reasoning-empty-content"
+    const result = await completeOk(port)
+    expect(result.text).toBe('{"disposition":"accumulate"}')
+  })
+
+  it("prefers content over reasoning when both are present", async () => {
+    mode = "reasoning-and-content"
+    const result = await completeOk(port)
+    expect(result.text).toBe("real-answer")
+  })
+
+  it("still fails with ModelError when no usable text exists anywhere", async () => {
+    mode = "truly-empty"
+    const result = await run(
+      Effect.gen(function* () {
+        const client = yield* ModelClient
+        return yield* client.complete(handle(port), [{ role: "user", content: "ping" }])
+      }).pipe(Effect.either),
+    )
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) expect(result.left.reason).toMatch(/malformed/i)
   })
 })
