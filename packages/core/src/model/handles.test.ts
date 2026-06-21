@@ -39,6 +39,24 @@ describe("DEFAULT_CORTEX_MODELS", () => {
       expect(h.params?.maxTokens).toBeGreaterThanOrEqual(2048)
     }
   })
+
+  // Run-2 QA finding: hindbrain (observe) and forebrain (orient) must emit a
+  // parseable JSON result every tick (parseOr otherwise degrades to a "parse
+  // failure" fallback). Reasoning models burn the token budget on a variable
+  // chain-of-thought and intermittently hit finish=length with empty content
+  // (directly observed: GLM-4.7-Flash failed 2/6 orient probes). Instruct models
+  // emit the JSON directly (reasoningLen=0, finish=stop). Guard the defaults for
+  // these structured-output tiers against regressing to a reasoning model.
+  const KNOWN_REASONING_MARKERS = ["Qwen3.5", "GLM-4.7-Flash", "QwQ", "DeepSeek-R1", "Magistral"]
+  it("points structured-output tiers (hindbrain, forebrain) at non-reasoning instruct models", () => {
+    for (const tier of ["hindbrain", "forebrain"] as const) {
+      const model = DEFAULT_CORTEX_MODELS[tier].model
+      expect(model).toMatch(/Instruct/i)
+      for (const marker of KNOWN_REASONING_MARKERS) {
+        expect(model).not.toContain(marker)
+      }
+    }
+  })
 })
 
 describe("mergeCortexModels", () => {

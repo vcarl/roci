@@ -46,23 +46,30 @@ export interface CortexModelOverlay {
  * externally, not by this module.
  */
 export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
+  // hindbrain (observe) and forebrain (orient) must emit a parseable JSON result
+  // every tick. Reasoning models burn the token budget on a variable
+  // chain-of-thought and intermittently hit finish=length with empty content
+  // (Bug B on hindbrain; the same failure was directly observed on forebrain's
+  // GLM-4.7-Flash — 2/6 orient probes truncated). Instruct models emit the JSON
+  // directly (reasoningLen=0, finish=stop), so the structured-output tiers are
+  // pinned to instruct models. The maxTokens budget stays generous as headroom.
   hindbrain: {
     tier: "hindbrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8081/v1",
-    model: "mlx-community/Qwen3.5-9B-4bit",
-    // A reasoning model spends tokens on chain-of-thought before the final
-    // answer; an unset/small budget can leave `content` empty (Bug B). Give it
-    // generous headroom so the triage JSON still lands after the reasoning.
+    model: "mlx-community/Qwen2.5-7B-Instruct-4bit",
     params: { temperature: 0.3, maxTokens: 4096 },
   },
   forebrain: {
     tier: "forebrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8082/v1",
-    model: "mlx-community/GLM-4.7-Flash-4bit",
+    model: "mlx-community/Qwen2.5-32B-Instruct-4bit",
     params: { temperature: 0.5, maxTokens: 4096 },
   },
+  // conscious (decide/evaluate) is the designated deep-reasoner: a reasoning
+  // model is appropriate here, and its larger 8192 budget + smaller output
+  // schema have held up in practice. Left as a reasoning model deliberately.
   conscious: {
     tier: "conscious",
     provider: "mlx",
