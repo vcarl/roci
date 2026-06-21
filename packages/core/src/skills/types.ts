@@ -10,7 +10,8 @@ export type Disposition = "discard" | "accumulate" | "escalate"
  */
 export interface ObserveResult {
   readonly disposition: Disposition
-  /** Emoji string encoding gut reaction. Intensity = count, character = valence. */
+  /** Emoji mood line painted from the character's palette: count = intensity,
+   *  pole-lean = position, mixed poles = a chord. */
   readonly emotionalWeight: string
   /** Brief note on why this disposition was chosen. */
   readonly reason: string
