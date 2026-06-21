@@ -63,31 +63,55 @@ while read -r cidr; do
   ipset add allowed-domains "$cidr" 2>/dev/null || true
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
-# Resolve and add other allowed domains
-for domain in \
-  "registry.npmjs.org" \
-  "api.anthropic.com" \
-  "openrouter.ai" \
-  "sentry.io" \
-  "statsig.anthropic.com" \
-  "statsig.com" \
-  "game.spacemolt.com"; do
+# --- BEGIN domain resolution
+# Resolve a single domain and add its A records to the allowed-domains ipset.
+# Returns non-zero (without exiting) if resolution fails or yields a bad IP, so
+# callers can decide whether the failure is fatal.
+resolve_and_add() {
+  local domain="$1"
   echo "Resolving $domain..."
+  local ips
   ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
   if [ -z "$ips" ]; then
-    echo "ERROR: Failed to resolve $domain"
-    exit 1
+    echo "Failed to resolve $domain"
+    return 1
   fi
 
+  local ip
   while read -r ip; do
     if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-      echo "ERROR: Invalid IP from DNS for $domain: $ip"
-      exit 1
+      echo "Invalid IP from DNS for $domain: $ip"
+      return 1
     fi
     echo "Adding $ip for $domain"
     ipset add allowed-domains "$ip" 2>/dev/null || true
   done < <(echo "$ips")
+}
+
+# Essential domains: if any of these fail to resolve, the firewall (and the
+# container) cannot do its job, so abort hard under set -e.
+for domain in \
+  "registry.npmjs.org" \
+  "api.anthropic.com" \
+  "openrouter.ai" \
+  "game.spacemolt.com"; do
+  if ! resolve_and_add "$domain"; then
+    echo "ERROR: Failed to resolve essential domain $domain"
+    exit 1
+  fi
 done
+
+# Non-essential telemetry/error-reporting domains: best-effort. A resolution
+# failure here (e.g. transient DNS for statsig/sentry) must NOT kill the script
+# or the container — the agent works fine without telemetry. The `|| true`
+# keeps these out of `set -e`'s reach.
+for domain in \
+  "sentry.io" \
+  "statsig.anthropic.com" \
+  "statsig.com"; do
+  resolve_and_add "$domain" || echo "WARNING: skipping non-essential domain $domain (resolution failed, continuing)"
+done
+# --- END domain resolution
 
 # Get host IP from default route
 HOST_IP=$(ip route | grep default | cut -d" " -f3)
