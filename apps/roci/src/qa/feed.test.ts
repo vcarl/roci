@@ -69,4 +69,29 @@ describe("reduce", () => {
     const anomaly = records.find((r) => r.kind === "anomaly" && r.type === "FATAL_ERROR")
     expect(anomaly).toBeUndefined()
   })
+
+  // Task 3 — DEGRADED_TIER detector
+  // Real fixture from players/kvothe/logs/events.jsonl line 22:
+  // {"timestamp":"2026-06-21T18:07:33.070Z","character":"kvothe","system":"cortex","subsystem":"cortex","kind":"system","message":"hindbrain: undefined undefined"}
+  it("emits a DEGRADED_TIER anomaly for a tier output that is undefined", () => {
+    const { records } = run([ev({ kind: "system", message: "hindbrain: undefined undefined" })])
+    const anomaly = records.find((r) => r.kind === "anomaly" && r.type === "DEGRADED_TIER")
+    expect(anomaly?.type).toBe("DEGRADED_TIER")
+    expect(anomaly?.severity).toBe("warn")
+    expect(anomaly?.refs?.tier).toBe("hindbrain")
+  })
+
+  it("does not emit a DEGRADED_TIER anomaly for a healthy hindbrain line", () => {
+    const { records } = run([ev({ kind: "system", message: "hindbrain: accumulate 😊😊😊" })])
+    const anomaly = records.find((r) => r.kind === "anomaly" && r.type === "DEGRADED_TIER")
+    expect(anomaly).toBeUndefined()
+  })
+
+  it("does not emit a DEGRADED_TIER anomaly for a healthy forebrain line", () => {
+    const { records } = run([
+      ev({ kind: "system", message: "forebrain (in-session): docked — docked" }),
+    ])
+    const anomaly = records.find((r) => r.kind === "anomaly" && r.type === "DEGRADED_TIER")
+    expect(anomaly).toBeUndefined()
+  })
 })

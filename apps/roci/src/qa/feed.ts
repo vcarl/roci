@@ -75,6 +75,23 @@ export function reduce(
     return { state: { tick, started }, records }
   }
 
+  if (ev.kind === "system") {
+    const degradedMatch = ev.message.match(/^(hindbrain|forebrain|conscious): undefined\b/)
+    if (degradedMatch) {
+      const tier = degradedMatch[1]
+      records.push({
+        ts: ev.timestamp,
+        kind: "anomaly",
+        type: "DEGRADED_TIER",
+        severity: "warn",
+        tick,
+        summary: `degraded tier: ${tier} produced no usable output`,
+        refs: { tier },
+      })
+      return { state: { tick, started }, records }
+    }
+  }
+
   const marker = classifyEvent(ev)
   if (marker) {
     records.push({
