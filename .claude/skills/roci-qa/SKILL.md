@@ -36,7 +36,9 @@ events file:
 ```bash
 npx tsx apps/roci/src/qa/monitor.ts \
   --events players/<char>/logs/events.jsonl \
-  --tick-interval-ms <ms> --session-pid <pid>
+  --char <char> --domain <domain> \
+  --tick-interval-ms <ms> --session-pid <pid> \
+  [--baseline players/<char>/qa/baselines/<name>.json]
 ```
 
 The monitor's stdout one-liners are your **wake signal**; `players/<char>/logs/qa-feed.jsonl`
@@ -77,8 +79,10 @@ surfaced artifact; decide continue/stop.
 
 ## 6. Wind-down
 
-When the session ends (`PROCESS_DIED`, or the human stops it), summarise the run from
-`qa-feed.jsonl`. (Layer 2 adds: finalise the run digest and, if a baseline exists, report drift.)
+When the session ends, the monitor writes `players/<char>/logs/run-digest.json` and (if you
+launched it with `--baseline players/<char>/qa/baselines/<name>.json`) prints a drift report.
+Relay the drift report. If the run was good and you want it as a new reference, copy the digest:
+`cp players/<char>/logs/run-digest.json players/<char>/qa/baselines/<name>.json`.
 
 ## 7. Calibration retro (the dogfood loop)
 

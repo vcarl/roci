@@ -1,6 +1,8 @@
 // apps/roci/src/qa/monitor.ts
-import { appendFile, open } from "node:fs/promises"
+import { appendFile, open, readFile, writeFile } from "node:fs/promises"
 import process from "node:process"
+import { compareBaseline } from "./baseline.js"
+import { emptyDigest, foldDigest, type RunDigest } from "./digest.js"
 import { type IngestState, ingestChunk, initialIngestState } from "./ingest.js"
 import { renderFeedLine } from "./render.js"
 import type { AnomalyType, FeedRecord, Severity } from "./types.js"
@@ -12,6 +14,9 @@ interface Args {
   stallMultiple: number
   pollMs: number
   sessionPid: number | null
+  digestOut: string | null
+  baseline: string | null
+  env: RunDigest["env"]
 }
 
 function parseArgs(raw: string[]): Args {
@@ -22,9 +27,17 @@ function parseArgs(raw: string[]): Args {
   const events = get("events")
   if (!events) {
     console.error(
-      "usage: monitor --events <events.jsonl> [--feed <feed.jsonl>] [--tick-interval-ms N] [--stall-multiple N] [--poll-ms N] [--session-pid N]",
+      "usage: monitor --events <events.jsonl> [--feed <feed.jsonl>] [--tick-interval-ms N] [--stall-multiple N] [--poll-ms N] [--session-pid N] [--char <char>] [--domain <domain>] [--git-sha <sha>] [--digest-out <path>] [--baseline <path>]",
     )
     process.exit(2)
+  }
+  const character = get("char") ?? "unknown"
+  const domain = get("domain") ?? "unknown"
+  const env: RunDigest["env"] = {
+    character,
+    domain,
+    tickIntervalMs: Number(get("tick-interval-ms") ?? 30000),
+    gitSha: get("git-sha") ?? "unknown",
   }
   return {
     events,
@@ -33,12 +46,16 @@ function parseArgs(raw: string[]): Args {
     stallMultiple: Number(get("stall-multiple") ?? 2),
     pollMs: Number(get("poll-ms") ?? 1000),
     sessionPid: get("session-pid") ? Number(get("session-pid")) : null,
+    digestOut: get("digest-out") ?? events.replace(/events\.jsonl$/, "run-digest.json"),
+    baseline: get("baseline") ?? null,
+    env,
   }
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   let ingest: IngestState = initialIngestState
+  let digest = emptyDigest(args.env)
   let offset = 0
   let lastActivity = Date.now()
   let stalled = false
@@ -72,7 +89,10 @@ async function main(): Promise<void> {
           if (out.records.length > 0) {
             lastActivity = Date.now()
             stalled = false
-            for (const r of out.records) await write(r)
+            for (const r of out.records) {
+              await write(r)
+              digest = foldDigest(digest, r)
+            }
           }
         }
       } finally {
@@ -84,6 +104,28 @@ async function main(): Promise<void> {
       }
     }
   }
+
+  const finalise = async (): Promise<void> => {
+    await writeFile(args.digestOut!, `${JSON.stringify(digest, null, 2)}\n`)
+    console.log(`run-digest written to ${args.digestOut}`)
+    if (args.baseline) {
+      try {
+        const base = JSON.parse(await readFile(args.baseline, "utf8")) as RunDigest
+        const report = compareBaseline(digest, base)
+        console.log(
+          report.ok
+            ? "baseline drift: none"
+            : `baseline drift:\n${report.drifts.map((d) => `  ${d.field}: base=${d.baseline} run=${d.run} (${d.note})`).join("\n")}`,
+        )
+      } catch (e) {
+        console.error(`baseline compare failed: ${String(e)}`)
+      }
+    }
+  }
+
+  process.on("SIGINT", () => {
+    void finalise().then(() => process.exit(0))
+  })
 
   const checkStall = async (): Promise<void> => {
     if (ended || stalled) return
@@ -101,6 +143,7 @@ async function main(): Promise<void> {
     } catch {
       ended = true
       await write(anomaly("PROCESS_DIED", "error", `session process ${args.sessionPid} exited`))
+      await finalise()
     }
   }
 
