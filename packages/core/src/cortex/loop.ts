@@ -15,6 +15,7 @@ import { ModelClient } from "../model/client.js"
 import type { ModelError } from "../model/errors.js"
 import { DEFAULT_CORTEX_MODELS, resolveHandle, type CortexModelConfig } from "../model/handles.js"
 import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "../core/model-config.js"
+import { TEMPLATE_PALETTE } from "../core/palette.js"
 import type { Cadence } from "../skills/cadence.js"
 import type { Alert } from "../core/types.js"
 import { Docker } from "../services/Docker.js"
@@ -86,10 +87,14 @@ export const runCortex = (config: CortexLoopConfig) =>
     const orientInterval = config.orientInterval ?? DEFAULT_ORIENT_INTERVAL
     const tickMs = config.tickIntervalMs ?? DEFAULT_TICK_MS
     const workerTimeoutMs = config.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS
+    const palette = yield* charFs
+      .readPalette(config.char)
+      .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_PALETTE)))
     const runnerConfig: CortexRunnerConfig = {
       char: config.char,
       cadence,
       models: config.cortexModels ?? DEFAULT_CORTEX_MODELS,
+      palette,
     }
 
     let state = config.initialState

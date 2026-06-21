@@ -10,6 +10,7 @@ import { makeCharacterConfig } from "../services/CharacterFs.js"
 import { runTurn } from "./limbic/hypothalamus/process-runner.js"
 import type { DomainConfig } from "./domain-bundle.js"
 import { DEFAULT_MODEL_CONFIG, resolveModel, type ModelConfig } from "./model-config.js"
+import { TEMPLATE_PALETTE, paletteFile } from "./palette.js"
 
 const BACKGROUND_TEMPLATE = `# Background
 
@@ -33,6 +34,7 @@ const SECRETS_TEMPLATE = `# Secrets
 interface IdentityResult {
   background: string
   values: string
+  palette: string
 }
 
 const buildIdentityPrompt = (
@@ -48,7 +50,7 @@ const buildIdentityPrompt = (
 
 The user described this character as: ${characterDescription}
 ${domainContext}
-Generate two documents for this character. Use the delimiters shown below exactly.
+Generate three documents for this character. Use the delimiters shown below exactly.
 
 ---BACKGROUND---
 Write a rich identity narrative for this character. This is their background document — it defines who they are, how they think, what motivates them, and how they operate. It should be detailed enough to guide an AI agent's behavior and personality across many interactions. Write in a voice that fits the character. Aim for 300-800 words. Do NOT include the delimiter in the content itself.
@@ -56,18 +58,25 @@ Write a rich identity narrative for this character. This is their background doc
 ---VALUES---
 Write the character's working values and principles. These should be concrete, actionable guidelines that will shape the character's decisions — not generic platitudes. Each value should have a short heading and 1-3 sentences explaining it. Aim for 5-10 values. Do NOT include the delimiter in the content itself.
 
+---PALETTE---
+Give this character 4-6 emoji pole-pairs — the emotional axes they feel along (their nonverbal "voice"). Two emoji per pair separated by " ↔ ", opposite emotional poles chosen to fit THIS character's soul and world, then " # " and a 2-3 word gloss. One pair per line. Example:
+🌊 ↔ ☁️  # sinking ↔ soaring
+Output only the pairs, no commentary. Do NOT include the delimiter in the content itself.
+
 ---END---
 
-Output ONLY the two sections with the delimiters. No preamble, no commentary.`
+Output ONLY the three sections with the delimiters. No preamble, no commentary.`
 }
 
 const parseIdentityOutput = (output: string): IdentityResult | null => {
   const bgMatch = output.match(/---BACKGROUND---\s*([\s\S]*?)\s*---VALUES---/)
-  const valMatch = output.match(/---VALUES---\s*([\s\S]*?)\s*---END---/)
-  if (!bgMatch?.[1]?.trim() || !valMatch?.[1]?.trim()) return null
+  const valMatch = output.match(/---VALUES---\s*([\s\S]*?)\s*---PALETTE---/)
+  const palMatch = output.match(/---PALETTE---\s*([\s\S]*?)\s*---END---/)
+  if (!bgMatch?.[1]?.trim() || !valMatch?.[1]?.trim() || !palMatch?.[1]?.trim()) return null
   return {
     background: bgMatch[1].trim() + "\n",
     values: valMatch[1].trim() + "\n",
+    palette: palMatch[1].trim(),
   }
 }
 
@@ -236,9 +245,12 @@ export const scaffoldCharacter = (opts: {
         ? VALUES_TEMPLATE + `\n## Domain Context\n\n${identityTemplate.valuesHints}\n`
         : VALUES_TEMPLATE
 
+    const paletteContent = paletteFile(generated ? generated.palette : TEMPLATE_PALETTE)
+
     const files: Array<{ name: string; content: string }> = [
       { name: "background.md", content: backgroundContent },
       { name: "VALUES.md", content: valuesContent },
+      { name: "PALETTE.md", content: paletteContent },
       { name: "DIARY.md", content: DIARY_TEMPLATE },
       { name: "SECRETS.md", content: SECRETS_TEMPLATE },
     ]
