@@ -56,6 +56,7 @@ describe("ConsciousThought service contract", () => {
             char: { name: "ada", dir: "/work/players/ada/me" },
             prompt: "do the task",
             timeoutMs: 60_000,
+            modelLabel: "local/mlx-community/Qwen3.5-122B-A10B-4bit",
           })
         }),
         layer,
@@ -85,6 +86,7 @@ describe("ConsciousThought service contract", () => {
             char: { name: "ada", dir: "/work/players/ada/me" },
             prompt: "steer: focus on the login flow",
             timeoutMs: 60_000,
+            modelLabel: "local/mlx-community/Qwen3.5-122B-A10B-4bit",
           }, { sessionId: "ses_002" })
         }),
         layer,
@@ -110,6 +112,7 @@ describe("ConsciousThought service contract", () => {
             char: { name: "ada", dir: "/work/players/ada/me" },
             prompt: "do it",
             timeoutMs: 1000,
+            modelLabel: "local/mlx-community/Qwen3.5-122B-A10B-4bit",
           })
         }),
         errorLayer,
@@ -117,6 +120,36 @@ describe("ConsciousThought service contract", () => {
     )
     expect(result.result.output).toBe("auth error")
     expect(result.sessionId).toBe("error-sentinel")
+  })
+
+  it("carries the handle-derived modelLabel through the turn config", async () => {
+    const label = `local/${DEFAULT_CORTEX_MODELS.conscious.model}`
+    let seenLabel: string | undefined
+    const layer = Layer.merge(
+      ConsciousThoughtTest((config) => {
+        seenLabel = config.modelLabel
+        return { result: cannedResult, sessionId: "ses_004" }
+      }),
+      testDeps,
+    )
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const ct = yield* ConsciousThought
+          return yield* ct.turn({
+            containerId: "c1",
+            playerName: "ada",
+            char: { name: "ada", dir: "/work/players/ada/me" },
+            prompt: "do the task",
+            timeoutMs: 60_000,
+            modelLabel: label,
+          })
+        }),
+        layer,
+      ),
+    )
+    expect(seenLabel).toBe(label)
+    expect(seenLabel).toBe("local/mlx-community/Qwen3.5-122B-A10B-4bit")
   })
 
   it("provision is a no-op in ConsciousThoughtTest (does not throw)", async () => {

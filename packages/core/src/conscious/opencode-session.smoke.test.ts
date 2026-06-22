@@ -6,7 +6,7 @@ import {
   provisionConsciousProvider,
   writeCharacterAgentFile,
   CONSCIOUS_AGENT_NAME,
-  CONSCIOUS_MODEL_LABEL,
+  consciousModelLabel,
 } from "./opencode-config.js"
 import { DockerLive } from "../services/Docker.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
@@ -34,10 +34,12 @@ describe.skipIf(!containerId)("OpenCode conscious session (real container)", () 
     const deps = Layer.mergeAll(NodeContext.layer, dockerLayer, characterLogLayer, oauthTokenLayer)
 
     // Provision provider (global) + agent (project-local under <cwd>/players/<name>).
+    const modelLabel = consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)
     writeCharacterAgentFile({
       playersDir: `${process.cwd()}/players`,
       playerName,
       systemPrompt: "You are a terse test agent. Answer in one short sentence.",
+      modelLabel,
     })
 
     const char = { name: playerName, dir: `/work/players/${playerName}/me` }
@@ -46,7 +48,7 @@ describe.skipIf(!containerId)("OpenCode conscious session (real container)", () 
       playerName,
       char,
       systemPrompt: "",
-      model: CONSCIOUS_MODEL_LABEL,
+      model: modelLabel,
       agentName: CONSCIOUS_AGENT_NAME,
       prompt: "Remember this codeword: BANANA. Acknowledge.",
       timeoutMs: 120_000,

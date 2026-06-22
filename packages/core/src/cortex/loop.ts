@@ -12,6 +12,7 @@ import { InterruptRegistryTag } from "../core/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../core/state-renderer.js"
 import { PromptBuilderTag } from "../core/prompt-builder.js"
 import { ConsciousThought } from "../conscious/conscious-thought.js"
+import { consciousModelLabel } from "../conscious/opencode-config.js"
 import type { TurnResult } from "../core/limbic/hypothalamus/types.js"
 import { ModelClient } from "../model/client.js"
 import type { ModelError } from "../model/errors.js"
@@ -119,6 +120,9 @@ export const runCortex = (config: CortexLoopConfig) =>
 
     // Provision the conscious agent once before the first tick.
     const handle = resolveHandle(runnerConfig.models, "conscious")
+    // `-m` label for body turns — the real mlx-served id. MUST match the agent file's
+    // frontmatter `model:` (written from the same handle at provision time).
+    const bodyModelLabel = consciousModelLabel(handle)
     const systemPrompt = promptBuilder.systemPrompt("select", "")
     yield* consciousThought.provision({
       containerId: config.containerId,
@@ -371,6 +375,7 @@ export const runCortex = (config: CortexLoopConfig) =>
                     char: config.char,
                     prompt: formatStepTask(step, planHeadline),
                     timeoutMs: workerTimeoutMs,
+                    modelLabel: bodyModelLabel,
                   },
                   // No resume on turn 1.
                 ),
@@ -392,6 +397,7 @@ export const runCortex = (config: CortexLoopConfig) =>
                     char: config.char,
                     prompt: directive,
                     timeoutMs: workerTimeoutMs,
+                    modelLabel: bodyModelLabel,
                   },
                   { sessionId },
                 ),
