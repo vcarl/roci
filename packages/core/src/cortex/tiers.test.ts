@@ -6,6 +6,23 @@ import type { ModelHandle } from "../model/handles.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
 import { extractJson, parseOr, runHindbrain, runForebrain, type CortexRunnerConfig } from "./tiers.js"
 import { ModelService } from "../services/ModelService.js"
+import { CharacterLog } from "../logging/log-writer.js"
+import type { UnifiedEvent } from "../logging/events.js"
+
+// A CharacterLog that records every emitted event's message, so tests can
+// assert the raw forebrain text surfaced on a parse failure.
+const recordingLog = (sink: UnifiedEvent[]): Layer.Layer<CharacterLog> =>
+  Layer.succeed(
+    CharacterLog,
+    CharacterLog.of({
+      emit: (_char, event) => {
+        sink.push(event)
+        return Effect.void
+      },
+    }),
+  )
+
+const silentLog = recordingLog([])
 
 // A ModelService whose withTier records the tier it wrapped, then runs the
 // effect unchanged — lets tests assert callTier routed through withTier.
@@ -127,10 +144,50 @@ describe("runForebrain", () => {
         Layer.mergeAll(
           fixedClient('{"headline":"Two PRs need review","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}'),
           recordingService([]),
+          silentLog,
         ),
       ),
     )
     expect(out.headline).toContain("PRs")
+  })
+
+  it("parses a headline out of bare JSON wrapped in prose (no fallback)", async () => {
+    const logs: UnifiedEvent[] = []
+    const out = await Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        Layer.mergeAll(
+          fixedClient(
+            'Here is the situation:\n{"headline":"Build is red","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}\nLet me know.',
+          ),
+          recordingService([]),
+          recordingLog(logs),
+        ),
+      ),
+    )
+    expect(out.headline).toBe("Build is red")
+    // Success path must not spam the log with raw output.
+    expect(logs.find((e) => e.kind === "system" && /raw/i.test((e as { message?: string }).message ?? ""))).toBeUndefined()
+  })
+
+  it("on parse failure, returns the fallback AND surfaces the raw forebrain text to the logger", async () => {
+    const logs: UnifiedEvent[] = []
+    const raw = "the forebrain rambled and never produced JSON"
+    const out = await Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        Layer.mergeAll(fixedClient(raw), recordingService([]), recordingLog(logs)),
+      ),
+    )
+    // Fallback object still returned (loop never crashes).
+    expect(out.headline).toMatch(/parse failure/i)
+    // Raw text was logged so the failure is diagnosable.
+    const messages = logs
+      .filter((e) => e.kind === "system")
+      .map((e) => (e as { message?: string }).message ?? "")
+    expect(messages.some((m) => m.includes(raw))).toBe(true)
+    // The log should identify tier=forebrain and step=orient.
+    expect(messages.some((m) => /forebrain/i.test(m) && /orient/i.test(m))).toBe(true)
   })
 })
 

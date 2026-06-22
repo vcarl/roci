@@ -14,9 +14,10 @@ import type {
   WaitState,
 } from "../skills/types.js"
 import type { CharacterConfig } from "../services/CharacterFs.js"
-import { extractJson, parseOr } from "./parse.js"
+import { extractJson, parseOr, tryParseJson } from "./parse.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
+import { CharacterLog, logToConsole } from "../logging/log-writer.js"
 
 export { extractJson, parseOr }
 
@@ -87,6 +88,9 @@ export function runHindbrain(
   )
 }
 
+/** Max length of raw forebrain text echoed to the log on a parse failure. */
+const RAW_FOREBRAIN_LOG_LIMIT = 2000
+
 // ── Forebrain (orient) ───────────────────────────────────────
 export function runForebrain(
   config: CortexRunnerConfig,
@@ -94,7 +98,7 @@ export function runForebrain(
   domainState: string,
   identity: { background: string; values: string; diary: string },
   emotionalWeight: string,
-): Effect.Effect<OrientResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
+): Effect.Effect<OrientResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.orient.render({
     cadence: config.cadence,
     cadenceGuidance: getCadenceGuidance("orient", config.cadence),
@@ -106,15 +110,32 @@ export function runForebrain(
     emotionalWeight,
   })
   return callTier(config, "forebrain", prompt).pipe(
-    Effect.map((text) =>
-      parseOr<OrientResult>(text, {
-        headline: "Orient parse failure — situation unknown",
-        sections: [],
-        whatChanged: "Unknown — forebrain could not parse",
-        emotionalState: emotionalWeight,
-        metrics: {},
-      }),
-    ),
+    Effect.flatMap((text) => {
+      const parsed = tryParseJson<OrientResult>(text)
+      if (parsed.ok) return Effect.succeed(parsed.value)
+      // Parse miss: log the raw forebrain output so the failure is diagnosable
+      // (previously silent). Truncate to keep the log line sane. Only fires on
+      // failure — the success path above never logs.
+      const truncated =
+        text.length > RAW_FOREBRAIN_LOG_LIMIT
+          ? `${text.slice(0, RAW_FOREBRAIN_LOG_LIMIT)}… [truncated ${text.length - RAW_FOREBRAIN_LOG_LIMIT} chars]`
+          : text
+      return logToConsole(
+        config.char.name,
+        "cortex",
+        `tier=forebrain step=orient parse failure; raw output: ${truncated}`,
+      ).pipe(
+        // A log-write failure must never crash the loop — swallow it.
+        Effect.catchAll(() => Effect.void),
+        Effect.as<OrientResult>({
+          headline: "Orient parse failure — situation unknown",
+          sections: [],
+          whatChanged: "Unknown — forebrain could not parse",
+          emotionalState: emotionalWeight,
+          metrics: {},
+        }),
+      )
+    }),
   )
 }
 
