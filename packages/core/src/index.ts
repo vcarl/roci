@@ -92,6 +92,13 @@ export type { ConsciousTurnConfig, ProvisionOpts } from "./conscious/conscious-t
 // ModelService — tier lifecycle management
 export { ModelService, ModelServiceLive, ModelBackendTag, makeModelService } from "./services/ModelService.js"
 export { makeMlxBackend, buildMlxArgs, buildProbeRequest } from "./services/mlx-backend.js"
+// Synchronous orphan-reaper backstop for resident mlx servers (the tsx double-fork
+// shutdown race). The signal handlers in apps/roci/src/main.ts call reapResidentServers.
+export {
+  reapResidentServers,
+  registerResidentServer,
+  unregisterResidentServer,
+} from "./services/mlx-backend.js"
 export { MODEL_TIER_SPECS, resolveTierSpec } from "./services/model-tier-spec.js"
 export type { TierSpec, TierLifecycle } from "./services/model-tier-spec.js"
 export { SpawnError, ReadinessError, ModelCrashed } from "./services/model-backend.js"

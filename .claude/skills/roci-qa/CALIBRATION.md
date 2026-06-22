@@ -340,6 +340,13 @@ The 122B then died on 8083 mid-session exactly as run-3 predicted ("not viable o
 - **Launch command corrected** (already partly in run-1 retro): `npx tsx apps/roci/src/main.ts …`
   fails — tsx is only under `apps/roci/node_modules`. Use `apps/roci/node_modules/.bin/tsx
   apps/roci/src/main.ts …` from repo root (cwd must be repo root so `process.cwd()` = projectRoot).
+  - **SUPERSEDED — do NOT launch via bare `tsx … main.ts`.** Bare `tsx` double-forks (a tsx-CLI
+    parent spawns the worker that runs main.ts) and on SIGTERM SIGKILLs the worker ~30ms later,
+    before the async kill/container-stop finalizers run — orphaning the resident 122B mlx server
+    (port 8083) and leaking the Docker container. Launch in a SINGLE process:
+    `node --import tsx apps/roci/src/main.ts start …` (now the form in SKILL.md §2). A synchronous
+    SIGTERM/SIGINT reaper backstop (`reapResidentServers`, wired in `apps/roci/src/main.ts`) also
+    group-SIGKILLs the resident pid inside the 30ms window as defense-in-depth.
 - **Log rotation before launch.** `events.jsonl` is append-mode (`log-writer.ts:45`); archive the prior
   run's events/qa-feed/monitor logs before starting so the monitor doesn't replay stale beats (the
   run-1 "monitor reads from offset 0" note). Done manually this run.

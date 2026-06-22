@@ -27,6 +27,88 @@ import { SpawnError, ReadinessError } from "./model-backend.js"
 export const STDERR_TAIL_MAX_LINES = 200
 export const STDERR_TAIL_MAX_LINE_LEN = 2_000
 
+// ---------------------------------------------------------------------------
+// Synchronous orphan-reaper backstop for RESIDENT mlx servers.
+//
+// PROBLEM this guards: the live/QA session can be launched under bare `tsx`,
+// which double-forks (a tsx-CLI parent spawns a worker that runs main.ts). On
+// SIGTERM the tsx parent forwards SIGTERM to the worker, waits only ~30ms for an
+// IPC echo, then SIGKILLs the worker. Effect's async kill finalizer (the awaited
+// SIGTERM→grace→SIGKILL escalation in `kill` below) cannot complete in that
+// window, so the RESIDENT 122B server (port 8083) orphans — surviving the worker
+// death while holding its port and ~42% RAM.
+//
+// THIS backstop is SYNCHRONOUS: a `process.on("SIGTERM"|"SIGINT")` handler (wired
+// in apps/roci/src/main.ts) calls `reapResidentServers`, which runs to completion
+// inside the 30ms window because it does no awaiting — just a synchronous group
+// `process.kill(-pgid, "SIGKILL")` per tracked resident pid. It is a backstop,
+// NOT a replacement for the `kill` finalizer (which is correct on the
+// non-double-forking packaged path and on per-phase teardown). Per-phase servers
+// are reaped during normal tick operation, so only resident pids are tracked.
+//
+// The mlx server is spawned detached, so it is its own process-group leader
+// (PGID === pid, verified live). A single group SIGKILL reaps it and its worker
+// subprocesses instantly.
+interface ResidentServerEntry {
+  readonly pid: number
+  readonly pgid: number
+}
+
+// Module-level registry of live RESIDENT mlx server pids. Populated when a
+// resident server is spawned (in `spawn`, gated on spec.lifecycle), removed on
+// normal kill. Keyed by pid so re-registration can't duplicate an entry.
+const residentServers = new Map<number, ResidentServerEntry>()
+
+/**
+ * Record a spawned RESIDENT mlx server so the synchronous reaper can group-kill
+ * it if the process is SIGKILLed before the async `kill` finalizer can run.
+ * `pgid` is the process-group id to signal (PGID === pid for our detached spawns).
+ */
+export function registerResidentServer(pid: number, pgid: number): void {
+  residentServers.set(pid, { pid, pgid })
+}
+
+/** Remove a resident server from the registry (on normal, finalizer-driven kill). */
+export function unregisterResidentServer(pid: number): void {
+  residentServers.delete(pid)
+}
+
+/** Test-only view of the currently tracked resident pids (insertion order). */
+export function _residentServerPids(): ReadonlyArray<number> {
+  return [...residentServers.keys()]
+}
+
+/**
+ * The synchronous signal function the reaper drives. Defaults to `process.kill`.
+ * `target` is a NEGATIVE pgid (group target). Throws on ESRCH/EPERM, which the
+ * reaper swallows. Injected by tests to assert the group target without
+ * signalling a real process.
+ */
+export type SyncKill = (target: number, signal: NodeJS.Signals) => void
+
+const defaultSyncKill: SyncKill = (target, signal) => {
+  process.kill(target, signal)
+}
+
+/**
+ * SYNCHRONOUSLY reap every tracked resident mlx server by group-SIGKILL. Runs
+ * inside the tsx ~30ms SIGTERM→SIGKILL window (no awaiting). Swallows ESRCH (the
+ * group is already gone) and any other per-target error so one dead target can't
+ * abort reaping the rest. Clears the registry so a second call is an idempotent
+ * no-op (e.g. SIGTERM handler then 'exit' backstop both fire).
+ */
+export function reapResidentServers(kill: SyncKill = defaultSyncKill): void {
+  for (const { pgid } of residentServers.values()) {
+    try {
+      kill(-pgid, "SIGKILL")
+    } catch {
+      // ESRCH (already gone) / EPERM — best-effort backstop, keep reaping.
+    }
+  }
+  residentServers.clear()
+}
+// ---------------------------------------------------------------------------
+
 /**
  * Grace period between the SIGTERM and the escalation SIGKILL when tearing down a
  * spawned mlx server. mlx_lm.server (especially the heavy 122B conscious tier)
@@ -236,6 +318,15 @@ export function makeMlxBackend(
         const stderrTail = (): Effect.Effect<string> =>
           Ref.get(ring).pipe(Effect.map((lines) => lines.join("\n")))
 
+        // Track RESIDENT servers in the module-level registry so the synchronous
+        // orphan reaper can group-kill them if the worker is SIGKILLed before the
+        // async `kill` finalizer runs (the tsx double-fork shutdown race). The
+        // spawn is detached, so the leader pid is its own group leader (PGID ===
+        // pid). Per-phase servers are reaped in normal operation and not tracked.
+        if (spec.lifecycle === "resident") {
+          registerResidentServer(proc.pid, proc.pid)
+        }
+
         return { spec, spawned: true, pid: proc.pid, stderrTail, awaitExit: proc.awaitExit }
       })
 
@@ -368,6 +459,11 @@ export function makeMlxBackend(
         ? Effect.void
         : Effect.gen(function* () {
             const pid = server.pid as number
+            // This finalizer is now driving teardown, so drop the server from the
+            // synchronous-reaper registry: the reaper is a backstop for the case
+            // where this finalizer can't run, not a parallel killer. Harmless for
+            // per-phase pids (never registered → no-op delete).
+            yield* Effect.sync(() => unregisterResidentServer(pid))
             yield* Effect.sync(() => signalGroupOrPid(pid, "SIGTERM"))
             // `true` => exited within grace, `false` => grace elapsed first (still
             // alive). Without an exit signal (adopted server) we can only wait out

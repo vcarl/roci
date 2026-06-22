@@ -51,14 +51,19 @@ is on PATH it runs standalone — no separate activation needed for the *spawned
 Pick `<char>`, `<domain>`, and `<tick-interval-ms>` with the human. Then, in the background:
 
 ```bash
-npx tsx apps/roci/src/main.ts start <char> --domain <domain> --tick-interval <ms> 2>&1 | tee players/<char>/logs/session.log &
+# IMPORTANT: launch via `node --import tsx` (single process), NOT bare `tsx … main.ts`.
+# Bare `tsx` double-forks; on SIGTERM it SIGKILLs the worker ~30ms later, before the
+# async kill/container-stop finalizers can run — orphaning the resident 122B mlx
+# server (port 8083, ~42% RAM) and leaking the Docker container. `--import tsx` runs
+# in one process with no CLI-parent wrapper, so runMain's graceful finalizers fire.
+node --import tsx apps/roci/src/main.ts start <char> --domain <domain> --tick-interval <ms> 2>&1 | tee players/<char>/logs/session.log &
 ```
 
 Capture the session PID. Start the monitor in the background pointed at the character's
 events file:
 
 ```bash
-npx tsx apps/roci/src/qa/monitor.ts \
+node --import tsx apps/roci/src/qa/monitor.ts \
   --events players/<char>/logs/events.jsonl \
   --char <char> --domain <domain> \
   --tick-interval-ms <ms> --session-pid <pid> \
