@@ -7,6 +7,11 @@ export interface FakeScript {
   readonly spawnDelayMs?: Partial<Record<string, number>>
   readonly probe?: Partial<Record<string, "ready" | "fail" | "timeout">>
   readonly probeDelayMs?: Partial<Record<string, number>>
+  // Simulate a COLD load: the first N readiness probes for the tier FAIL
+  // (server not bound / weights not loaded yet), then every subsequent probe
+  // SUCCEEDS. Models the real mlx cold-start where the gate must poll, not
+  // single-shot. Takes precedence over `probe` for the listed tier.
+  readonly probeFailFirst?: Partial<Record<string, number>>
   readonly healthy?: ReadonlyArray<string>
 }
 export interface FakeBackendLog {
@@ -29,6 +34,8 @@ interface MutLog {
 export function makeFakeBackend(script: FakeScript = {}): Effect.Effect<FakeBackend> {
   return Effect.gen(function* () {
     const logRef = yield* Ref.make<MutLog>({ spawns: [], kills: [], probes: [], healthChecks: [] })
+    // Per-tier count of probes already issued, to drive `probeFailFirst`.
+    const probeCountRef = yield* Ref.make<Record<string, number>>({})
     let nextPid = 1000
 
     const spawn = (spec: TierSpec): Effect.Effect<RunningServer, never> =>
@@ -42,6 +49,22 @@ export function makeFakeBackend(script: FakeScript = {}): Effect.Effect<FakeBack
     const readinessProbe = (spec: TierSpec): Effect.Effect<void, ReadinessError> =>
       Effect.gen(function* () {
         yield* Ref.update(logRef, (l) => ({ ...l, probes: [...l.probes, spec.tier] }))
+        // Cold-load simulation: fail the first N probes, then succeed. The
+        // count is incremented per probe call so a polling gate eventually
+        // sees a success; a single-shot gate fails on the very first probe.
+        const failFirst = script.probeFailFirst?.[spec.tier]
+        if (failFirst != null) {
+          const seen = yield* Ref.modify(probeCountRef, (m) => {
+            const n = (m[spec.tier] ?? 0) + 1
+            return [n, { ...m, [spec.tier]: n }]
+          })
+          if (seen <= failFirst) {
+            return yield* Effect.fail(
+              new ReadinessError(spec.tier, spec.model, "scripted cold-load probe failure", false),
+            )
+          }
+          return
+        }
         const outcome = script.probe?.[spec.tier] ?? "ready"
         const probeDelay = script.probeDelayMs?.[spec.tier] ?? 0
         if (outcome === "fail") {

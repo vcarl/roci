@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Layer, Schedule, Scope } from "effect"
 import type { CortexTier } from "../model/handles.js"
 import type { ModelBackend, RunningServer } from "./model-backend.js"
 import { SpawnError, ReadinessError } from "./model-backend.js"
@@ -19,7 +19,7 @@ export class ModelService extends Context.Tag("ModelService")<
 // probe it ready under the tier timeout. The acquireRelease registers a
 // spawned-only kill finalizer on that scope, so closing the scope tears down
 // exactly what we spawned and leaves adopted servers running.
-const acquireReady = (
+export const acquireReady = (
   backend: ModelBackend,
   spec: TierSpec,
 ): Effect.Effect<RunningServer, SpawnError | ReadinessError, Scope.Scope> =>
@@ -31,9 +31,17 @@ const acquireReady = (
           backend.spawn(spec),
           (srv) => (srv.spawned ? backend.kill(srv) : Effect.void),
         )
+    // A real cold load can take seconds → minutes for the server to bind and
+    // load weights; a single probe fails in milliseconds. POLL: re-probe on a
+    // fixed interval until success, bounded by the per-tier timeoutMs. The
+    // first probe runs at t=0; spaced retries follow. timeoutFail interrupts
+    // the retry loop and fails with timedOut=true when the budget elapses.
+    // 1s spacing: cheap relative to the multi-second cold loads and the
+    // generous (120s–600s) budgets, while keeping the gate responsive.
     yield* backend
       .readinessProbe(spec)
       .pipe(
+        Effect.retry(Schedule.spaced("1 second")),
         Effect.timeoutFail({
           duration: `${spec.timeoutMs} millis`,
           onTimeout: () =>

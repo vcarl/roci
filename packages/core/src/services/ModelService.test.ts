@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest"
-import { Effect, Exit, Fiber, TestClock, TestContext } from "effect"
+import { Cause, Effect, Exit, Fiber, Option, TestClock, TestContext } from "effect"
 import { makeFakeBackend } from "./model-backend-fake.js"
 import { makeModelService, ModelService } from "./ModelService.js"
+import { ReadinessError } from "./model-backend.js"
 import { resolveTierSpec } from "./model-tier-spec.js"
 
 // Run a scoped program against a fake backend. The service is built inside the
@@ -82,16 +83,73 @@ describe("ModelService — required-tier readiness timeout fails the layer", () 
   })
 })
 
-describe("ModelService — all three tiers required at startup", () => {
-  it("fails the layer build when a per-phase tier (hindbrain) fails its startup probe", async () => {
-    // The startup gate probes every per-phase tier once. A scripted hindbrain
-    // probe failure must fail makeModelService (the layer build), even though
-    // the resident conscious is healthy. probe:"fail" is immediate (no clock).
+describe("ModelService — readiness gate POLLS across a cold load", () => {
+  it("succeeds by polling a backend that fails its first K probes then becomes ready", async () => {
+    // Real cold load: the server isn't 200 for the first several probes, then
+    // binds. The gate MUST keep probing (bounded by timeoutMs), not single-shot.
+    // We script conscious (resident, 600_000ms budget) to fail its first 5
+    // probes; with ~1s spacing the gate needs ~5s of (virtual) time. Drive it
+    // with TestClock so no wall-time passes.
+    const program = Effect.gen(function* () {
+      const be = yield* makeFakeBackend({ probeFailFirst: { conscious: 5 } })
+      yield* makeModelService(be)
+      return yield* be.log()
+    }).pipe(Effect.scoped)
+    const out = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.fork(program)
+        // advance well past 5 spaced retries but well under the 600_000 budget.
+        yield* TestClock.adjust("30000 millis")
+        return yield* Fiber.join(fiber)
+      }).pipe(Effect.provide(TestContext.TestContext)),
+    )
+    // conscious was probed MORE than once (the gate polled across the cold load)
+    // and the service built successfully (we got the log back).
+    expect(out.probes.filter((t) => t === "conscious").length).toBeGreaterThan(1)
+    expect(out.spawns[0]).toBe("conscious")
+  })
+
+  it("fails with ReadinessError(timedOut=true) when the backend never becomes ready before the budget elapses", async () => {
+    // hindbrain (per-phase, 120_000ms budget) is scripted to fail an effectively
+    // unbounded number of probes. Once the budget elapses the gate must give up
+    // with a timed-out ReadinessError that fails the layer build.
+    const program = Effect.gen(function* () {
+      const be = yield* makeFakeBackend({ probeFailFirst: { hindbrain: 1_000_000 } })
+      return yield* makeModelService(be)
+    }).pipe(Effect.scoped)
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
-        const be = yield* makeFakeBackend({ probe: { hindbrain: "fail" } })
-        return yield* makeModelService(be)
-      }).pipe(Effect.scoped),
+        const fiber = yield* Effect.fork(program)
+        yield* TestClock.adjust("130000 millis")
+        return yield* Fiber.join(fiber)
+      }).pipe(Effect.provide(TestContext.TestContext)),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    const err = exit._tag === "Failure" ? Cause.failureOption(exit.cause) : Option.none()
+    expect(Option.isSome(err)).toBe(true)
+    const e = (err as Extract<typeof err, { _tag: "Some" }>).value
+    expect(e).toBeInstanceOf(ReadinessError)
+    expect((e as ReadinessError).timedOut).toBe(true)
+  })
+})
+
+describe("ModelService — all three tiers required at startup", () => {
+  it("fails the layer build when a per-phase tier (hindbrain) never passes its startup probe", async () => {
+    // The startup gate probes every per-phase tier. A hindbrain that NEVER
+    // becomes ready must fail makeModelService (the layer build), even though
+    // the resident conscious is healthy. With the polling gate this is a
+    // timeout: the probe keeps failing until the 120_000ms budget elapses, so
+    // we drive it with TestClock (probeFailFirst far exceeds any retry count).
+    const program = Effect.gen(function* () {
+      const be = yield* makeFakeBackend({ probeFailFirst: { hindbrain: 1_000_000 } })
+      return yield* makeModelService(be)
+    }).pipe(Effect.scoped)
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.fork(program)
+        yield* TestClock.adjust("130000 millis")
+        return yield* Fiber.join(fiber)
+      }).pipe(Effect.provide(TestContext.TestContext)),
     )
     expect(Exit.isFailure(exit)).toBe(true)
   })
