@@ -161,6 +161,48 @@ describe("ModelClient.complete — auth and params", () => {
     expect(capturedBody["max_tokens"]).toBe(256)
     expect(capturedBody["model"]).toBe("test-model")
   })
+
+  // The thinking-disable fix rides on extraBody being spread verbatim into the
+  // request body. mlx_lm.server forwards `chat_template_kwargs` from the body
+  // into the chat template, so the nested object must survive untouched.
+  it("forwards params.extraBody (incl. nested chat_template_kwargs) into the request body", async () => {
+    let capturedBody: Record<string, unknown> = {}
+
+    const captureServer = createServer((req, res) => {
+      let data = ""
+      req.on("data", (chunk: Buffer) => { data += chunk.toString() })
+      req.on("end", () => {
+        capturedBody = JSON.parse(data) as Record<string, unknown>
+        res.writeHead(200, { "Content-Type": "application/json" }).end(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "captured" } }],
+            usage: { prompt_tokens: 2, completion_tokens: 1 },
+          }),
+        )
+      })
+    })
+    await new Promise<void>((resolve) => captureServer.listen(0, "127.0.0.1", resolve))
+    const capturePort = (captureServer.address() as { port: number }).port
+
+    const handleWithExtraBody: ModelHandle = {
+      tier: "hindbrain",
+      provider: "openai-compatible",
+      baseUrl: `http://127.0.0.1:${capturePort}/v1`,
+      model: "test-model",
+      params: { extraBody: { chat_template_kwargs: { enable_thinking: false } } },
+    }
+
+    await run(
+      Effect.gen(function* () {
+        const client = yield* ModelClient
+        return yield* client.complete(handleWithExtraBody, [{ role: "user", content: "hello" }])
+      }),
+    )
+
+    await new Promise<void>((resolve) => captureServer.close(() => resolve()))
+
+    expect(capturedBody["chat_template_kwargs"]).toEqual({ enable_thinking: false })
+  })
 })
 
 describe("ModelClient.complete", () => {

@@ -53,19 +53,37 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   // GLM-4.7-Flash — 2/6 orient probes truncated). Instruct models emit the JSON
   // directly (reasoningLen=0, finish=stop), so the structured-output tiers are
   // pinned to instruct models. The maxTokens budget stays generous as headroom.
+  // The Qwen3.5 ladder models are "thinking" models: by default they emit a
+  // chain-of-thought and can exhaust the token budget before producing the
+  // required JSON (finish=length, content=null → "Orient parse failure" every
+  // tick). Their chat templates gate reasoning on an `enable_thinking` kwarg
+  // (default ON); mlx_lm.server forwards `chat_template_kwargs` from the request
+  // body into the template. Disabling it on the structured-output tiers makes
+  // them emit JSON directly (live-probed: finish=stop, content present, no
+  // reasoning monologue). The conscious tier deliberately omits this so its
+  // thinking stays ON. This rides the existing `extraBody` plumbing — client.ts
+  // spreads `...handle.params.extraBody` verbatim into the request body.
   hindbrain: {
     tier: "hindbrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8081/v1",
     model: "mlx-community/Qwen3.5-2B-4bit",
-    params: { temperature: 0.3, maxTokens: 4096 },
+    params: {
+      temperature: 0.3,
+      maxTokens: 4096,
+      extraBody: { chat_template_kwargs: { enable_thinking: false } },
+    },
   },
   forebrain: {
     tier: "forebrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8082/v1",
     model: "mlx-community/Qwen3.5-9B-4bit",
-    params: { temperature: 0.5, maxTokens: 4096 },
+    params: {
+      temperature: 0.5,
+      maxTokens: 4096,
+      extraBody: { chat_template_kwargs: { enable_thinking: false } },
+    },
   },
   // conscious (decide/evaluate) is the designated deep-reasoner: a reasoning
   // model is appropriate here, and its larger 8192 budget + smaller output

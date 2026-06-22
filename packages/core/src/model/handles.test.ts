@@ -59,6 +59,37 @@ describe("DEFAULT_CORTEX_MODELS", () => {
     expect(DEFAULT_CORTEX_MODELS.forebrain.model).toBe("mlx-community/Qwen3.5-9B-4bit")
     expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("mlx-community/Qwen3.5-122B-A10B-4bit")
   })
+
+  // Live-confirmed fix: the Qwen3.5 ladder models are "thinking" models that
+  // emit chain-of-thought by default and exhaust their token budget before
+  // producing the required JSON (finish=length, content=null → "Orient parse
+  // failure" every tick). Their chat templates gate reasoning on an
+  // `enable_thinking` kwarg (default ON); mlx_lm.server forwards
+  // `chat_template_kwargs` from the request body into the template. The
+  // structured-output tiers (hindbrain/forebrain) must disable thinking so they
+  // emit JSON directly. This rides the existing `extraBody` plumbing
+  // (client.ts spreads `...handle.params.extraBody` into the request body).
+  it("disables thinking on the structured-output tiers (hindbrain/forebrain)", () => {
+    const expectedKwargs = { chat_template_kwargs: { enable_thinking: false } }
+    expect(DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody).toEqual(expectedKwargs)
+    expect(DEFAULT_CORTEX_MODELS.forebrain.params?.extraBody).toEqual(expectedKwargs)
+    // Drill the nested shape explicitly so a regression in the exact path the
+    // chat template reads is caught.
+    const hindKwargs = DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody?.chat_template_kwargs as
+      | { enable_thinking?: boolean }
+      | undefined
+    const foreKwargs = DEFAULT_CORTEX_MODELS.forebrain.params?.extraBody?.chat_template_kwargs as
+      | { enable_thinking?: boolean }
+      | undefined
+    expect(hindKwargs?.enable_thinking).toBe(false)
+    expect(foreKwargs?.enable_thinking).toBe(false)
+  })
+
+  // conscious (decide/evaluate) is the designated deep-reasoner and must KEEP
+  // thinking: no extraBody → no chat_template_kwargs → thinking stays ON.
+  it("keeps thinking enabled on the conscious tier (no extraBody)", () => {
+    expect(DEFAULT_CORTEX_MODELS.conscious.params?.extraBody).toBeUndefined()
+  })
 })
 
 describe("mergeCortexModels", () => {
