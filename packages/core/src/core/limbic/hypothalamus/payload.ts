@@ -99,6 +99,30 @@ export function buildInnerCommand(config: TurnConfig, runtime: AgentRuntime): st
 }
 
 /**
+ * Env vars the opencode body invocation needs inside the network-locked container.
+ *
+ * opencode otherwise tries to fetch its model registry from
+ * https://models.dev/api.json at startup; the container firewall blocks that host,
+ * so the call hangs and opencode never falls back to the fully-configured, reachable
+ * local provider. opencode checks OPENCODE_DISABLE_MODELS_FETCH *before* any network
+ * call and proceeds with an empty registry + the explicitly-configured local
+ * provider/model. OPENCODE_DISABLE_AUTOUPDATE suppresses a second outbound call.
+ */
+export const OPENCODE_DISABLE_NETWORK_ENV: Record<string, string> = {
+  OPENCODE_DISABLE_MODELS_FETCH: "1",
+  OPENCODE_DISABLE_AUTOUPDATE: "1",
+}
+
+/**
+ * Assemble the env for an opencode body/session exec: caller-supplied env plus the
+ * network-disabling vars above. Flows through buildExecArgs as `-e KEY=VAL` flags,
+ * so it takes effect at docker-exec time with no container rebuild.
+ */
+export function openCodeBodyEnv(config: TurnConfig): Record<string, string> {
+  return { ...config.env, ...OPENCODE_DISABLE_NETWORK_ENV }
+}
+
+/**
  * Inner command for a conscious-tier OpenCode session turn. First turn opens the
  * session with the project-local agent and model; a resume turn continues an
  * existing session by id (and must NOT re-pass --agent/-m — the session carries

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { selectRuntime, buildInnerArgs, buildInnerCommand, normalizerFor, shellEscape } from "./payload.js"
+import { selectRuntime, buildInnerArgs, buildInnerCommand, normalizerFor, shellEscape, openCodeBodyEnv } from "./payload.js"
 import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import type { TurnConfig } from "./types.js"
 
@@ -99,6 +99,20 @@ describe("normalizerFor", () => {
 describe("shellEscape", () => {
   it("wraps in ANSI-C quoting and escapes newlines", () => {
     expect(shellEscape("a\nb")).toBe("$'a\\nb'")
+  })
+})
+
+describe("openCodeBodyEnv", () => {
+  it("disables the models.dev fetch and autoupdate so the locked container falls back to the local provider", () => {
+    const env = openCodeBodyEnv(base)
+    expect(env.OPENCODE_DISABLE_MODELS_FETCH).toBe("1")
+    expect(env.OPENCODE_DISABLE_AUTOUPDATE).toBe("1")
+  })
+  it("preserves any caller-supplied env entries", () => {
+    const env = openCodeBodyEnv({ ...base, env: { FOO: "bar" } })
+    expect(env.FOO).toBe("bar")
+    expect(env.OPENCODE_DISABLE_MODELS_FETCH).toBe("1")
+    expect(env.OPENCODE_DISABLE_AUTOUPDATE).toBe("1")
   })
 })
 

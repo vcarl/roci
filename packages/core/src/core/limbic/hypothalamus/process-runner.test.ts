@@ -3,7 +3,7 @@ import { Effect, Layer, Stream } from "effect"
 import { Command } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
 import { buildExecArgs, runSdkTurn, runSdkSession, runOpenCodeSessionTurn, firstSessionId, sessionNotFoundMessage } from "./process-runner.js"
-import { buildInnerCommand } from "./payload.js"
+import { buildInnerCommand, openCodeBodyEnv } from "./payload.js"
 import type { TurnConfig } from "./types.js"
 import { runTransport } from "./transport.js"
 import { normalizeSdk } from "../../../logging/stream-normalizer.js"
@@ -150,6 +150,18 @@ describe("firstSessionId", () => {
 describe("runOpenCodeSessionTurn", () => {
   it("is exported as a function", () => {
     expect(typeof runOpenCodeSessionTurn).toBe("function")
+  })
+
+  it("the opencode body exec env disables the blocked models.dev fetch and autoupdate (as -e flags)", () => {
+    // The opencode body invocation runs inside a network-locked container; if it
+    // tries to fetch https://models.dev/api.json it hangs. buildExecArgs must emit
+    // OPENCODE_DISABLE_MODELS_FETCH=1 and OPENCODE_DISABLE_AUTOUPDATE=1 as -e flags
+    // so opencode skips the fetch and uses the configured local provider.
+    const cfg: TurnConfig = { ...base, model: "local/conscious", agentName: "conscious" }
+    const args = buildExecArgs({ ...cfg, env: openCodeBodyEnv(cfg) }, "opencode run --format json", "tok")
+    const flags = args.filter((_, i) => args[i - 1] === "-e")
+    expect(flags).toContain("OPENCODE_DISABLE_MODELS_FETCH=1")
+    expect(flags).toContain("OPENCODE_DISABLE_AUTOUPDATE=1")
   })
 })
 
