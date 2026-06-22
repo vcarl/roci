@@ -55,6 +55,15 @@ export interface RunningServer {
    * enrich a SpawnError/ReadinessError after a death or never-ready.
    */
   readonly stderrTail?: () => Effect.Effect<string>
+  /**
+   * Completes when the spawned process has exited. Present only for servers we
+   * spawned (an adopted server's lifecycle is owned elsewhere). The `kill`
+   * finalizer races this against a bounded grace after SIGTERM so it can return
+   * immediately when the server reaps promptly, and only escalates to SIGKILL
+   * when it observes the process is still alive after the grace. Never fails:
+   * any error observing exit is normalized to "it exited" (best-effort liveness).
+   */
+  readonly awaitExit?: Effect.Effect<void>
 }
 
 export interface ModelBackend {

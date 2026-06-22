@@ -18,6 +18,9 @@ const fakeProcess = (
 ): SpawnedProcess => ({
   pid,
   stderr: Stream.fromIterable(stderrChunks.map(enc)),
+  // These tests exercise the stderr-drain path only and never reach kill, so the
+  // exit observation is never awaited; `never` keeps the seam shape complete.
+  awaitExit: Effect.never,
 })
 
 const spec = resolveTierSpec("conscious")
