@@ -31,6 +31,17 @@ import type { AnyModel } from "@roci/core/core/limbic/hypothalamus/runtime.js"
 
 const PROJECT_ROOT = process.cwd()
 
+// --- model layer (start-scoped) ---
+// Building ModelServiceLive eagerly cold-loads the resident 122B mlx server (it
+// is a Layer.scoped that acquires the resident conscious server at build time).
+// So this layer must be provided ONLY to the command handlers that actually run
+// a session (the `start` command and the root auto-detect handler) — NOT to the
+// root command globally, or every subcommand (stop/status/pause/...) would spawn
+// the mlx server. The backend needs CommandExecutor from NodeContext, which is
+// provided globally in main.ts.
+const modelBackendLayer = Layer.effect(ModelBackendTag, makeMlxBackend())
+const modelServiceLayer = ModelServiceLive.pipe(Layer.provide(modelBackendLayer))
+
 /**
  * Load .roci/models.json if present and merge with defaults + CLI overrides.
  * CLI overrides take precedence over the file; the file takes precedence over defaults.
@@ -116,7 +127,14 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
 
     yield* runOrchestrator(resolved, args.tickInterval, models, Option.getOrElse(args.manualApproval, () => false))
   }),
-).pipe(Command.withDescription("Start character(s) running"))
+).pipe(
+  // The model layer is provided HERE (not on the root command) so it builds —
+  // and cold-loads the resident mlx server — only when `roci start` actually
+  // runs. Providing it on the subcommand keeps it out of the parent command's
+  // requirement, so sibling subcommands (stop/status/...) never build it.
+  Command.provide(modelServiceLayer),
+  Command.withDescription("Start character(s) running"),
+)
 
 // --- stop command ---
 const stopDomain = Options.text("domain").pipe(
@@ -596,7 +614,11 @@ const runAutoDetect = (args: {
 const rociCommand = Command.make(
   "roci",
   { characters: defaultCharacters, tickInterval: defaultTickInterval, domain: defaultDomainOption, manualApproval: defaultManualApproval, tierFast, tierSmart, tierReasoning },
-  (args) => runAutoDetect(args),
+  // The bare `roci` invocation can start a session via auto-detect, so the model
+  // layer is provided directly onto THIS handler's effect (not via
+  // Command.provide on the root command — that would re-wrap every dispatched
+  // subcommand and re-introduce the stop/status cold-load bug).
+  (args) => runAutoDetect(args).pipe(Effect.provide(modelServiceLayer)),
 ).pipe(
   Command.withSubcommands([
     setupCommand,
@@ -623,10 +645,12 @@ const oauthTokenLayer = OAuthTokenLive.pipe(
   Layer.provide(Layer.mergeAll(projectRootLayer, characterLogLayer)),
 )
 
-// build the backend layer (needs CommandExecutor from NodeContext, already provided in main.ts)
-const modelBackendLayer = Layer.effect(ModelBackendTag, makeMlxBackend())
-const modelServiceLayer = ModelServiceLive.pipe(Layer.provide(modelBackendLayer))
-
+// Global service layer provided to the ROOT command (and thus inherited by every
+// subcommand). This intentionally does NOT include the model layer: the model
+// layer is scoped to the `start` command and the root auto-detect handler (see
+// `modelServiceLayer` above), so non-model subcommands (stop/status/pause/...)
+// never cold-load the resident mlx server. ModelClientLive / ConsciousThoughtLive
+// are pure `Layer.succeed` (no side effects at build time) and stay global.
 const serviceLayer = Layer.mergeAll(
   DockerLive,
   oauthTokenLayer,
@@ -635,7 +659,6 @@ const serviceLayer = Layer.mergeAll(
   characterLogLayer,
   ModelClientLive,
   ConsciousThoughtLive,
-  modelServiceLayer,
 )
 
 export { rociCommand, serviceLayer }
