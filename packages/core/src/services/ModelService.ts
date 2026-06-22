@@ -9,9 +9,9 @@ export class ModelBackendTag extends Context.Tag("ModelBackend")<ModelBackendTag
 export class ModelService extends Context.Tag("ModelService")<
   ModelService,
   {
-    readonly withTier: <A, E, R>(
+    readonly withTier: (
       tier: CortexTier,
-    ) => (effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SpawnError | ReadinessError, R>
+    ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SpawnError | ReadinessError, R>
   }
 >() {}
 
@@ -80,8 +80,8 @@ export function makeModelService(
     }
 
     const withTier =
-      <A, E, R>(tier: CortexTier) =>
-      (effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SpawnError | ReadinessError, R> => {
+      (tier: CortexTier) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SpawnError | ReadinessError, R> => {
         const spec = resolveTierSpec(tier)
         if (spec.lifecycle === "resident") {
           return effect as Effect.Effect<A, E | SpawnError | ReadinessError, R>

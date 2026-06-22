@@ -7,15 +7,14 @@ import { resolveTierSpec } from "./model-tier-spec.js"
 // Run a scoped program against a fake backend. The service is built inside the
 // same scope so its resident-acquire + teardown are exercised.
 type FakeLog = { spawns: ReadonlyArray<string>; kills: ReadonlyArray<string>; probes: ReadonlyArray<string>; healthChecks: ReadonlyArray<string> }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const withService = <A, E>(
   script: Parameters<typeof makeFakeBackend>[0],
-  use: (svc: ModelService["Type"], log: () => Effect.Effect<FakeLog>) => Effect.Effect<A, E, any>,
+  use: (svc: ModelService["Type"], log: () => Effect.Effect<FakeLog>) => Effect.Effect<A, E, never>,
 ) =>
   Effect.gen(function* () {
     const be = yield* makeFakeBackend(script)
     const svc = yield* makeModelService(be)
-    return yield* use(svc, be.log) as Effect.Effect<A, E, never>
+    return yield* use(svc, be.log)
   }).pipe(Effect.scoped)
 
 describe("ModelService — resident-first gating", () => {
