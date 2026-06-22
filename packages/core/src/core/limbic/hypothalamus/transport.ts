@@ -1,4 +1,4 @@
-import { Effect, Stream, Chunk, Fiber, Ref } from "effect"
+import { Effect, Stream, Chunk, Fiber, Ref, Clock } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
 import type { TurnResult } from "./types.js"
@@ -6,6 +6,40 @@ import type { InternalEvent } from "../../../logging/stream-normalizer.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
 import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
+
+/**
+ * How long a body/brain turn may stay silent (no stdout) before the heartbeat
+ * loop logs a "still running" liveness line. Default 30s.
+ */
+export const HEARTBEAT_INTERVAL_MS = 30_000
+
+/**
+ * Liveness heartbeat loop. Sleeps `intervalMs`, then checks how long it's been
+ * since the last activity (recorded in `lastActivityAt` as an epoch-ms value);
+ * if it's been silent for at least one full interval, invokes `onHeartbeat`
+ * with the number of whole seconds of silence. Loops forever — the caller is
+ * expected to interrupt the fiber on process exit/timeout.
+ *
+ * Extracted from `runTransport` so the timing logic can be unit-tested with
+ * Effect's TestClock (driving a real subprocess + virtual time together is not
+ * deterministic). Uses `Clock.currentTimeMillis` so TestClock controls "now".
+ */
+export const runHeartbeat = <E, R>(
+  lastActivityAt: Ref.Ref<number>,
+  intervalMs: number,
+  onHeartbeat: (silentSeconds: number) => Effect.Effect<void, E, R>,
+): Effect.Effect<never, E, R> =>
+  Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(intervalMs)
+      const now = yield* Clock.currentTimeMillis
+      const last = yield* Ref.get(lastActivityAt)
+      const silentMs = now - last
+      if (silentMs >= intervalMs) {
+        yield* onHeartbeat(Math.round(silentMs / 1000))
+      }
+    }
+  }) as Effect.Effect<never, E, R>
 
 /** Parse a stream-json line, returning the parsed object or null. */
 export function parseStreamJson(line: string): Record<string, unknown> | null {
@@ -32,6 +66,8 @@ export interface TransportInput {
   timeoutMs: number
   /** Optional: extract a value from each raw stdout line; the first non-null is kept. */
   captureFromRaw?: (raw: Record<string, unknown>) => string | null
+  /** Optional override for the liveness heartbeat interval (default `HEARTBEAT_INTERVAL_MS`). */
+  heartbeatMs?: number
 }
 
 /**
@@ -53,6 +89,9 @@ export const runTransport = (input: TransportInput): Effect.Effect<
       const textAccumulator = yield* Ref.make<string[]>([])
       const capturedSessionId = yield* Ref.make<string | null>(null)
       const log = yield* CharacterLog
+      // Liveness: last time any stdout line was processed. Heartbeat reads this.
+      const heartbeatMs = input.heartbeatMs ?? HEARTBEAT_INTERVAL_MS
+      const lastActivityAt = yield* Ref.make(yield* Clock.currentTimeMillis)
 
       const process = yield* executor.start(input.command)
 
@@ -70,6 +109,8 @@ export const runTransport = (input: TransportInput): Effect.Effect<
         Stream.filter((line) => line.trim().length > 0),
         Stream.mapEffect((line) =>
           Effect.gen(function* () {
+            // Any stdout line counts as liveness — reset the heartbeat clock.
+            yield* Ref.set(lastActivityAt, yield* Clock.currentTimeMillis)
             const raw = parseStreamJson(line)
             if (raw) {
               if (input.captureFromRaw) {
@@ -100,6 +141,22 @@ export const runTransport = (input: TransportInput): Effect.Effect<
         Stream.runDrain,
       ).pipe(Effect.fork)
 
+      // Liveness heartbeat: log a "still running" line whenever stdout has been
+      // silent for a full interval, so a wedged turn is visible long before the
+      // (1hr) wall-clock timeout. Interrupted on every exit path below.
+      const heartbeatFiber = yield* runHeartbeat(lastActivityAt, heartbeatMs, (silentSeconds) =>
+        logToConsole(
+          input.char.name,
+          input.role,
+          `still running — no output for ${silentSeconds}s (awaiting model/tool)`,
+        ),
+      ).pipe(Effect.fork)
+      // Guarantee no leaked heartbeat fiber on any exit path (failure, defect,
+      // scoped teardown) — in addition to the explicit interrupts per branch.
+      yield* Effect.addFinalizer(() =>
+        Fiber.interrupt(heartbeatFiber).pipe(Effect.catchAll(() => Effect.void)),
+      )
+
       // Wait for the process to actually exit (not just stdout to drain).
       const exitFiber = yield* process.exitCode.pipe(Effect.fork)
 
@@ -115,12 +172,14 @@ export const runTransport = (input: TransportInput): Effect.Effect<
       let timedOut: boolean
       if (raceResult.timedOut) {
         timedOut = true
+        yield* Fiber.interrupt(heartbeatFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* Fiber.interrupt(exitFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* Fiber.interrupt(streamFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* Fiber.interrupt(stderrFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* logToConsole(input.char.name, input.role, "TIMED OUT — interrupting")
       } else {
         timedOut = false
+        yield* Fiber.interrupt(heartbeatFiber).pipe(Effect.catchAll(() => Effect.void))
         const exitCode = "exitCode" in raceResult ? (raceResult as { exitCode: number }).exitCode : -1
         const elapsed = Math.round((Date.now() - start) / 1000)
         yield* logToConsole(input.char.name, input.role, `Process exited (code=${exitCode}) after ${elapsed}s`)
