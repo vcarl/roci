@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { MODEL_TIER_SPECS, resolveTierSpec } from "./model-tier-spec.js"
+import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
 
 describe("MODEL_TIER_SPECS", () => {
   it("pins conscious to the resident 122B on port 8083", () => {
@@ -24,5 +25,19 @@ describe("MODEL_TIER_SPECS", () => {
   })
   it("resolveTierSpec returns the matching spec", () => {
     expect(resolveTierSpec("conscious")).toBe(MODEL_TIER_SPECS.conscious)
+  })
+
+  // C0 regression guard: the spawner (TierSpec) and the consumer (handles) must
+  // never advertise a different model or endpoint for the same tier, or the
+  // server we spawn answers a model the cortex never calls. The spec now DERIVES
+  // both from DEFAULT_CORTEX_MODELS, so this can only fail if someone reintroduces
+  // a second source of truth.
+  it("derives model and baseUrl from handles for every tier (single source of truth)", () => {
+    for (const tier of ["hindbrain", "forebrain", "conscious"] as const) {
+      const spec = resolveTierSpec(tier)
+      const handle = DEFAULT_CORTEX_MODELS[tier]
+      expect(spec.model).toBe(handle.model)
+      expect(spec.baseUrl).toBe(handle.baseUrl)
+    }
   })
 })
