@@ -4,6 +4,7 @@ import {
   shouldForceOrient,
   formatStepTask,
   planSteps,
+  decideSteps,
   STEP_DONE_MARKER,
   detectCompletion,
   formatSteerDirective,
@@ -47,6 +48,53 @@ describe("planSteps", () => {
     expect(planSteps(plan)).toHaveLength(1)
     expect(planSteps({ decision: "continue", reasoning: "x" })).toEqual([])
     expect(planSteps(null)).toEqual([])
+  })
+})
+
+// Regression: a small conscious model emits parseable `{"decision":"plan"}`
+// with no `steps` (or `steps` a non-array). parseOr's fallback is the
+// `continue` variant, so `steps` stays undefined → `decide.steps.length`
+// throws in the loop. decideSteps must absorb this: a plan decision with
+// missing/non-array steps yields [] (no actionable steps), never throws.
+describe("decideSteps — shape-safe step access", () => {
+  it("returns the steps of a well-formed plan decision", () => {
+    const plan: DecideResult = {
+      decision: "plan",
+      reasoning: "go",
+      steps: [{ task: "t", goal: "g", tier: "fast", successCondition: "c", timeoutTicks: 2 }],
+    }
+    expect(decideSteps(plan)).toHaveLength(1)
+  })
+
+  it("returns [] for a plan decision with MISSING steps (does not throw on .length)", () => {
+    const malformed = { decision: "plan", reasoning: "go" } as unknown as DecideResult
+    const steps = decideSteps(malformed)
+    expect(steps).toEqual([])
+    // The crashy access the loop does: `steps.length > 0`.
+    expect(() => steps.length > 0).not.toThrow()
+    expect(steps.length > 0).toBe(false)
+  })
+
+  it("returns [] for a plan decision with a NON-ARRAY steps", () => {
+    const malformed = { decision: "plan", reasoning: "go", steps: "soon" } as unknown as DecideResult
+    expect(decideSteps(malformed)).toEqual([])
+  })
+
+  it("returns [] for a plan decision with an EMPTY steps array", () => {
+    const empty: DecideResult = { decision: "plan", reasoning: "go", steps: [] }
+    expect(decideSteps(empty)).toEqual([])
+  })
+
+  it("returns [] for non-plan decisions and null", () => {
+    expect(decideSteps({ decision: "continue", reasoning: "x" })).toEqual([])
+    expect(decideSteps(null)).toEqual([])
+  })
+})
+
+describe("planSteps — array safety (delegates to decideSteps)", () => {
+  it("returns [] for a plan decision with a non-array steps (no crash)", () => {
+    const malformed = { decision: "plan", reasoning: "go", steps: null } as unknown as DecideResult
+    expect(planSteps(malformed)).toEqual([])
   })
 })
 

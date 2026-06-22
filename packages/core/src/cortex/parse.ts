@@ -55,6 +55,17 @@ export function extractJson(text: string): string {
   return text.trim()
 }
 
+/**
+ * True only for a non-null, non-array object — the one shape the spread merge
+ * in `parseOr` (and the equivalent merge in `runForebrain`) is safe over.
+ * `JSON.parse` can legitimately yield an array / string / number / null; those
+ * must NOT be spread into an object literal (a bare string spreads char-by-char
+ * into index keys), so callers treat a non-plain-object parse as a parse miss.
+ */
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+}
+
 /** A successful or failed parse, without throwing. */
 export type ParseResult<T> = { ok: true; value: T } | { ok: false }
 
@@ -71,8 +82,23 @@ export function tryParseJson<T>(text: string): ParseResult<T> {
   }
 }
 
-/** Parse JSON from model output, returning `fallback` if extraction/parse fails. */
+/**
+ * Parse JSON from model output, returning `fallback` if extraction/parse fails.
+ *
+ * On a successful parse of a plain object the result is `{ ...fallback, ...parsed }`
+ * — parsed fields win where present, the fallback fills anything the model
+ * omitted. The tolerant extractor can now recover a parseable-but-incomplete
+ * object that the old brittle parser would have rejected; merging over the
+ * fallback guarantees every fallback-defined field is present so consumers
+ * never read `undefined`.
+ *
+ * The invariant the merge relies on: `parsed.value` is a non-null, non-array
+ * object. `JSON.parse` can also yield an array / string / number / null — those
+ * are NOT mergeable (spreading a string produces index keys), so a non-plain-
+ * object parse is treated as a parse miss and the clean fallback is returned.
+ */
 export function parseOr<T>(text: string, fallback: T): T {
   const r = tryParseJson<T>(text)
-  return r.ok ? r.value : fallback
+  if (!r.ok || !isPlainObject(r.value)) return fallback
+  return { ...fallback, ...r.value }
 }

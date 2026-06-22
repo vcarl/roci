@@ -32,6 +32,7 @@ import {
   freshCortexState,
   shouldForceOrient,
   planSteps,
+  decideSteps,
   formatStepTask,
   formatExecutionReport,
   formatSteerDirective,
@@ -235,7 +236,12 @@ export const runCortex = (config: CortexLoopConfig) =>
             cortex.waitState = decide.wait
             if (decide.wait.disposition === "terminate")
               return { _tag: "Completed" as const, finalState: state }
-          } else if (decide.decision === "plan" && decide.steps.length > 0) {
+          } else if (decideSteps(decide).length > 0) {
+            // decideSteps is array-safe: a parseable `{"decision":"plan"}` with
+            // a missing/non-array/empty `steps` yields [] here (parseOr's
+            // fallback is the `continue` variant, so `decide.steps` can be
+            // undefined). A plan with no actionable steps is treated as no plan
+            // started — never a crash on `decide.steps.length`.
             cortex.currentPlan = decide
             cortex.currentStepIndex = 0
             planHeadline = orient.headline

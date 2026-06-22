@@ -11,10 +11,11 @@ import type {
   OrientResult,
   DecideResult,
   EvaluateResult,
+  EvaluateTransition,
   WaitState,
 } from "../skills/types.js"
 import type { CharacterConfig } from "../services/CharacterFs.js"
-import { extractJson, parseOr, tryParseJson } from "./parse.js"
+import { extractJson, parseOr, tryParseJson, isPlainObject } from "./parse.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { CharacterLog, logToConsole } from "../logging/log-writer.js"
@@ -91,6 +92,20 @@ export function runHindbrain(
 /** Max length of raw forebrain text echoed to the log on a parse failure. */
 const RAW_FOREBRAIN_LOG_LIMIT = 2000
 
+/**
+ * Safe defaults for every required OrientResult field. Used both as the
+ * parse-miss fallback AND as the merge-base for a successful-but-incomplete
+ * parse, so the returned OrientResult always has well-formed fields. `headline`
+ * is overwritten with a parse-failure marker on the miss path.
+ */
+const orientFallback = (emotionalWeight: string): OrientResult => ({
+  headline: "Orient parse failure — situation unknown",
+  sections: [],
+  whatChanged: "Unknown — forebrain could not parse",
+  emotionalState: emotionalWeight,
+  metrics: {},
+})
+
 // ── Forebrain (orient) ───────────────────────────────────────
 export function runForebrain(
   config: CortexRunnerConfig,
@@ -109,10 +124,25 @@ export function runForebrain(
     diary: identity.diary,
     emotionalWeight,
   })
+  const fallback = orientFallback(emotionalWeight)
   return callTier(config, "forebrain", prompt).pipe(
     Effect.flatMap((text) => {
       const parsed = tryParseJson<OrientResult>(text)
-      if (parsed.ok) return Effect.succeed(parsed.value)
+      if (parsed.ok && isPlainObject(parsed.value)) {
+        // Merge over the fallback so any field the model omitted is filled with
+        // a safe default — the tolerant extractor now recovers parseable-but-
+        // incomplete objects the old brittle parser rejected. The isPlainObject
+        // guard keeps a non-object parse (array/string/number) off the merge
+        // path (it would otherwise pollute the result with index keys); such a
+        // parse falls through to the parse-miss fallback below. Then coerce
+        // `sections` to an array even if the model emitted a wrong type
+        // (string/null), since downstream `.map`s it.
+        const merged = { ...fallback, ...parsed.value }
+        return Effect.succeed<OrientResult>({
+          ...merged,
+          sections: Array.isArray(merged.sections) ? merged.sections : [],
+        })
+      }
       // Parse miss: log the raw forebrain output so the failure is diagnosable
       // (previously silent). Truncate to keep the log line sane. Only fires on
       // failure — the success path above never logs.
@@ -127,13 +157,7 @@ export function runForebrain(
       ).pipe(
         // A log-write failure must never crash the loop — swallow it.
         Effect.catchAll(() => Effect.void),
-        Effect.as<OrientResult>({
-          headline: "Orient parse failure — situation unknown",
-          sections: [],
-          whatChanged: "Unknown — forebrain could not parse",
-          emotionalState: emotionalWeight,
-          metrics: {},
-        }),
+        Effect.as<OrientResult>(fallback),
       )
     }),
   )
@@ -152,7 +176,12 @@ export function runConsciousDecide(
     headline: orient.headline,
     whatChanged: orient.whatChanged,
     emotionalState: orient.emotionalState,
-    sections: orient.sections.map((s) => `#### ${s.heading}\n${s.body}`).join("\n\n"),
+    // Defensive: a malformed OrientResult (non-array/absent `sections`) must
+    // never crash the decide builder. runForebrain normalizes this, but guard
+    // here too in case an orient result is constructed elsewhere.
+    sections: (Array.isArray(orient.sections) ? orient.sections : [])
+      .map((s) => `#### ${s.heading}\n${s.body}`)
+      .join("\n\n"),
     metrics: JSON.stringify(orient.metrics, null, 2),
     currentPlanState,
     availableSkills: availableActions,
@@ -162,6 +191,33 @@ export function runConsciousDecide(
       parseOr<DecideResult>(text, { decision: "continue", reasoning: "parse failure — defaulting to continue" }),
     ),
   )
+}
+
+/** The transition enum values the loop branches on. */
+const TRANSITION_VALUES = ["next_step", "replan", "wait", "terminate"] as const
+type TransitionName = (typeof TRANSITION_VALUES)[number]
+const isTransitionName = (v: unknown): v is TransitionName =>
+  typeof v === "string" && (TRANSITION_VALUES as readonly string[]).includes(v)
+
+/**
+ * Coerce an EvaluateResult's `transition` into the always-valid object shape the
+ * loop reads as `evalResult.transition.transition`. A small model can emit:
+ *  - a bare enum string (`"transition":"replan"`) → wrap as `{transition:"replan"}`
+ *  - a missing / wrong-typed transition → default to the safe `{transition:"next_step"}`
+ *  - a proper object but with a non-enum `transition` field → default to next_step
+ * `wait`/`replan`/`terminate` carry extra fields; a bare-string coercion supplies
+ * only the enum. The loop's branches read those extras defensively (`t.wait`,
+ * `t.summary`), and `next_step` is the safe no-extra-data transition, so an
+ * unrecoverable shape degrades to advancing the step rather than misbehaving.
+ */
+function normalizeTransition(raw: EvaluateResult["transition"]): EvaluateTransition {
+  if (isTransitionName(raw)) {
+    return { transition: raw } as EvaluateTransition
+  }
+  if (isPlainObject(raw) && isTransitionName((raw as { transition?: unknown }).transition)) {
+    return raw as EvaluateTransition
+  }
+  return { transition: "next_step" }
 }
 
 // ── Conscious (evaluate) ─────────────────────────────────────
@@ -193,12 +249,16 @@ export function runConsciousEvaluate(
     remainingSteps: input.remainingSteps,
   })
   return callTier(config, "conscious", prompt).pipe(
-    Effect.map((text) =>
-      parseOr<EvaluateResult>(text, {
+    Effect.map((text) => {
+      const result = parseOr<EvaluateResult>(text, {
         judgment: "partially_succeeded",
         reasoning: "parse failure — cannot determine outcome",
         transition: { transition: "next_step" },
-      }),
-    ),
+      })
+      // Normalize `transition` at the parse boundary so the loop's
+      // `evalResult.transition.transition` reads are always against a valid
+      // object — a bare-string or wrong-typed transition is coerced here.
+      return { ...result, transition: normalizeTransition(result.transition) }
+    }),
   )
 }

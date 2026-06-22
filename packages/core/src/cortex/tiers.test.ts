@@ -4,7 +4,16 @@ import { Effect, Layer } from "effect"
 import { ModelClient, ModelClientLive } from "../model/client.js"
 import type { ModelHandle } from "../model/handles.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
-import { extractJson, parseOr, runHindbrain, runForebrain, type CortexRunnerConfig } from "./tiers.js"
+import {
+  extractJson,
+  parseOr,
+  runHindbrain,
+  runForebrain,
+  runConsciousDecide,
+  runConsciousEvaluate,
+  type CortexRunnerConfig,
+} from "./tiers.js"
+import type { OrientResult } from "../skills/types.js"
 import { ModelService } from "../services/ModelService.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import type { UnifiedEvent } from "../logging/events.js"
@@ -188,6 +197,166 @@ describe("runForebrain", () => {
     expect(messages.some((m) => m.includes(raw))).toBe(true)
     // The log should identify tier=forebrain and step=orient.
     expect(messages.some((m) => /forebrain/i.test(m) && /orient/i.test(m))).toBe(true)
+  })
+})
+
+// Regression for the live cortex crash: the tolerant JSON extractor now
+// recovers prose-wrapped JSON the old brittle parser threw on. If that
+// recovered object is a valid OrientResult-ish object but MISSING `sections`
+// (or has it as a non-array), runForebrain used to return it verbatim →
+// downstream `orient.sections.map(...)` crashed with
+//   "Cannot read properties of undefined (reading 'map')".
+// runForebrain must always return a COMPLETE OrientResult: `sections` is
+// always an array, never undefined and never a non-array.
+describe("runForebrain — shape safety (live crash regression)", () => {
+  const runWith = (raw: string) =>
+    Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        Layer.mergeAll(fixedClient(raw), recordingService([]), silentLog),
+      ),
+    )
+
+  it("backfills `sections` to an array when the parsed object omits it", async () => {
+    // Valid JSON, prose-wrapped, but no `sections` key. tryParseJson now
+    // SUCCEEDS on this — the merge must supply `sections: []`.
+    const out = await runWith(
+      'Here is the situation:\n{"headline":"Docked at station","whatChanged":"arrived"}\nThat is all.',
+    )
+    expect(out.headline).toBe("Docked at station")
+    expect(Array.isArray(out.sections)).toBe(true)
+    expect(out.sections).toEqual([])
+    // It must be `.map`-able without throwing.
+    expect(() => out.sections.map((s) => s.heading)).not.toThrow()
+  })
+
+  it("coerces a non-array `sections` (string) to a safe array", async () => {
+    const out = await runWith('{"headline":"x","sections":"docked","whatChanged":"y"}')
+    expect(Array.isArray(out.sections)).toBe(true)
+    expect(out.sections).toEqual([])
+  })
+
+  it("coerces a null `sections` to a safe array", async () => {
+    const out = await runWith('{"headline":"x","sections":null,"whatChanged":"y"}')
+    expect(Array.isArray(out.sections)).toBe(true)
+    expect(out.sections).toEqual([])
+  })
+
+  it("preserves a valid `sections` array", async () => {
+    const out = await runWith(
+      '{"headline":"x","sections":[{"id":"a","heading":"H","body":"B"}],"whatChanged":"y","emotionalState":"😐","metrics":{}}',
+    )
+    expect(out.sections).toEqual([{ id: "a", heading: "H", body: "B" }])
+  })
+})
+
+// The decide path consumes the orient result's `sections` via `.map`. Even if
+// a malformed OrientResult slips through (e.g. constructed directly), the
+// decide builder must not throw on a non-array `sections`.
+describe("runConsciousDecide — does not crash on malformed orient", () => {
+  const decideWith = (orient: OrientResult) =>
+    Effect.runPromise(
+      Effect.provide(
+        runConsciousDecide(config, orient, "no plan", "skills"),
+        Layer.mergeAll(
+          fixedClient('{"decision":"continue","reasoning":"steady"}'),
+          recordingService([]),
+        ),
+      ),
+    )
+
+  const base = {
+    headline: "h",
+    whatChanged: "w",
+    emotionalState: "😐",
+    metrics: {},
+  }
+
+  it("does not throw when sections is undefined", async () => {
+    const out = await decideWith({ ...base, sections: undefined as never })
+    expect(out.decision).toBe("continue")
+  })
+
+  it("does not throw when sections is a non-array", async () => {
+    const out = await decideWith({ ...base, sections: "docked" as never })
+    expect(out.decision).toBe("continue")
+  })
+})
+
+// Regression: a small conscious model can emit `{"transition":"replan"}` — a
+// bare ENUM STRING where the schema wants `{transition:"replan",...}`. The merge
+// keeps the string, so downstream `evalResult.transition.transition` is
+// undefined and every transition branch falls through (silently wrong: the loop
+// neither replans nor terminates nor waits — it falls into the next_step else).
+// runConsciousEvaluate must normalize `transition` so it is ALWAYS a valid
+// `{transition: <enum>}` object before it reaches the loop.
+describe("runConsciousEvaluate — transition normalization", () => {
+  const evalInput = {
+    task: "t",
+    goal: "g",
+    successCondition: "c",
+    ticksBudgeted: 4,
+    ticksConsumed: 2,
+    executionReport: "did stuff",
+    stateDiff: "diff",
+    conditionCheck: "checked",
+    emotionalState: "😐",
+    remainingSteps: "None.",
+  }
+
+  const evalWith = (raw: string) =>
+    Effect.runPromise(
+      Effect.provide(
+        runConsciousEvaluate(config, evalInput),
+        Layer.mergeAll(fixedClient(raw), recordingService([])),
+      ),
+    )
+
+  it("coerces a bare-string transition (\"replan\") to a valid object", async () => {
+    const out = await evalWith(
+      '{"judgment":"failed","reasoning":"r","transition":"replan"}',
+    )
+    expect(out.transition).toEqual({ transition: "replan" })
+    // Downstream `t.transition` reads must see the enum, not undefined.
+    expect(out.transition.transition).toBe("replan")
+  })
+
+  it("coerces a bare-string \"next_step\" transition to a valid object", async () => {
+    const out = await evalWith(
+      '{"judgment":"succeeded","reasoning":"r","transition":"next_step"}',
+    )
+    expect(out.transition.transition).toBe("next_step")
+  })
+
+  it("defaults to next_step when transition is missing entirely", async () => {
+    const out = await evalWith('{"judgment":"succeeded","reasoning":"r"}')
+    expect(out.transition.transition).toBe("next_step")
+  })
+
+  it("defaults to next_step when transition is an unrecoverable shape (number)", async () => {
+    const out = await evalWith(
+      '{"judgment":"failed","reasoning":"r","transition":7}',
+    )
+    expect(out.transition.transition).toBe("next_step")
+  })
+
+  it("preserves a proper object transition (replan with reason)", async () => {
+    const out = await evalWith(
+      '{"judgment":"failed","reasoning":"r","transition":{"transition":"replan","reason":"stuck"}}',
+    )
+    expect(out.transition).toEqual({ transition: "replan", reason: "stuck" })
+  })
+
+  it("preserves a proper object transition (terminate with summary)", async () => {
+    const out = await evalWith(
+      '{"judgment":"succeeded","reasoning":"r","transition":{"transition":"terminate","summary":"done"}}',
+    )
+    expect(out.transition.transition).toBe("terminate")
+  })
+
+  it("falls back to a valid transition object on a total parse miss", async () => {
+    const out = await evalWith("the model rambled, no json")
+    expect(out.transition.transition).toBe("next_step")
   })
 })
 
