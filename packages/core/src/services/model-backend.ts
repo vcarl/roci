@@ -27,7 +27,7 @@ export class ReadinessError {
   get message(): string {
     return `Model readiness failed [tier=${this.tier} model=${this.model} timedOut=${this.timedOut}]: ${this.reason}`
   }
-  toString(): string { return this.message }
+  toString(): string { return `ReadinessError: ${this.message}` }
 }
 
 export class ModelCrashed {
