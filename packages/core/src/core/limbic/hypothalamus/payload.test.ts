@@ -130,12 +130,20 @@ describe("buildOpenCodeSessionCommand", () => {
     expect(cmd).toContain("$'do the thing'")
   })
 
-  it("resume turn carries -s and the prompt but NOT --agent or -m", () => {
+  it("first turn passes an explicit --title to suppress opencode's title-gen model call", () => {
+    const cmd = buildOpenCodeSessionCommand(cfg)
+    expect(cmd).toContain("--title")
+    // title is derived from the player name and shell-escaped
+    expect(cmd).toContain(`--title $'cortex-${base.playerName}'`)
+  })
+
+  it("resume turn carries -s and the prompt but NOT --agent, -m, or --title", () => {
     const cmd = buildOpenCodeSessionCommand({ ...cfg, prompt: "now do this" }, { sessionId: "ses_abc" })
     expect(cmd).toContain("-s ses_abc")
     expect(cmd).toContain("$'now do this'")
     expect(cmd).not.toContain("--agent")
     expect(cmd).not.toContain("-m ")
+    expect(cmd).not.toContain("--title")
   })
 
   it("falls back to the default agent name when none is set", () => {

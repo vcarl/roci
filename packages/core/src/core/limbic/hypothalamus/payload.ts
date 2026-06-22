@@ -138,6 +138,14 @@ export function buildOpenCodeSessionCommand(
   } else {
     parts.push("--agent", config.agentName ?? CONSCIOUS_AGENT_NAME)
     parts.push("-m", String(config.model))
+    // Provide an explicit session title so opencode does NOT fire its automatic
+    // title-generation ("small model") call. That call hits the same single-request
+    // local model server CONCURRENTLY with the main agent call; on the large resident
+    // model the two concurrent requests wedge it (0% CPU, both hang) and the body
+    // stalls for the full turn timeout. An explicit --title suppresses the title call
+    // entirely, leaving exactly one request to the model. Only the first turn creates
+    // (and names) the session, so resume turns don't need it.
+    parts.push("--title", shellEscape(`cortex-${config.playerName}`))
   }
   parts.push(shellEscape(config.prompt))
   return parts.join(" ")
