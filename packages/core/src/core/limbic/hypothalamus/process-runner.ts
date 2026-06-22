@@ -182,7 +182,13 @@ export const runOpenCodeSessionTurn = (
     )
     yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
 
-    const command = Command.make("docker", ...execArgs)
+    // opencode `run` blocks at init reading stdin when stdin is an open pipe with no
+    // EOF: `docker exec -i` (buildExecArgs) keeps stdin open, and Effect does not close
+    // an unconfigured stdin, so opencode waits forever — before ever creating a session
+    // or calling the model (the "init then silence" body hang). The prompt is passed as
+    // a CLI arg, not via stdin, so feed an empty, immediately-closing stdin to signal
+    // EOF and let opencode proceed.
+    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(Stream.empty))
 
     const result = yield* runTransport({
       command,
