@@ -15,12 +15,36 @@ Design reference: `docs/superpowers/specs/2026-06-21-roci-qa-copilot-design.md`.
 ## 1. Preflight (you act)
 
 - `docker ps` — confirm the daemon is up and note any existing `roci-*` containers.
-- Health-check the three local model servers: `curl -s http://127.0.0.1:8081/v1/models`,
-  `:8082`, `:8083`. Any non-200 / connection refused → **ACTION NEEDED** (the human starts it).
+- **Make `mlx_lm.server` reachable on PATH** (see "Model runtime access" below). As of the
+  ModelService layer, the harness *spawns the tier servers itself* (122B conscious pinned-resident
+  and gated first; 2B/9B transient per-phase) — so you normally do **not** pre-start servers. What
+  the harness needs is the `mlx_lm.server` binary on the `PATH` of the shell that runs `roci start`.
+  Verify: `which mlx_lm.server` returns a path. If not → **ACTION NEEDED** (activate the venv).
+- If servers are *already* running (adopt-if-healthy), confirm with a **real generate** probe, not
+  `/v1/models` — the latter returns 200 before weights finish loading and will lie:
+  `curl -s http://127.0.0.1:8083/v1/chat/completions -H 'content-type: application/json' -d '{"model":"<id>","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'`
+  (ports: 8081 hindbrain / 8082 forebrain / 8083 conscious).
 - Ensure the build is current: `pnpm build` (nx is cached, so this is fast).
 - Run the tier connectivity smoke per the runbook in `docs/cortex-smoke.md` (step 1) if servers
   are reachable.
 - If anything fails, emit an ACTION NEEDED block (format below) and wait.
+
+### Model runtime access (mlx-lm)
+
+`mlx_lm.server` ships in a Python venv at `~/llm-env`, **not** on the system Python or global PATH.
+The harness spawns it by bare name (`Command.make("mlx_lm.server", …)` in
+`packages/core/src/services/mlx-backend.ts`) with **no configurable path override**, so it resolves
+purely through `PATH`. Two ways to satisfy that:
+
+- **Activate the venv** in the launching shell — fish: `source ~/llm-env/bin/activate.fish`
+  (bash/zsh: `source ~/llm-env/bin/activate`). Then launch `roci start` from that same shell.
+- **Or prepend the venv bin** for a single command:
+  `env PATH="$HOME/llm-env/bin:$PATH" <cmd>` (used by the gated smoke
+  `ROCI_MODEL_SMOKE_SPAWN=1 … vitest run …mlx-backend.smoke.test.ts`).
+
+The console scripts are self-contained (shebang → the venv's `python3.12`), so once `mlx_lm.server`
+is on PATH it runs standalone — no separate activation needed for the *spawned* child. Sanity check:
+`~/llm-env/bin/python -c "import mlx_lm; print(mlx_lm.__version__)"` (known-good: 0.31.2 / mlx 0.31.1).
 
 ## 2. Launch (you act)
 
