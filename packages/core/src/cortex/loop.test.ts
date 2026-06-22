@@ -16,6 +16,15 @@ import { CharacterFs } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { STEP_DONE_MARKER } from "./state.js"
+import { ModelService } from "../services/ModelService.js"
+
+// No-op ModelService: withTier is transparent (passes the effect through unchanged).
+const noopModelService = Layer.succeed(
+  ModelService,
+  ModelService.of({
+    withTier: (_tier) => (effect) => effect as never,
+  }),
+)
 
 // ModelClient that branches on which skill template produced the prompt.
 // Classify by unique COMBINATION of markers (see original test comment for rationale).
@@ -188,7 +197,7 @@ describe("runCortex (conscious-session executor)", () => {
         cadence: "real-time",
         orientInterval: 1,
         tickIntervalMs: 1,
-      }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps)))
+      }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
       return { result, turnCallCount }
     })
     const { result, turnCallCount: count } = await Effect.runPromise(program)
@@ -247,7 +256,7 @@ describe("runCortex (conscious-session executor)", () => {
         cadence: "real-time",
         orientInterval: 1,
         tickIntervalMs: 1,
-      }).pipe(Effect.provide(Layer.mergeAll(countingEvalClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps)))
+      }).pipe(Effect.provide(Layer.mergeAll(countingEvalClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
       return result
     })
     const result = await Effect.runPromise(program)
@@ -303,7 +312,7 @@ describe("runCortex (conscious-session executor)", () => {
         cadence: "real-time",
         orientInterval: 1,
         tickIntervalMs: 1,
-      }).pipe(Effect.provide(Layer.mergeAll(budgetClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps)))
+      }).pipe(Effect.provide(Layer.mergeAll(budgetClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
     const result = await Effect.runPromise(program)
     expect(result._tag).toBe("Completed")
@@ -383,7 +392,7 @@ describe("runCortex (conscious-session executor)", () => {
         cadence: "real-time",
         orientInterval: 1,
         tickIntervalMs: 1,
-      }).pipe(Effect.provide(Layer.mergeAll(steerClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps)))
+      }).pipe(Effect.provide(Layer.mergeAll(steerClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
     const result = await Effect.runPromise(program)
     expect(result._tag).toBe("Completed")
@@ -465,7 +474,7 @@ describe("runCortex (conscious-session executor)", () => {
         cadence: "real-time",
         orientInterval: 1,
         tickIntervalMs: 1,
-      }).pipe(Effect.provide(Layer.mergeAll(coalesceClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps)))
+      }).pipe(Effect.provide(Layer.mergeAll(coalesceClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
     const result = await Effect.runPromise(program)
     expect(result._tag).toBe("Completed")
@@ -519,7 +528,7 @@ describe("runCortex (conscious-session executor)", () => {
         tickIntervalMs: 1,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(scriptedClient, ctLayer, criticalDomain, fakeIo, fakeRuntimeDeps),
+          Layer.mergeAll(scriptedClient, ctLayer, criticalDomain, fakeIo, fakeRuntimeDeps, noopModelService),
         ),
       )
     })
@@ -586,7 +595,7 @@ describe("runCortex (conscious-session executor)", () => {
         tickIntervalMs: 1,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(scriptedClient, blockingCt, interruptingDomain, fakeIo, fakeRuntimeDeps),
+          Layer.mergeAll(scriptedClient, blockingCt, interruptingDomain, fakeIo, fakeRuntimeDeps, noopModelService),
         ),
       )
     })
@@ -622,7 +631,7 @@ describe("runCortex (conscious-session executor)", () => {
         cadence: "real-time",
         orientInterval: 1,
         tickIntervalMs: 1,
-      }).pipe(Effect.provide(Layer.mergeAll(multiStepClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps)))
+      }).pipe(Effect.provide(Layer.mergeAll(multiStepClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
       return { result, sessionCount }
     })
     const { result, sessionCount: sc } = await Effect.runPromise(program)
@@ -697,7 +706,7 @@ describe("runCortex (conscious-session executor)", () => {
         cadence: "real-time",
         orientInterval: 1,
         tickIntervalMs: 1,
-      }).pipe(Effect.provide(Layer.mergeAll(launderClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps)))
+      }).pipe(Effect.provide(Layer.mergeAll(launderClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
     await Effect.runPromise(program)
     // Hard assertion — a directive must have been captured, and it must be laundered.

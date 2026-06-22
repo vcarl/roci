@@ -15,6 +15,8 @@ import type {
 } from "../skills/types.js"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { extractJson, parseOr } from "./parse.js"
+import { ModelService } from "../services/ModelService.js"
+import { SpawnError, ReadinessError } from "../services/model-backend.js"
 
 export { extractJson, parseOr }
 
@@ -50,9 +52,12 @@ export interface EvaluateInput {
 /** Run one prompt against the model backing `tier`, returning the raw text. */
 const callTier = (config: CortexRunnerConfig, tier: "hindbrain" | "forebrain" | "conscious", prompt: string) =>
   Effect.gen(function* () {
+    const svc = yield* ModelService
     const client = yield* ModelClient
     const handle = resolveHandle(config.models, tier)
-    const res = yield* client.complete(handle, [{ role: "user", content: prompt }])
+    const res = yield* svc.withTier(tier)(
+      client.complete(handle, [{ role: "user", content: prompt }]),
+    )
     return res.text
   })
 
@@ -61,7 +66,7 @@ export function runHindbrain(
   config: CortexRunnerConfig,
   events: string[],
   waitState: WaitState | null,
-): Effect.Effect<ObserveResult, ModelError, ModelClient> {
+): Effect.Effect<ObserveResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
   const prompt = skills.observe.render({
     cadence: config.cadence,
     cadenceGuidance: getCadenceGuidance("observe", config.cadence),
@@ -89,7 +94,7 @@ export function runForebrain(
   domainState: string,
   identity: { background: string; values: string; diary: string },
   emotionalWeight: string,
-): Effect.Effect<OrientResult, ModelError, ModelClient> {
+): Effect.Effect<OrientResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
   const prompt = skills.orient.render({
     cadence: config.cadence,
     cadenceGuidance: getCadenceGuidance("orient", config.cadence),
@@ -119,7 +124,7 @@ export function runConsciousDecide(
   orient: OrientResult,
   currentPlanState: string,
   availableActions: string,
-): Effect.Effect<DecideResult, ModelError, ModelClient> {
+): Effect.Effect<DecideResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
   const prompt = skills.decide.render({
     cadence: config.cadence,
     cadenceGuidance: getCadenceGuidance("decide", config.cadence),
@@ -142,7 +147,7 @@ export function runConsciousDecide(
 export function runConsciousEvaluate(
   config: CortexRunnerConfig,
   input: EvaluateInput,
-): Effect.Effect<EvaluateResult, ModelError, ModelClient> {
+): Effect.Effect<EvaluateResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
   const secondsBudgeted = input.ticksBudgeted * 30
   const secondsConsumed = input.ticksConsumed * 30
   const overrunWarning =

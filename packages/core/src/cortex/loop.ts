@@ -2,6 +2,8 @@ import { Effect, Queue, Option, Fiber } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterFs } from "../services/CharacterFs.js"
+import { ModelService } from "../services/ModelService.js"
+import { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { CharacterLog, logToConsole } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { EventProcessorTag } from "../core/limbic/thalamus/event-processor.js"
@@ -399,7 +401,7 @@ export const runCortex = (config: CortexLoopConfig) =>
     }
   }) as Effect.Effect<
     CortexResult,
-    ModelError,
+    ModelError | SpawnError | ReadinessError,
     | EventProcessorTag
     | SituationClassifierTag
     | InterruptRegistryTag
@@ -408,6 +410,7 @@ export const runCortex = (config: CortexLoopConfig) =>
     | CharacterFs
     | CharacterLog
     | ModelClient
+    | ModelService
     | ConsciousThought
     | Docker
     | CommandExecutor.CommandExecutor

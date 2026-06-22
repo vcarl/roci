@@ -88,3 +88,11 @@ export type { CortexRunnerConfig } from "./cortex/tiers.js"
 // Conscious tier — local-model OpenCode executor session
 export { ConsciousThought, ConsciousThoughtLive, ConsciousThoughtTest } from "./conscious/conscious-thought.js"
 export type { ConsciousTurnConfig, ProvisionOpts } from "./conscious/conscious-thought.js"
+
+// ModelService — tier lifecycle management
+export { ModelService, ModelServiceLive, ModelBackendTag, makeModelService } from "./services/ModelService.js"
+export { makeMlxBackend, buildMlxArgs, buildProbeRequest } from "./services/mlx-backend.js"
+export { MODEL_TIER_SPECS, resolveTierSpec } from "./services/model-tier-spec.js"
+export type { TierSpec, TierLifecycle } from "./services/model-tier-spec.js"
+export { SpawnError, ReadinessError, ModelCrashed } from "./services/model-backend.js"
+export type { ModelBackend, RunningServer } from "./services/model-backend.js"

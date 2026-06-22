@@ -5,6 +5,20 @@ import { ModelClient, ModelClientLive } from "../model/client.js"
 import type { ModelHandle } from "../model/handles.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
 import { extractJson, parseOr, runHindbrain, runForebrain, type CortexRunnerConfig } from "./tiers.js"
+import { ModelService } from "../services/ModelService.js"
+
+// A ModelService whose withTier records the tier it wrapped, then runs the
+// effect unchanged — lets tests assert callTier routed through withTier.
+const recordingService = (sink: string[]): Layer.Layer<ModelService> =>
+  Layer.succeed(
+    ModelService,
+    ModelService.of({
+      withTier: (tier) => (effect) => {
+        sink.push(tier)
+        return effect as never
+      },
+    }),
+  )
 
 const config: CortexRunnerConfig = {
   char: { name: "ada", dir: "/work/players/ada/me" },
@@ -33,7 +47,10 @@ describe("runHindbrain", () => {
     const out = await Effect.runPromise(
       Effect.provide(
         runHindbrain(config, ["type: combat\n{}"], null),
-        fixedClient('{"disposition":"escalate","emotionalWeight":"😰","reason":"under fire"}'),
+        Layer.mergeAll(
+          fixedClient('{"disposition":"escalate","emotionalWeight":"😰","reason":"under fire"}'),
+          recordingService([]),
+        ),
       ),
     )
     expect(out.disposition).toBe("escalate")
@@ -41,7 +58,10 @@ describe("runHindbrain", () => {
 
   it("falls back to accumulate on unparseable output (never silently discards)", async () => {
     const out = await Effect.runPromise(
-      Effect.provide(runHindbrain(config, ["x"], null), fixedClient("the model rambled")),
+      Effect.provide(
+        runHindbrain(config, ["x"], null),
+        Layer.mergeAll(fixedClient("the model rambled"), recordingService([])),
+      ),
     )
     expect(out.disposition).toBe("accumulate")
     expect(out.reason).toMatch(/parse/i)
@@ -90,7 +110,10 @@ describe("runHindbrain — reasoning-only response (Bug B regression)", () => {
       },
     }
     const out = await Effect.runPromise(
-      Effect.provide(runHindbrain(reasoningConfig, ["type: tick\n{}"], null), layer),
+      Effect.provide(
+        runHindbrain(reasoningConfig, ["type: tick\n{}"], null),
+        Layer.mergeAll(layer, recordingService([])),
+      ),
     )
     expect(out.disposition).toBe("discard")
   })
@@ -101,9 +124,28 @@ describe("runForebrain", () => {
     const out = await Effect.runPromise(
       Effect.provide(
         runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
-        fixedClient('{"headline":"Two PRs need review","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}'),
+        Layer.mergeAll(
+          fixedClient('{"headline":"Two PRs need review","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}'),
+          recordingService([]),
+        ),
       ),
     )
     expect(out.headline).toContain("PRs")
+  })
+})
+
+describe("callTier routes through ModelService.withTier", () => {
+  it("wraps the hindbrain call with withTier('hindbrain')", async () => {
+    const wrapped: string[] = []
+    await Effect.runPromise(
+      Effect.provide(
+        runHindbrain(config, ["type: tick\n{}"], null),
+        Layer.mergeAll(
+          fixedClient('{"disposition":"discard","emotionalWeight":"😐","reason":"x"}'),
+          recordingService(wrapped),
+        ),
+      ),
+    )
+    expect(wrapped).toEqual(["hindbrain"])
   })
 })
