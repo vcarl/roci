@@ -282,3 +282,79 @@ above is the **symptom** of this stuck step, not an independent problem.
 2. The monitor did **not** self-finalise on session death via its `--session-pid` probe — needed an
    explicit kill before it wrote the digest. The PROCESS_DIED → finalise path may not be firing
    reliably. Both worth a look.
+
+## 2026-06-22 (run 4) — kvothe/spacemolt (first live cold start of the ModelService layer)
+
+First end-to-end run of PR1's `ModelService` (122B resident gate, per-phase swap). **FAILED** —
+session wedged, **0 STEP_DONE**; digest `STALL×4, DEGRADED_TIER×2, PROCESS_DIED×1`,
+`firstForebrainMs` 68s / `firstPlanMs` 120s. Full findings + remediation backlog:
+`docs/superpowers/plans/2026-06-22-model-service-live-qa-findings.md`. Wreckage:
+`players/kvothe/qa/wreck-20260622-001856/`.
+
+**Two PR1 regressions found & fixed this session (TDD + review, committed `d6a2a2f`, `4b4b5e8`):**
+the readiness gate did exactly **one** probe under `timeoutFail` (no poll loop → ms-fast false
+failure on cold load; the per-tier `timeoutMs` was dead code) — now polls
+`Effect.retry(Schedule.spaced("1s"))` bounded by the timeout, live-verified on the 2B (~2.3s spawn+poll
+vs prior 26ms death); and the gated smoke could never have passed (no-spacing retry) and was never run
+— rewritten through the real `acquireReady` path.
+
+**HEADLINE — PR1 re-introduced the non-viable 122B via a divergent model config.** `model-tier-spec.ts`
+(what ModelService spawns) disagrees with `handles.ts` `DEFAULT_CORTEX_MODELS` (what the cortex calls)
+at **every tier**: 8081 spawns Qwen3.5-2B but the cortex requests Qwen2.5-7B-Instruct; 8082 spawns
+Qwen3.5-9B vs Qwen2.5-32B-Instruct; **8083 spawns the 122B vs the cortex's QwQ-32B**. The
+`makeTierSpec` guard asserts only port/baseUrl, **not model** — false "they agree." `mlx_lm.server`
+serves whatever it loaded regardless of the requested name, so the cortex gets wrong models (→ `hindbrain:
+undefined undefined`), and run-3's deliberate "drop the 122B for QwQ-32B" decision was silently reverted.
+The 122B then died on 8083 mid-session exactly as run-3 predicted ("not viable on the shared pool").
+
+### Misses → new detectors (`apps/roci/src/qa/feed.ts`)
+
+- **TIER_UNREACHABLE / dependent-model-died — top miss this run.** The 122B (8083) went dead and the
+  body hung on it indefinitely; the monitor saw only generic STALLs and `terminalCause` reported
+  "process exited," never the real cause. Candidate: probe the tier ports the live loop depends on;
+  if a depended-on tier is down (connection refused), fire a named anomaly (and feed `terminalCause`
+  precedence above STALL). This is the model-lifecycle analogue of the run-3 FATAL_ERROR detector.
+- **STUCK_STEP (re-confirmed from run-3 addendum).** `STEP_START` with no `STEP_DONE` within N ticks +
+  frozen state + repetitive in-session forebrain. Directly reproduced. Strongest behavioural detector
+  candidate still unbuilt; here the stuck step was caused by the dead conscious model, reinforcing the
+  pairing with TIER_UNREACHABLE.
+
+### False positives / chattiness
+
+- **STALL fired 4× but could not distinguish "slow cold 122B" from "dead model."** Not a false
+  positive exactly, but low-specificity: every failure mode this run collapsed to STALL. The fix is
+  additive specificity (TIER_UNREACHABLE / STUCK_STEP), not a threshold change. `DEGRADED_TIER`
+  (run-3 detector) fired correctly on the hindbrain garbage — working as intended.
+
+### Digest blind spots → new field (`apps/roci/src/qa/digest.ts`)
+
+- **`terminalCause` did not capture the real terminal cause.** Because the death was a *hang* on a dead
+  model (no `Fatal error:` line, no early PROCESS_DIED — the session pid only died on my manual kill),
+  the digest's `terminalCause` was the benign "process exited." Needs: a tier-health/last-reachable
+  snapshot, and TIER_UNREACHABLE wired into the precedence so a wedged-on-dead-model run is
+  distinguishable from a clean stop. Per-tier latency + which-tier-down still missing (carry-forward
+  from run 3).
+
+### Skill / playbook (this run)
+
+- **Launch command corrected** (already partly in run-1 retro): `npx tsx apps/roci/src/main.ts …`
+  fails — tsx is only under `apps/roci/node_modules`. Use `apps/roci/node_modules/.bin/tsx
+  apps/roci/src/main.ts …` from repo root (cwd must be repo root so `process.cwd()` = projectRoot).
+- **Log rotation before launch.** `events.jsonl` is append-mode (`log-writer.ts:45`); archive the prior
+  run's events/qa-feed/monitor logs before starting so the monitor doesn't replay stale beats (the
+  run-1 "monitor reads from offset 0" note). Done manually this run.
+- SKILL.md already updated this session with the **mlx_lm.server venv/PATH** access section + corrected
+  preflight (committed `4b4b5e8`).
+
+### Carry-forward (still open)
+
+- I2/shutdown hygiene now triples: SIGTERM leaves (1) the Docker container up, (2) the monitor not
+  self-finalised, **and (3) spawned mlx tier servers leaked** (a 9B survived graceful TERM — Effect
+  scoped finalizers don't run on the signal). All three want a real signal handler that interrupts the
+  root fiber so finalizers + container stop run.
+- SESSION_END still never emitted (run-3 carry-forward).
+
+**Status:** **report-only run by user decision** — two readiness regressions fixed/committed; all
+other findings (C0 config divergence, C1 probe hardening, C2 122B death root-cause, I1 body gate, I2
+finalizer/shutdown, I3 topology, O1 mlx-stderr capture, O2/S1 detectors) **deferred** to the user with
+the remediation sequence in the findings doc. No further code changes this session.
