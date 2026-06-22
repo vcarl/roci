@@ -38,8 +38,15 @@ export const acquireReady = (
     // the retry loop and fails with timedOut=true when the budget elapses.
     // 1s spacing: cheap relative to the multi-second cold loads and the
     // generous (120s–600s) budgets, while keeping the gate responsive.
-    yield* backend
-      .readinessProbe(spec)
+    // Prefer the server-bound probe so a never-ready/dead spawned server names
+    // its own recent stderr in the ReadinessError. Adopted servers (no
+    // stderrTail) and backends without readinessProbeFor fall back to the
+    // spec-only probe — behavior is otherwise identical.
+    const probe =
+      backend.readinessProbeFor !== undefined && server.spawned
+        ? backend.readinessProbeFor(server)
+        : backend.readinessProbe(spec)
+    yield* probe
       .pipe(
         Effect.retry(Schedule.spaced("1 second")),
         Effect.timeoutFail({

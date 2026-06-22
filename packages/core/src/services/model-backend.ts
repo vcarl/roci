@@ -48,11 +48,25 @@ export interface RunningServer {
   readonly spec: TierSpec
   readonly spawned: boolean
   readonly pid: number | null
+  /**
+   * The most recent stderr lines captured from a spawned server, joined by
+   * newlines. Present only for servers we spawned (an adopted/healthy server's
+   * stderr is owned by whoever started it). Best-effort diagnostics: used to
+   * enrich a SpawnError/ReadinessError after a death or never-ready.
+   */
+  readonly stderrTail?: () => Effect.Effect<string>
 }
 
 export interface ModelBackend {
   readonly spawn: (spec: TierSpec) => Effect.Effect<RunningServer, SpawnError, Scope.Scope>
   readonly readinessProbe: (spec: TierSpec) => Effect.Effect<void, ReadinessError>
+  /**
+   * Server-bound readiness probe. Identical to `readinessProbe`, but a failure
+   * carries the spawned server's recent stderr tail so a never-ready/dead server
+   * is diagnosable. Optional: backends that don't capture stderr (e.g. the fake)
+   * can omit it, and callers fall back to `readinessProbe`.
+   */
+  readonly readinessProbeFor?: (server: RunningServer) => Effect.Effect<void, ReadinessError>
   readonly kill: (server: RunningServer) => Effect.Effect<void>
   readonly isHealthy: (spec: TierSpec) => Effect.Effect<boolean>
 }
