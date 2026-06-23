@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { selectRuntime, buildInnerArgs, buildInnerCommand, normalizerFor, shellEscape } from "./payload.js"
+import { selectRuntime, buildInnerArgs, buildInnerCommand, normalizerFor, shellEscape, openCodeBodyEnv } from "./payload.js"
 import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import type { TurnConfig } from "./types.js"
 
@@ -102,6 +102,20 @@ describe("shellEscape", () => {
   })
 })
 
+describe("openCodeBodyEnv", () => {
+  it("disables the models.dev fetch and autoupdate so the locked container falls back to the local provider", () => {
+    const env = openCodeBodyEnv(base)
+    expect(env.OPENCODE_DISABLE_MODELS_FETCH).toBe("1")
+    expect(env.OPENCODE_DISABLE_AUTOUPDATE).toBe("1")
+  })
+  it("preserves any caller-supplied env entries", () => {
+    const env = openCodeBodyEnv({ ...base, env: { FOO: "bar" } })
+    expect(env.FOO).toBe("bar")
+    expect(env.OPENCODE_DISABLE_MODELS_FETCH).toBe("1")
+    expect(env.OPENCODE_DISABLE_AUTOUPDATE).toBe("1")
+  })
+})
+
 import { buildOpenCodeSessionCommand } from "./payload.js"
 
 describe("buildOpenCodeSessionCommand", () => {
@@ -116,12 +130,20 @@ describe("buildOpenCodeSessionCommand", () => {
     expect(cmd).toContain("$'do the thing'")
   })
 
-  it("resume turn carries -s and the prompt but NOT --agent or -m", () => {
+  it("first turn passes an explicit --title to suppress opencode's title-gen model call", () => {
+    const cmd = buildOpenCodeSessionCommand(cfg)
+    expect(cmd).toContain("--title")
+    // title is derived from the player name and shell-escaped
+    expect(cmd).toContain(`--title $'cortex-${base.playerName}'`)
+  })
+
+  it("resume turn carries -s and the prompt but NOT --agent, -m, or --title", () => {
     const cmd = buildOpenCodeSessionCommand({ ...cfg, prompt: "now do this" }, { sessionId: "ses_abc" })
     expect(cmd).toContain("-s ses_abc")
     expect(cmd).toContain("$'now do this'")
     expect(cmd).not.toContain("--agent")
     expect(cmd).not.toContain("-m ")
+    expect(cmd).not.toContain("--title")
   })
 
   it("falls back to the default agent name when none is set", () => {

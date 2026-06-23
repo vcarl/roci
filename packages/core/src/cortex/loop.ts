@@ -2,6 +2,8 @@ import { Effect, Queue, Option, Fiber } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterFs } from "../services/CharacterFs.js"
+import { ModelService } from "../services/ModelService.js"
+import { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { CharacterLog, logToConsole } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { EventProcessorTag } from "../core/limbic/thalamus/event-processor.js"
@@ -10,6 +12,7 @@ import { InterruptRegistryTag } from "../core/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../core/state-renderer.js"
 import { PromptBuilderTag } from "../core/prompt-builder.js"
 import { ConsciousThought } from "../conscious/conscious-thought.js"
+import { consciousModelLabel } from "../conscious/opencode-config.js"
 import type { TurnResult } from "../core/limbic/hypothalamus/types.js"
 import { ModelClient } from "../model/client.js"
 import type { ModelError } from "../model/errors.js"
@@ -30,6 +33,7 @@ import {
   freshCortexState,
   shouldForceOrient,
   planSteps,
+  decideSteps,
   formatStepTask,
   formatExecutionReport,
   formatSteerDirective,
@@ -116,6 +120,9 @@ export const runCortex = (config: CortexLoopConfig) =>
 
     // Provision the conscious agent once before the first tick.
     const handle = resolveHandle(runnerConfig.models, "conscious")
+    // `-m` label for body turns — the real mlx-served id. MUST match the agent file's
+    // frontmatter `model:` (written from the same handle at provision time).
+    const bodyModelLabel = consciousModelLabel(handle)
     const systemPrompt = promptBuilder.systemPrompt("select", "")
     yield* consciousThought.provision({
       containerId: config.containerId,
@@ -233,7 +240,12 @@ export const runCortex = (config: CortexLoopConfig) =>
             cortex.waitState = decide.wait
             if (decide.wait.disposition === "terminate")
               return { _tag: "Completed" as const, finalState: state }
-          } else if (decide.decision === "plan" && decide.steps.length > 0) {
+          } else if (decideSteps(decide).length > 0) {
+            // decideSteps is array-safe: a parseable `{"decision":"plan"}` with
+            // a missing/non-array/empty `steps` yields [] here (parseOr's
+            // fallback is the `continue` variant, so `decide.steps` can be
+            // undefined). A plan with no actionable steps is treated as no plan
+            // started — never a crash on `decide.steps.length`.
             cortex.currentPlan = decide
             cortex.currentStepIndex = 0
             planHeadline = orient.headline
@@ -363,6 +375,7 @@ export const runCortex = (config: CortexLoopConfig) =>
                     char: config.char,
                     prompt: formatStepTask(step, planHeadline),
                     timeoutMs: workerTimeoutMs,
+                    modelLabel: bodyModelLabel,
                   },
                   // No resume on turn 1.
                 ),
@@ -384,6 +397,7 @@ export const runCortex = (config: CortexLoopConfig) =>
                     char: config.char,
                     prompt: directive,
                     timeoutMs: workerTimeoutMs,
+                    modelLabel: bodyModelLabel,
                   },
                   { sessionId },
                 ),
@@ -399,7 +413,7 @@ export const runCortex = (config: CortexLoopConfig) =>
     }
   }) as Effect.Effect<
     CortexResult,
-    ModelError,
+    ModelError | SpawnError | ReadinessError,
     | EventProcessorTag
     | SituationClassifierTag
     | InterruptRegistryTag
@@ -408,6 +422,7 @@ export const runCortex = (config: CortexLoopConfig) =>
     | CharacterFs
     | CharacterLog
     | ModelClient
+    | ModelService
     | ConsciousThought
     | Docker
     | CommandExecutor.CommandExecutor

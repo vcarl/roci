@@ -46,27 +46,83 @@ export interface CortexModelOverlay {
  * externally, not by this module.
  */
 export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
+  // hindbrain (observe) and forebrain (orient) must emit a parseable JSON result
+  // every tick. Reasoning models burn the token budget on a variable
+  // chain-of-thought and intermittently hit finish=length with empty content
+  // (Bug B on hindbrain; the same failure was directly observed on forebrain's
+  // GLM-4.7-Flash — 2/6 orient probes truncated). Instruct models emit the JSON
+  // directly (reasoningLen=0, finish=stop), so the structured-output tiers are
+  // pinned to instruct models. The maxTokens budget stays generous as headroom.
+  // The Qwen3.5 ladder models are "thinking" models: by default they emit a
+  // chain-of-thought and can exhaust the token budget before producing the
+  // required JSON (finish=length, content=null → "Orient parse failure" every
+  // tick). Their chat templates gate reasoning on an `enable_thinking` kwarg
+  // (default ON); mlx_lm.server forwards `chat_template_kwargs` from the request
+  // body into the template. Disabling it on the structured-output tiers makes
+  // them emit JSON directly (live-probed: finish=stop, content present, no
+  // reasoning monologue). The conscious tier deliberately omits this so its
+  // thinking stays ON. This rides the existing `extraBody` plumbing — client.ts
+  // spreads `...handle.params.extraBody` verbatim into the request body.
   hindbrain: {
     tier: "hindbrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8081/v1",
-    model: "mlx-community/Qwen3.5-9B-4bit",
-    params: { temperature: 0.3 },
+    model: "mlx-community/Qwen3.5-2B-4bit",
+    params: {
+      temperature: 0.3,
+      maxTokens: 4096,
+      extraBody: { chat_template_kwargs: { enable_thinking: false } },
+    },
   },
   forebrain: {
     tier: "forebrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8082/v1",
-    model: "mlx-community/GLM-4.7-Flash-4bit",
-    params: { temperature: 0.5 },
+    model: "mlx-community/Qwen3.5-9B-4bit",
+    params: {
+      temperature: 0.5,
+      maxTokens: 4096,
+      extraBody: { chat_template_kwargs: { enable_thinking: false } },
+    },
   },
+  // conscious (decide/evaluate) is the designated deep-reasoner: a reasoning
+  // model is appropriate here, and its larger 8192 budget + smaller output
+  // schema have held up in practice. The 122B-A10B MoE is the reasoning tier
+  // (see isReasoningModel); the dense 2B/9B siblings are not.
   conscious: {
     tier: "conscious",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8083/v1",
     model: "mlx-community/Qwen3.5-122B-A10B-4bit",
-    params: { temperature: 0.7 },
+    params: { temperature: 0.7, maxTokens: 8192 },
   },
+}
+
+/**
+ * Whether a model id denotes a reasoning ("thinking") model — one that spends
+ * its token budget on an internal chain-of-thought before emitting a final
+ * answer. The structured-output tiers (hindbrain/forebrain) must NOT be backed
+ * by such a model (Bug B: they hit finish=length with empty content); the
+ * conscious tier is deliberately the deep-reasoner.
+ *
+ * Classification is by name marker. Within the Qwen3.5 ladder the reasoning
+ * member is the large 122B-A10B MoE; the dense small siblings (2B / 9B) are
+ * plain generators. Known reasoning families outside the ladder are listed too.
+ *
+ * This is only a classifier — it enforces nothing on its own. `mergeCortexModels`
+ * applies overlays without consulting it, so an overlay can currently repoint a
+ * structured tier at a reasoner. A future overlay-validator/guard could call this
+ * to detect (and reject or warn about) such a repoint before it ships.
+ */
+export function isReasoningModel(model: string): boolean {
+  const REASONING_MARKERS = [
+    "A10B", // Qwen3.5-122B-A10B — the ladder's reasoning MoE
+    "QwQ",
+    "DeepSeek-R1",
+    "Magistral",
+    "GLM-4.7-Flash",
+  ]
+  return REASONING_MARKERS.some((m) => model.includes(m))
 }
 
 /** Look up the handle backing a cortex tier. */

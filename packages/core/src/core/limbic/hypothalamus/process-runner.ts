@@ -17,7 +17,7 @@ import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
-import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand } from "./payload.js"
+import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand, openCodeBodyEnv } from "./payload.js"
 import { runTransport } from "./transport.js"
 import { buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
 import { normalizeSdk, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
@@ -173,14 +173,22 @@ export const runOpenCodeSessionTurn = (
     const { token } = yield* oauthToken.getToken
 
     const innerCmd = buildOpenCodeSessionCommand(config, resume)
-    const execArgs = buildExecArgs(config, innerCmd, token)
+    // Inject the env that lets opencode skip the firewall-blocked models.dev fetch
+    // and fall back to the configured local provider (see openCodeBodyEnv).
+    const execArgs = buildExecArgs({ ...config, env: openCodeBodyEnv(config) }, innerCmd, token)
 
     const redactedArgs = execArgs.map((a) =>
       a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
     )
     yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
 
-    const command = Command.make("docker", ...execArgs)
+    // opencode `run` blocks at init reading stdin when stdin is an open pipe with no
+    // EOF: `docker exec -i` (buildExecArgs) keeps stdin open, and Effect does not close
+    // an unconfigured stdin, so opencode waits forever — before ever creating a session
+    // or calling the model (the "init then silence" body hang). The prompt is passed as
+    // a CLI arg, not via stdin, so feed an empty, immediately-closing stdin to signal
+    // EOF and let opencode proceed.
+    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(Stream.empty))
 
     const result = yield* runTransport({
       command,

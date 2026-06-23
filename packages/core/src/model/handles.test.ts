@@ -3,6 +3,7 @@ import {
   DEFAULT_CORTEX_MODELS,
   resolveHandle,
   mergeCortexModels,
+  isReasoningModel,
   type CortexModelConfig,
 } from "./handles.js"
 
@@ -27,6 +28,67 @@ describe("DEFAULT_CORTEX_MODELS", () => {
       expect(h.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/v1$/)
       expect(h.model.length).toBeGreaterThan(0)
     }
+  })
+
+  // Bug B defense-in-depth: the local tiers may be backed by reasoning models
+  // that spend tokens on chain-of-thought. Without a generous max_tokens budget
+  // they can exhaust the server default before emitting a final answer. Pin a
+  // budget so reasoning models have room to produce `content`.
+  it("pins a generous maxTokens budget on every local tier", () => {
+    for (const tier of ["hindbrain", "forebrain", "conscious"] as const) {
+      const h = DEFAULT_CORTEX_MODELS[tier]
+      expect(h.params?.maxTokens).toBeGreaterThanOrEqual(2048)
+    }
+  })
+
+  // Run-2 QA finding: hindbrain (observe) and forebrain (orient) must emit a
+  // parseable JSON result every tick (parseOr otherwise degrades to a "parse
+  // failure" fallback). Reasoning models burn the token budget on a variable
+  // chain-of-thought and intermittently hit finish=length with empty content
+  // (directly observed: GLM-4.7-Flash failed 2/6 orient probes). Guard the
+  // defaults for these structured-output tiers against regressing to a
+  // reasoning model. The conscious tier, by contrast, IS the deep-reasoner.
+  it("classifies conscious as a reasoning model and hindbrain/forebrain as not", () => {
+    expect(isReasoningModel(DEFAULT_CORTEX_MODELS.conscious.model)).toBe(true)
+    expect(isReasoningModel(DEFAULT_CORTEX_MODELS.hindbrain.model)).toBe(false)
+    expect(isReasoningModel(DEFAULT_CORTEX_MODELS.forebrain.model)).toBe(false)
+  })
+
+  it("pins the unified Qwen3.5 ladder across the three tiers", () => {
+    expect(DEFAULT_CORTEX_MODELS.hindbrain.model).toBe("mlx-community/Qwen3.5-2B-4bit")
+    expect(DEFAULT_CORTEX_MODELS.forebrain.model).toBe("mlx-community/Qwen3.5-9B-4bit")
+    expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("mlx-community/Qwen3.5-122B-A10B-4bit")
+  })
+
+  // Live-confirmed fix: the Qwen3.5 ladder models are "thinking" models that
+  // emit chain-of-thought by default and exhaust their token budget before
+  // producing the required JSON (finish=length, content=null → "Orient parse
+  // failure" every tick). Their chat templates gate reasoning on an
+  // `enable_thinking` kwarg (default ON); mlx_lm.server forwards
+  // `chat_template_kwargs` from the request body into the template. The
+  // structured-output tiers (hindbrain/forebrain) must disable thinking so they
+  // emit JSON directly. This rides the existing `extraBody` plumbing
+  // (client.ts spreads `...handle.params.extraBody` into the request body).
+  it("disables thinking on the structured-output tiers (hindbrain/forebrain)", () => {
+    const expectedKwargs = { chat_template_kwargs: { enable_thinking: false } }
+    expect(DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody).toEqual(expectedKwargs)
+    expect(DEFAULT_CORTEX_MODELS.forebrain.params?.extraBody).toEqual(expectedKwargs)
+    // Drill the nested shape explicitly so a regression in the exact path the
+    // chat template reads is caught.
+    const hindKwargs = DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody?.chat_template_kwargs as
+      | { enable_thinking?: boolean }
+      | undefined
+    const foreKwargs = DEFAULT_CORTEX_MODELS.forebrain.params?.extraBody?.chat_template_kwargs as
+      | { enable_thinking?: boolean }
+      | undefined
+    expect(hindKwargs?.enable_thinking).toBe(false)
+    expect(foreKwargs?.enable_thinking).toBe(false)
+  })
+
+  // conscious (decide/evaluate) is the designated deep-reasoner and must KEEP
+  // thinking: no extraBody → no chat_template_kwargs → thinking stays ON.
+  it("keeps thinking enabled on the conscious tier (no extraBody)", () => {
+    expect(DEFAULT_CORTEX_MODELS.conscious.params?.extraBody).toBeUndefined()
   })
 })
 
