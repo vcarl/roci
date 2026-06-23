@@ -90,6 +90,13 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 ARG OPENCODE_VERSION=latest
 RUN npm install -g opencode-ai@${OPENCODE_VERSION}
 
+# The container firewall blocks https://models.dev/api.json; without these, opencode
+# hangs at startup fetching its model registry instead of falling back to the
+# configured local provider. Defense-in-depth — the harness also injects these at
+# docker-exec time, but this protects any opencode invocation inside the container.
+ENV OPENCODE_DISABLE_MODELS_FETCH=1
+ENV OPENCODE_DISABLE_AUTOUPDATE=1
+
 # Pre-seed opencode config for permission bypass
 RUN mkdir -p /home/node/.opencode && \
     echo '{"permission":{"*":"allow"}}' > /home/node/.opencode/config.json

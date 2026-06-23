@@ -121,16 +121,33 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       containerIds.set(rd.name, containerId)
     }
 
-    // Validate token inside first container — catches auth issues before any character starts
+    // Validate token inside first container — catches auth issues before any character starts.
+    // Distinguish a genuine auth rejection from the container having died (e.g. the firewall
+    // init script exited under `set -euo pipefail`), so the surfaced error is truthful.
     const firstContainerId = containerIds.values().next().value
     if (firstContainerId) {
-      const valid = yield* oauthService.validateInContainer(firstContainerId)
-      if (!valid) {
-        yield* logToConsole("orchestrator", "main", "OAuth token is not valid inside container — stopping containers and aborting")
+      // Prefer the classified check; fall back to the boolean API for stubs.
+      const outcome = oauthService.checkInContainer
+        ? yield* oauthService.checkInContainer(firstContainerId)
+        : ((yield* oauthService.validateInContainer(firstContainerId))
+            ? ({ kind: "valid" } as const)
+            : ({ kind: "auth-rejected", detail: "validateInContainer returned false" } as const))
+      if (outcome.kind === "auth-rejected" || outcome.kind === "container-unavailable") {
+        const message =
+          outcome.kind === "auth-rejected"
+            ? "OAuth token is not valid inside container. Run 'claude setup-token' and update .oauth-token"
+            : `Container is not running, so the OAuth token could not be validated — the token may be fine. ` +
+              `This usually means the container exited during startup (e.g. the firewall init script failed). ` +
+              `Check 'docker logs roci-<domain>', or set SKIP_FIREWALL=1 to bypass the firewall. Detail: ${outcome.detail}`
+        yield* logToConsole(
+          "orchestrator",
+          "main",
+          `${message} — stopping containers and aborting`,
+        )
         for (const [domainName] of containerIds) {
           yield* docker.stop(`roci-${domainName}`).pipe(Effect.catchAll(() => Effect.void))
         }
-        return yield* Effect.fail(new DockerError("OAuth token is not valid inside container. Run 'claude setup-token' and update .oauth-token"))
+        return yield* Effect.fail(new DockerError(message))
       }
     }
 
