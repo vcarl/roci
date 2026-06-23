@@ -1,3 +1,9 @@
 #!/usr/bin/env bash
+# Run in a SINGLE node process via the `--import tsx` loader. The bare `tsx` CLI
+# double-forks (a tsx-CLI parent spawns a worker that runs main.ts); on SIGTERM
+# it SIGKILLs the worker ~30ms later, before Effect's async kill/container-stop
+# finalizers can run — orphaning the resident mlx server and leaking the Docker
+# container. `node --import tsx` has no CLI-parent wrapper, so runMain's graceful
+# finalizers actually run on shutdown.
 DIR="$(cd "$(dirname "$0")/apps/roci" && pwd)"
-exec npx --prefix "$DIR" tsx "$DIR/src/main.ts" "$@"
+exec node --import tsx "$DIR/src/main.ts" "$@"
