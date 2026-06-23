@@ -6,12 +6,25 @@ import { Docker } from "../services/Docker.js"
 
 /** OpenCode provider id for the local host model server. */
 export const CONSCIOUS_PROVIDER_ID = "local"
-/** Model key inside the provider's `models` map. */
+/**
+ * Display name for the conscious model inside the provider's `models` map.
+ * NOTE: for an `@ai-sdk/openai-compatible` provider this is display-only — opencode
+ * sends the map KEY (the real model id), never this `name`. It is also the agent
+ * file basename / `--agent` value.
+ */
 export const CONSCIOUS_MODEL_KEY = "conscious"
-/** `-m` label: `<provider>/<model-key>`. */
-export const CONSCIOUS_MODEL_LABEL = `${CONSCIOUS_PROVIDER_ID}/${CONSCIOUS_MODEL_KEY}`
 /** Project-local agent name (file basename, `--agent` value). */
 export const CONSCIOUS_AGENT_NAME = "conscious"
+
+/**
+ * The `-m` label opencode resolves: `<provider>/<real-model-id>`. opencode splits the
+ * provider on the FIRST slash, so the multi-slash real id (e.g.
+ * `mlx-community/Qwen3.5-122B-A10B-4bit`) is preserved as the model part and the API
+ * `model` field sent to mlx is the real id. This MUST match the provider map key
+ * registered in `buildProviderConfigJson`.
+ */
+export const consciousModelLabel = (handle: ModelHandle): string =>
+  `${CONSCIOUS_PROVIDER_ID}/${handle.model}`
 /** Global (per-container) OpenCode config path. */
 export const GLOBAL_OPENCODE_CONFIG_PATH = "/home/node/.config/opencode/opencode.jsonc"
 
@@ -39,19 +52,26 @@ export function buildProviderConfigJson(handle: ModelHandle): string {
           baseURL: hostInternalBaseUrl(handle.baseUrl),
           apiKey: handle.apiKey ?? "sk-local",
         },
-        models: { [CONSCIOUS_MODEL_KEY]: { name: handle.model } },
+        // Key = the real model id (what opencode sends as the API `model` field for an
+        // openai-compatible provider). `name` is display-only and is NOT sent.
+        models: { [handle.model]: { name: CONSCIOUS_MODEL_KEY } },
       },
     },
   }
   return JSON.stringify(config, null, 2)
 }
 
-/** Project-local agent markdown: frontmatter + system prompt body. */
+/**
+ * Project-local agent markdown: frontmatter + system prompt body. The `modelLabel`
+ * is REQUIRED and must be the handle-derived `consciousModelLabel(handle)` so the
+ * frontmatter `model:` resolves to the real mlx-served id (agreeing with the `-m`
+ * label used at turn time).
+ */
 export function buildCharacterAgentMarkdown(opts: {
   systemPrompt: string
-  modelLabel?: string
+  modelLabel: string
 }): string {
-  const model = opts.modelLabel ?? CONSCIOUS_MODEL_LABEL
+  const model = opts.modelLabel
   const frontier = [
     "",
     "## Frontier (heavy-lifting) tool",
@@ -97,7 +117,7 @@ export function writeCharacterAgentFile(opts: {
   playersDir: string
   playerName: string
   systemPrompt: string
-  modelLabel?: string
+  modelLabel: string
 }): void {
   const dir = path.join(opts.playersDir, opts.playerName, ".opencode", "agent")
   mkdirSync(dir, { recursive: true })

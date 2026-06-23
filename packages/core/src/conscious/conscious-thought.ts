@@ -11,7 +11,7 @@ import { Docker } from "../services/Docker.js"
 import {
   provisionConsciousProvider,
   writeCharacterAgentFile,
-  CONSCIOUS_MODEL_LABEL,
+  consciousModelLabel,
   CONSCIOUS_AGENT_NAME,
 } from "./opencode-config.js"
 import type { AnyModel } from "../core/limbic/hypothalamus/runtime.js"
@@ -26,6 +26,12 @@ export interface ConsciousTurnConfig {
   prompt: string
   /** Wall-clock budget for this turn. */
   timeoutMs: number
+  /**
+   * The `-m` label for the body model — `consciousModelLabel(handle)`, i.e.
+   * `local/<real-model-id>`. MUST agree with the agent file's frontmatter `model:`
+   * written at provision time. Threaded from the cortex loop where the handle resolves.
+   */
+  modelLabel: string
 }
 
 /** The inputs to `provision`, derived by the loop from `CortexLoopConfig`. */
@@ -82,7 +88,8 @@ const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker> 
         playersDir: path.resolve(opts.char.dir, "../.."),
         playerName: opts.char.name,
         systemPrompt: opts.systemPrompt,
-        modelLabel: CONSCIOUS_MODEL_LABEL,
+        // Frontmatter `model:` = handle-derived label; agrees with the `-m` label at turn time.
+        modelLabel: consciousModelLabel(opts.handle),
       }),
     )
     // Provision the global in-container provider config (requires Docker).
@@ -111,7 +118,8 @@ const turnImpl = (
     playerName: config.playerName,
     char: config.char,
     systemPrompt: "", // system prompt is supplied via the agent file, not --system-prompt
-    model: CONSCIOUS_MODEL_LABEL,
+    // Handle-derived `-m` label; MUST match the agent file's frontmatter `model:`.
+    model: config.modelLabel,
     agentName: CONSCIOUS_AGENT_NAME,
     prompt: config.prompt,
     timeoutMs: config.timeoutMs,
