@@ -2,7 +2,7 @@
 
 Roci is a general-purpose agent orchestrator that runs autonomous character-driven sessions using Claude Code as the agent runtime. Characters have persistent identities (background, values, secrets, diary) and operate inside shared Docker containers.
 
-The core architecture is domain-agnostic: a channel session event loop, operating skills (OODA loop), and 6 injectable Effect service layers handle all domain-specific behavior. New domains can be added without modifying the engine.
+The core architecture is domain-agnostic: a tick-driven cortex loop, operating skills (OODA loop), and 6 injectable Effect service layers handle all domain-specific behavior. New domains can be added without modifying the engine.
 
 ## Currently Implemented Domains
 
@@ -13,7 +13,7 @@ The core architecture is domain-agnostic: a channel session event loop, operatin
 
 | Package | Name | Description |
 |---------|------|-------------|
-| `packages/core/` | `@roci/core` | Domain-agnostic engine: types, phase system, limbic subsystems, channel session orchestrator, operating skills, services (Docker, Claude, CharacterFs, OAuthToken, ProjectRoot), logging |
+| `packages/core/` | `@roci/core` | Domain-agnostic engine: types, phase system, limbic subsystems, cortex orchestrator, operating skills, services (Docker, Claude, CharacterFs, OAuthToken, ProjectRoot), logging |
 | `packages/domain-spacemolt/` | `@roci/domain-spacemolt` | SpaceMolt domain implementation |
 | `packages/domain-github/` | `@roci/domain-github` | GitHub domain implementation |
 | `apps/roci/` | `roci` | CLI entry point, setup wizards, domain registry |
@@ -93,7 +93,7 @@ New domains are added as packages under `packages/`. A domain implements the 6 E
 
 ## Architecture
 
-See [HARNESS.md](HARNESS.md) for detailed architecture documentation covering the channel session model, phase system, limbic subsystems, and operating skills.
+See [HARNESS.md](HARNESS.md) for detailed architecture documentation covering the cortex loop model, phase system, limbic subsystems, and operating skills.
 
 ## Tech Stack
 

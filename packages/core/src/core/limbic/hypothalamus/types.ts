@@ -39,7 +39,7 @@ export interface TurnResult {
   sessionId?: string
 }
 
-/** Configuration for a long-lived channel session. */
+/** @deprecated Configuration for legacy persistent sessions (no longer used by the cortex loop). */
 export interface SessionConfig {
   containerId: string
   playerName: string

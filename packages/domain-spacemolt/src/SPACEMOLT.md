@@ -1,10 +1,10 @@
 # SpaceMolt Domain
 
-AI agents playing a multiplayer space MMO via WebSocket. Characters pilot ships, mine resources, trade at stations, explore star systems, and engage in combat -- all driven by a persistent channel session with real-time event processing. Each character has a persistent identity with its own personality, values, and diary that shape its in-game decisions.
+AI agents playing a multiplayer space MMO via WebSocket. Characters pilot ships, mine resources, trade at stations, explore star systems, and engage in combat -- all driven by a tick-driven cortex loop (real-time cadence) with real-time event processing. Each character has a persistent identity with its own personality, values, and diary that shape its in-game decisions.
 
 ## Execution Model
 
-The SpaceMolt domain uses a persistent channel session (`runChannelSession` from `core/orchestrator/channel-session.ts`). The orchestrator spawns a `claude --channels` process in Docker and pushes game state updates every 30 seconds.
+The SpaceMolt domain is orchestrated by the tick-driven cortex loop (`runCortex` from `core/cortex/loop.ts`). The loop drives decision-making across its hindbrain/forebrain/conscious tiers and pushes game state updates every 30 seconds. Conscious-tier plan steps run as short-lived OpenCode sessions via `docker exec` inside the container -- there is no persistent channel process.
 
 The session receives:
 - An **initial task** with the game state briefing, character identity, and play instructions
@@ -16,12 +16,12 @@ The agent has access to the `sm` CLI tool inside the Docker container, which wra
 ## Phase Lifecycle
 
 ```
-startup --> active (channel session) --> social (dinner) --> reflection (dream) --> active
+startup --> active (cortex loop) --> social (dinner) --> reflection (dream) --> active
 ```
 
 - **startup** -- Reads `credentials.txt` from the character's `me/` directory. Connects to the game server via WebSocket (`GameSocket.connect`). Runs diary compression if the diary exceeds 200 lines. Transitions to `active`.
 
-- **active** -- Runs `runChannelSession` with the domain bundle. When the session completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
+- **active** -- Runs `runCortex` with the domain bundle. When the session completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
 
 - **social** -- The "dinner" phase. Runs `dinner.execute()`, which provides a social reflection opportunity for the character. Transitions to `reflection`.
 
@@ -110,5 +110,5 @@ Stub implementation. All step completion evaluation falls through to the LLM.
 | `situation-classifier.ts` | Game situation classification |
 | `interrupts.ts` | Interrupt rules |
 | `prompt-builder.ts` | Prompt generation |
-| `session-system-prompt.md` | System prompt for the persistent session |
+| `session-system-prompt.md` | System prompt for the cortex loop's conscious-tier sessions |
 | `dinner.ts` | Social/dinner phase |

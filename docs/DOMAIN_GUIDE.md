@@ -4,7 +4,7 @@ How to build a new domain for the Roci orchestrator. New domains should be creat
 
 ## What is a Domain?
 
-The orchestrator is a generic engine for running autonomous character-driven sessions. It spawns persistent channel sessions inside Docker containers, pushes state updates as events, and monitors for interrupts. None of this logic knows about any specific game or environment.
+The orchestrator is a generic engine for running autonomous character-driven sessions. It spawns persistent sessions inside Docker containers, pushes state updates as events, and monitors for interrupts. None of this logic knows about any specific game or environment.
 
 A **domain** plugs into this engine by implementing 6 service interfaces (plus a phase registry and config object). The core never imports domain code -- services are injected via Effect tags at startup. SpaceMolt and GitHub are the two reference implementations.
 
@@ -103,7 +103,7 @@ interface EventResult {
   stateUpdate?: (prev) => next
   context?: DomainContext       // e.g. chatMessages
   log?: () => void
-  alert?: string                // immediate push to channel session
+  alert?: string                // immediate push to the running session
 }
 ```
 
@@ -223,16 +223,17 @@ interface PromptBuilder {
 
 **`channelEvent(ctx)`** *(deprecated)* -- Fallback state update for ticks where the OODA chain doesn't produce a structured push. Only used for accumulate-disposition ticks as a lightweight state update.
 
-**OODA integration:** The tick loop now uses the OODA skill chain (observe → orient → decide → evaluate) to classify events, assess situations, and produce structured directives. Configure OODA behavior when calling `runChannelSession`:
+**OODA integration:** The tick loop now uses the OODA skill chain (observe → orient → decide → evaluate) to classify events, assess situations, and produce structured directives. Configure OODA behavior when calling `runCortex`:
 
 ```ts
-yield* runChannelSession({
+yield* runCortex({
   ...existingConfig,
-  cadence: "planned-action",         // or "real-time" — affects OODA skill thresholds
-  dream: { cycleInterval: 3, maxIntervalTicks: 120 },  // memory consolidation
+  cadence: "planned-action",         // or "real-time" — affects OODA skill thresholds (see Cadence below)
   orientInterval: 5,                 // max ticks before forcing orient
 })
 ```
+
+**Cadence** (`real-time` vs `planned-action`, default `planned-action`) is the master dial threaded into every tier. `real-time` uses a low escalation threshold, short 1–2 step plans, and eager replan. `planned-action` uses a high threshold (accumulate by default), 3–5 step plans, and is patient with wait states.
 
 See the GitHub implementation (`packages/domain-github/src/prompt-builder.ts`) for a full reference.
 
@@ -261,11 +262,11 @@ For file-based skills, see the GitHub domain's `index.ts` which loads `.md` file
 
 ### 8. `PhaseRegistry` -- Session Lifecycle
 
-Phases are the top-level session structure. A minimal registry needs startup (connects and returns a `ConnectionState`) and active (runs `runChannelSession`).
+Phases are the top-level session structure. A minimal registry needs startup (connects and returns a `ConnectionState`) and active (runs `runCortex`).
 
 ```ts
 import { Effect, Queue } from "effect"
-import { runChannelSession } from "@roci/core/core/orchestrator/channel-session.js"
+import { runCortex } from "@roci/core/cortex/loop.js"
 
 const activePhase = {
   name: "active",
@@ -275,15 +276,15 @@ const activePhase = {
         return { _tag: "Shutdown" } as PhaseResult
       }
 
-      const result = yield* runChannelSession({
+      const result = yield* runCortex({
         char: context.char,
         containerId: context.containerId,
-        containerEnv: context.containerEnv,
+        containerEnv,
+        addDirs: context.containerAddDirs,
         events: context.connection.events as Queue.Queue<unknown>,
-        initialState: context.connection.initialState,
-        sessionModel: "sonnet",
-        cadence: "planned-action",  // or "real-time"
-        dream: { cycleInterval: 3, maxIntervalTicks: 120 },
+        initialState: context.connection.initialState as unknown,
+        cadence: "planned-action",  // or "real-time" — see Cadence above
+        workerModels: getModels(context),
         orientInterval: 5,
       }).pipe(Effect.provide(context.domainBundle))
 
@@ -298,7 +299,26 @@ const activePhase = {
 
 The key pattern: **`Effect.provide(context.domainBundle)`** injects your 6 service layers (EventProcessor, SituationClassifier, StateRenderer, InterruptRegistry, PromptBuilder, SkillRegistry) into the engine.
 
-Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is now integrated into the OODA loop and triggers automatically based on `dream` config.
+`runCortex` accepts a `CortexLoopConfig`:
+
+```ts
+interface CortexLoopConfig {
+  char: CharacterConfig                  // REQUIRED
+  containerId: string                    // REQUIRED
+  events: Queue.Queue<unknown>           // REQUIRED
+  initialState: unknown                  // REQUIRED
+  containerEnv?: Record<string, string>  // optional
+  addDirs?: string[]                     // optional
+  cadence?: Cadence                      // default "planned-action"
+  cortexModels?: CortexModelConfig       // default DEFAULT_CORTEX_MODELS
+  workerModels?: ModelConfig             // default DEFAULT_MODEL_CONFIG
+  orientInterval?: number                // default 5 (ticks between forced orients)
+  tickIntervalMs?: number                // default 30_000
+  workerTimeoutMs?: number               // default 3_600_000 (1 hour per turn)
+}
+```
+
+Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is now integrated into the OODA loop and triggers automatically.
 
 ### 9. `DomainConfig` -- Assemble Everything
 
@@ -415,7 +435,7 @@ New domain author checklist:
 - [ ] `InterruptRegistry` -- rules array + `createInterruptRegistry()` factory
 - [ ] `PromptBuilder` -- `systemPrompt()` (required); `taskPrompt()`, `channelEvent()` (optional fallbacks)
 - [ ] `SkillRegistry` -- stub or real implementation
-- [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runChannelSession()` with `Effect.provide(context.domainBundle)`
+- [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runCortex()` with `Effect.provide(context.domainBundle)`
 - [ ] `DomainConfig` -- bundle, phaseRegistry, containerMounts, imageName
 - [ ] Domain bundle -- `Layer.mergeAll(...)` of all 6 service layers
 - [ ] Domain registered in `apps/roci/src/domains/registry.ts`

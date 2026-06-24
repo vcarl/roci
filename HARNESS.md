@@ -1,6 +1,6 @@
 # Agent Harness
 
-The harness runs autonomous character-driven sessions inside shared Docker containers, using Claude Code as the agent runtime. An orchestrator on the host manages the session lifecycle: connect to a domain, spawn a persistent channel session, push state updates as events, and capture all output.
+The harness runs autonomous character-driven sessions inside shared Docker containers, using Claude Code as the agent runtime. An orchestrator on the host manages the session lifecycle: connect to a domain, run a tick-driven cortex loop, drain state updates as events, and capture all output.
 
 ## Repository Structure
 
@@ -20,40 +20,52 @@ apps/roci/src/cli.ts
      +-- for each character: fork characterLoop()
          +-- runPhases(context, phaseRegistry)         packages/core/src/core/phase-runner.ts
              +-- Phase: startup, active, break/social, reflection
-                 +-- runChannelSession()               packages/core/src/core/orchestrator/channel-session.ts
+                 +-- runCortex(config)                 packages/core/src/cortex/loop.ts
 ```
 
-### Channel Session Model
+### Cortex Loop Model
 
-The primary execution engine is `runChannelSession()`. It spawns a persistent `claude --channels` process inside the Docker container and pushes events to it over the session lifetime.
+The primary execution engine is `runCortex(config)` (`packages/core/src/cortex/loop.ts`). It runs a tick-driven loop (default 30s/tick) that drives a four-tier "brain" over the lifetime of an active phase. It does **not** spawn a persistent `claude --channels` process; instead, conscious-tier plan steps execute as short-lived OpenCode sessions inside the Docker container.
 
-**Lifecycle:**
+`runCortex()` returns an Effect resolving to either `{ _tag: "Completed", finalState }` or `{ _tag: "Interrupted", finalState, criticals[] }`.
 
-1. **Spawn** -- The orchestrator calls `runSession()`, which writes a `.mcp.json` config, builds `claude --channels` CLI args, and starts the process via `docker exec`. The session runs continuously inside the container.
+**Each tick:**
 
-2. **Task injection** -- After a 2-second stabilization delay, the orchestrator pushes an initial task event via HTTP POST to the channel server. This task contains the full situation briefing, agent identity, and instructions.
+1. **Drain events** -- Pull queued domain events, fold them through `EventProcessor` to update state, and classify the situation via `SituationClassifier`.
 
-3. **Tick loop** -- Every 30 seconds, the orchestrator:
-   - Drains the event queue (non-blocking poll)
-   - Processes events through `EventProcessor` to update state
-   - Classifies the situation via `SituationClassifier`
-   - Evaluates interrupt rules via `InterruptRegistry`
-   - If critical interrupts fire: kills the session, returns `Interrupted`
-   - If session completed naturally: returns `Completed`
-   - Otherwise: runs the OODA skill chain (observe → orient → decide → evaluate) to classify events, assess the situation, produce plans, and push structured directives to the session. Falls back to `PromptBuilder.channelEvent()` if the OODA chain fails.
+2. **Critical interrupts** -- Evaluate interrupt rules (`packages/core/src/core/limbic/amygdala/interrupt.ts`). If a critical fires, the loop returns `Interrupted` with the offending criticals.
 
-4. **Termination** -- The session ends when:
-   - The agent completes its work and exits naturally
-   - A critical interrupt fires (CI failure, combat, hull critical)
-   - The session timeout expires (default: 1 hour)
+3. **Hindbrain triage (Observe)** -- `runHindbrain` (`cortex/tiers.ts:67`) classifies accumulated events as discard / accumulate / escalate.
 
-**Key constants:**
+4. **Escalate-or-sleep** -- If nothing warrants attention, the loop sleeps until the next tick. A forced orient happens every `orientInterval` ticks (default 5) regardless.
+
+5. **Forebrain orient (Orient)** -- `runForebrain` (`cortex/tiers.ts:110`) synthesizes the current situation into a working assessment.
+
+6. **Conscious decide (Decide)** -- `runConsciousDecide` (`cortex/tiers.ts:167`) chooses plan / continue / wait / terminate and, when planning, produces an ordered set of steps.
+
+7. **Conscious step execution** -- Each plan step runs as an OpenCode session in the container via `ConsciousThought` (`packages/core/src/conscious/conscious-thought.ts`), backed by `runOpenCodeSessionTurn` in `packages/core/src/core/limbic/hypothalamus/process-runner.ts`, which invokes `opencode run --format json ...` through `docker exec`.
+
+8. **Conscious evaluate (Evaluate)** -- `runConsciousEvaluate` (`cortex/tiers.ts:224`) decides next_step / replan / wait / terminate.
+
+The loop ends (returns `Completed`) when the conscious tier terminates, and ends (returns `Interrupted`) when a critical interrupt fires.
+
+**Key constants** (`packages/core/src/cortex/loop.ts`):
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `TICK_INTERVAL_MS` | 30,000 | How often the orchestrator pushes state updates |
-| `DEFAULT_SESSION_TIMEOUT_MS` | 3,600,000 | Maximum session duration (1 hour) |
-| `POST_SPAWN_DELAY_MS` | 2,000 | Wait after spawn before pushing the first task |
+| `DEFAULT_TICK_MS` | 30,000 | Interval between cortex ticks |
+| `DEFAULT_ORIENT_INTERVAL` | 5 | Ticks between forced forebrain orients |
+| `DEFAULT_WORKER_TIMEOUT_MS` | 3,600,000 | Max duration of a single OpenCode worker turn (1 hour) |
+| `DEFAULT_STEER_CADENCE_TICKS` | 3 | Ticks between steering nudges to a running step |
+
+### Cadence
+
+`cadence` is the master dial for the loop's wake/escalation tempo. It is either `real-time` or `planned-action` (the default), and threads `{{cadenceGuidance}}` (`packages/core/src/skills/cadence.ts`) into all four tiers:
+
+- **`real-time`** -- low escalation threshold, short 1-2 step plans, replan eagerly. Suited to domains where events arrive continuously and the agent must stay responsive (e.g. SpaceMolt's live game socket).
+- **`planned-action`** -- high escalation threshold (accumulate events by default), 3-5 step plans, patient with `wait` states. Suited to domains where work comes in discrete chunks and patience is cheap (e.g. GitHub's GraphQL polling).
+
+The same guidance text is injected into hindbrain, forebrain, and both conscious tiers, so a single setting consistently tunes how readily the brain wakes, how long it plans ahead, and how quickly it re-plans.
 
 ### Limbic System
 
@@ -80,11 +92,11 @@ THALAMUS: SituationClassifier.summarize(state) --> SituationSummary
   |
   v
 AMYGDALA: InterruptRegistry.evaluate(state, situation)
-  +--[critical]--> Kill session, return Interrupted
-  +--[soft]------> Include in next channel event
+  +--[critical]--> Stop the loop, return Interrupted
+  +--[soft]------> Surface to the next forebrain orient
   |
   v
-ORCHESTRATOR: push channel event to running session
+CORTEX: hindbrain triage --> forebrain orient --> conscious decide/evaluate
   |
   v
 HIPPOCAMPUS: dream.execute() (in reflection phase, when diary exceeds threshold)
@@ -104,7 +116,7 @@ All domain knowledge is injected via 6 Effect service layers, provided as a `Dom
 | **SituationClassifier** | `SituationClassifierTag` | `summarize(state)` -- structured `SituationSummary` with headline, sections, metrics |
 | **InterruptRegistry** | `InterruptRegistryTag` | Declarative interrupt rules with priority, condition, message, `suppressWhenTaskIs` |
 | **StateRenderer** | `StateRendererTag` | Snapshots, rich snapshots, diffs, console state bar |
-| **PromptBuilder** | `PromptBuilderTag` | Assembles session prompts: `systemPrompt`; `taskPrompt` and `channelEvent` are deprecated fallbacks (OODA chain now produces session content) |
+| **PromptBuilder** | `PromptBuilderTag` | Assembles session prompts: `systemPrompt`; `taskPrompt` and `channelEvent` are deprecated fallbacks (the cortex tiers now produce step content) |
 | **SkillRegistry** | `SkillRegistryTag` | Domain skill catalog and deterministic step-completion checks |
 
 ### Phase System
@@ -116,24 +128,24 @@ Sessions progress through a sequence of named phases. Each phase returns a `Phas
 #### SpaceMolt Phase Lifecycle
 
 ```
-startup --> active (channel session) --> social (dinner) --> reflection (dream) --> active
+startup --> active (cortex loop) --> social (dinner) --> reflection (dream) --> active
 ```
 
 - **startup** -- Read credentials, connect via WebSocket, compress diary if over threshold
-- **active** -- `runChannelSession` with domain bundle. On interrupt: restart active. On completion: proceed to social
+- **active** -- `runCortex` with domain bundle. On interrupt: restart active. On completion: proceed to social
 - **social** -- Run `dinner.execute()` for social reflection
 - **reflection** -- Run `runReflection` to compress diary if over 200 lines. Loop back to active
 
 #### GitHub Phase Lifecycle
 
 ```
-startup --> active (channel session) --> break (90 min) --> reflection (dream) --> active
-                 \                              ^
+startup --> active (cortex loop) --> break (90 min) --> reflection (dream) --> active
+                 \                          ^
                   \---> (critical interrupt) ---/
 ```
 
 - **startup** -- Read `github.json`, validate token, clone repos, create worktrees, start GraphQL polling
-- **active** -- `runChannelSession` with domain bundle. On interrupt: restart active. On completion: proceed to break
+- **active** -- `runCortex` with domain bundle. On interrupt: restart active. On completion: proceed to break
 - **break** -- Sleep 90 minutes via `runBreak`, polling for critical interrupts every 5 seconds. If a critical fires (e.g., CI failure), exit early to active
 - **reflection** -- Run `runReflection` to compress diary. Loop back to active
 
@@ -157,37 +169,35 @@ Models are configured via a tier system (`fast`, `smart`, `reasoning`) with per-
 |---|-----------|--------|
 | **Phases** | startup, active, social, reflection | startup, active, break, reflection |
 | **Event Source** | WebSocket (real-time game events) | GraphQL polling (30s interval) |
-| **Session Model** | Persistent channel session | Persistent channel session |
+| **Session Model** | Cortex loop (`real-time` cadence) | Cortex loop (`planned-action` cadence) |
 | **Interrupts** | 9 rules (combat, hull, fuel, cargo, etc.) | 5 rules (CI, review, triage, etc.) |
 | **Skills** | Stub (LLM evaluates all steps) | File-based loader from `.claude/skills/` |
 
 ## Session Execution Detail
 
+The cortex loop runs entirely on the host. When the conscious tier decides to execute a plan step, it runs a short-lived OpenCode session inside the container via `docker exec`; there is no long-lived channel server.
+
 ```
-  Orchestrator          Docker Container          Channel Server
-  (host)                (roci-<domain>)           (localhost:port)
-  |                     |                         |
-  | docker exec         |                         |
-  | claude --channels   |                         |
-  |-------------------->|                         |
-  |                     | spawns session          |
-  |                     |------------------------>|
-  |                     |                         |
-  | POST /event (task)  |                         |
-  |-------------------------------------------->  |
-  |                     |  <-- receives task       |
-  |                     |                         |
-  | [every 30s]         |                         |
-  | POST /event (tick)  |                         |
-  |-------------------------------------------->  |
-  |                     |  <-- receives state      |
-  |                     |      update event        |
-  |                     |                         |
-  |<====================| stream-json stdout       |
-  |  parse, log, route  |                         |
-  |                     |                         |
-  | [on completion]     |                         |
-  |<====================| session-result.json      |
+  Cortex Loop (host)                 Docker Container (roci-<domain>)
+  |                                  |
+  | [every tick, default 30s]        |
+  | drain events, classify           |
+  | hindbrain / forebrain / conscious|
+  |                                  |
+  | [conscious step]                 |
+  | docker exec                      |
+  | opencode run --format json ...   |
+  |--------------------------------->|
+  |                                  | runs OpenCode session
+  |<=================================| json stdout (per turn)
+  |  parse, log, route               |
+  |                                  |
+  | conscious evaluate               |
+  | (next_step / replan / wait /     |
+  |  terminate)                      |
+  |                                  |
+  | [on terminate]   --> Completed   |
+  | [on critical]    --> Interrupted |
 ```
 
 ## Container Layout
@@ -271,8 +281,10 @@ All events are printed type-tagged with timestamp and character name:
 
 | File | Role |
 |------|------|
-| `src/core/orchestrator/channel-session.ts` | Channel session event loop -- the primary execution engine |
-| `src/core/limbic/hypothalamus/session-runner.ts` | Spawns `claude --channels` in container, returns `SessionHandle` |
+| `src/cortex/loop.ts` | `runCortex` -- the primary tick-driven execution loop |
+| `src/cortex/tiers.ts` | The four tiers: `runHindbrain`, `runForebrain`, `runConsciousDecide`, `runConsciousEvaluate` |
+| `src/conscious/conscious-thought.ts` | `ConsciousThought` -- conscious-tier executor; runs plan steps as OpenCode sessions |
+| `src/core/limbic/hypothalamus/process-runner.ts` | `runOpenCodeSessionTurn` -- runs `opencode run --format json` in the container via `docker exec` |
 | `src/core/limbic/hypothalamus/runtime.ts` | Runtime binary selection (claude vs opencode) and CLI arg building |
 | `src/core/limbic/thalamus/event-processor.ts` | EventProcessor, EventResult, EventCategory |
 | `src/core/limbic/thalamus/situation-classifier.ts` | SituationClassifier, SituationSummary |
@@ -282,7 +294,6 @@ All events are printed type-tagged with timestamp and character name:
 | `src/core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
 | `src/core/domain-bundle.ts` | DomainBundle (6 service layers) + DomainConfig |
 | `src/core/prompt-builder.ts` | PromptBuilder interface (systemPrompt; taskPrompt/channelEvent deprecated) |
-| `src/core/ooda-runner.ts` | OODA skill invocation module (observe, orient, decide, evaluate via runTurn) |
 | `src/core/state-renderer.ts` | StateRenderer interface |
 | `src/core/skill.ts` | Skill + SkillRegistry interface |
 | `src/core/model-config.ts` | Tier-based model resolution |
@@ -292,22 +303,22 @@ All events are printed type-tagged with timestamp and character name:
 
 | File | Role |
 |------|------|
-| `src/phases.ts` | Phase registry: startup, active (runChannelSession), break, reflection |
+| `src/phases.ts` | Phase registry: startup, active (runCortex), break, reflection |
 | `src/index.ts` | Domain bundle assembly and file-based skill loading |
 | `src/types.ts` | All domain types: state, events, situations, config |
 | `src/github-client.ts` | GraphQL polling client (1 query per repo per poll) |
-| `src/prompt-builder.ts` | Prompt generation: system, task, channel event |
+| `src/prompt-builder.ts` | Prompt generation: system prompt (task/channel-event fallbacks deprecated) |
 | `src/interrupts.ts` | Declarative interrupt rules (CI, review, triage, stale PRs) |
 | `src/situation-classifier.ts` | Per-repo classification and aggregate rollup |
 | `src/renderer.ts` | State snapshots, rich diffs, status bar |
-| `src/session-system-prompt.md` | System prompt for the persistent session |
+| `src/session-system-prompt.md` | System prompt for the OpenCode session steps |
 | `src/procedures/` | Procedure templates (select, triage, feature, review) |
 
 ### SpaceMolt domain -- `packages/domain-spacemolt/` (@roci/domain-spacemolt)
 
 | File | Role |
 |------|------|
-| `src/phases.ts` | Phase registry: startup, active (runChannelSession), social, reflection |
+| `src/phases.ts` | Phase registry: startup, active (runCortex), social, reflection |
 | `src/index.ts` | Domain bundle assembly and stub skill registry |
 | `src/types.ts` | All domain types: game state, player, ship, system, POI, situation |
 | `src/game-socket-impl.ts` | WebSocket connection, login flow, event dispatching |
@@ -315,7 +326,7 @@ All events are printed type-tagged with timestamp and character name:
 | `src/situation-classifier.ts` | Situation classification (combat, transit, docked, in-space) |
 | `src/interrupts.ts` | 9 interrupt rules across 4 priority levels |
 | `src/prompt-builder.ts` | Template-based prompt generation |
-| `src/session-system-prompt.md` | System prompt for the persistent session |
+| `src/session-system-prompt.md` | System prompt for the OpenCode session steps |
 | `src/dinner.ts` | Social/dinner phase implementation |
 
 ### CLI and orchestrator -- `apps/roci/` (roci)

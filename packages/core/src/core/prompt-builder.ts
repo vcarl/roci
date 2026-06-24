@@ -3,7 +3,7 @@ import type { DomainState } from "./domain-types.js"
 import type { SituationSummary } from "./limbic/thalamus/situation-classifier.js"
 import type { Alert, BrainMode } from "./types.js"
 
-/** Context for building the initial task prompt sent to a channel session at startup. */
+/** Context for building the initial task prompt (deprecated startup fallback). */
 export interface TaskPromptContext {
   state: DomainState
   summary: SituationSummary
