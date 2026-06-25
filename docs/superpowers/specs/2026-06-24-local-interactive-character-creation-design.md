@@ -75,10 +75,7 @@ calls `scaffoldCharacter()`, logs the summary. No per-field review loop.
   messages)` under `ModelService.withTier` (see `cortex/tiers.ts:55-64`). No throwaway container,
   no `runTurn`, no `Docker`/`OAuthToken` dependency on this path. The `Effect.acquireUseRelease`
   container block (`character-scaffold.ts:129-225`) is deleted.
-- **Model:** a 32B-class local tier. During build we empirically compare the 32B-instruct
-  (forebrain-class) vs the QwQ-32B reasoner on identity prose and **pin the better one** via a
-  dedicated creation handle/tier in the model config. Reasoning output is acceptable — we read
-  `content`, as the cortex client already does.
+- **Model:** Use the same model as the conscious thought part of the codebase. Our final report should include notes on how to evaluate this output to compare alternate model choices.
 - **Hard-fail:** if the tier can't be acquired (`ReadinessError`/`SpawnError`) or any step returns
   empty `content`, the wizard surfaces a clear, typed error and stops. No silent template write.
 - **Module split (design-for-isolation):** extract prompt building + the local-model call into a
@@ -208,4 +205,4 @@ the other steps. The fixed 8 are inspiration, not an enum — the model may blen
   prompts for each step and tune them. The `identity-gen` module keeps each prompt as an isolated,
   readable builder specifically to make this easy. This is a planned follow-up, **not** a gate on
   landing the working implementation.
-- Empirically confirm the pinned local creation model (32B-instruct vs QwQ-32B) on prose quality.
+- Empirically confirm the pinned local creation model on prose quality.
