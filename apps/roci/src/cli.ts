@@ -17,7 +17,7 @@ import { runOrchestrator } from "./orchestrator.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
-import { scaffoldCharacter } from "@roci/core/core/character-scaffold.js"
+import { scaffoldCharacter, autoAcceptReview } from "@roci/core/core/character-scaffold.js"
 import { runGuidedSetup } from "./setup/guided-setup.js"
 import { validateAndStart } from "./setup/validate-and-start.js"
 import { OAuthTokenLive } from "@roci/core/services/OAuthToken.js"
@@ -432,8 +432,8 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
         projectRoot: PROJECT_ROOT,
         characterName: charName,
         identityTemplate: domainConfig.identityTemplate,
-        models: DEFAULT_MODEL_CONFIG,
         domainConfig,
+        review: autoAcceptReview,
       })
       if (summary) {
         yield* logToConsole("setup", "cli", summary)
@@ -481,7 +481,10 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
 
     yield* logToConsole("setup", "cli", `\nSetup complete. Run: npx tsx src/main.ts init --domain ${domainName} to validate.`)
   }),
-).pipe(Command.withDescription("Set up character(s) for a domain — create files and config"))
+).pipe(
+  Command.provide(modelServiceLayer),
+  Command.withDescription("Set up character(s) for a domain — create files and config"),
+)
 
 // --- create-app command ---
 const createAppCharacters = Args.text({ name: "characters" }).pipe(Args.repeated)

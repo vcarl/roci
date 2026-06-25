@@ -1,10 +1,12 @@
 import { Prompt } from "@effect/cli"
+import { NodeTerminal } from "@effect/platform-node"
 import { Effect } from "effect"
 import * as path from "node:path"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { DOMAIN_REGISTRY, resolveConfigs } from "../domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
-import { scaffoldCharacter } from "@roci/core/core/character-scaffold.js"
+import { scaffoldCharacter, type ReviewDecision } from "@roci/core/core/character-scaffold.js"
+import type { IdentityStep } from "@roci/core/core/identity-gen/prompts.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { validateAndStart } from "./validate-and-start.js"
 import { DEFAULT_MODEL_CONFIG } from "@roci/core/core/model-config.js"
@@ -15,6 +17,55 @@ const logProcMsg = (msg: ProcedureMessage) => {
   const prefix = msg.level === "ok" ? "OK" : msg.level === "warning" ? "WARNING" : "ERROR"
   return logToConsole("setup", "cli", `${prefix}: ${msg.text}`)
 }
+
+/** Map a review answer + text fields to a ReviewDecision (pure; unit-tested). */
+export const reviewDecisionFromAnswer = (
+  answer: "accept" | "edit" | "regenerate" | "skip",
+  original: string,
+  edited: string,
+  feedback: string,
+): ReviewDecision => {
+  switch (answer) {
+    case "accept":
+      return { action: "accept", content: original }
+    case "edit":
+      return { action: "accept", content: edited }
+    case "regenerate":
+      return { action: "regenerate", feedback: feedback.trim() || undefined }
+    case "skip":
+      return { action: "skip" }
+  }
+}
+
+/** Interactive per-step review: show the artifact, ask accept/edit/regenerate/skip.
+ *  Satisfies ReviewFn (Effect<ReviewDecision, never, never>) by:
+ *  - using console.log directly (no CharacterLog service) for display
+ *  - providing NodeTerminal.layer inline (satisfies Terminal requirement)
+ *  - catching QuitException/errors (Ctrl-C during a prompt) and defaulting to "accept" */
+const interactiveReview: import("@roci/core/core/character-scaffold.js").ReviewFn = (step, content) =>
+  Effect.gen(function* () {
+    yield* Effect.sync(() => console.log(`\n----- ${step} -----\n${content}\n-----------------`))
+    const answer = yield* Prompt.select({
+      message: `Review ${step}`,
+      choices: [
+        { title: "Accept", value: "accept" as const },
+        { title: "Edit", value: "edit" as const },
+        { title: "Regenerate (with feedback)", value: "regenerate" as const },
+        { title: "Skip (use plain template)", value: "skip" as const },
+      ],
+    })
+    let edited = content
+    let feedback = ""
+    if (answer === "edit") {
+      edited = yield* Prompt.text({ message: "Edit the content", default: content })
+    } else if (answer === "regenerate") {
+      feedback = yield* Prompt.text({ message: "Feedback to steer the re-roll (optional)", default: "" })
+    }
+    return reviewDecisionFromAnswer(answer, content, edited, feedback)
+  }).pipe(
+    Effect.provide(NodeTerminal.layer),
+    Effect.catchAll(() => Effect.succeed({ action: "accept" as const, content })),
+  )
 
 /**
  * Interactive guided setup flow.
@@ -108,6 +159,7 @@ export const runGuidedSetup = (projectRoot: string) =>
           identityTemplate: domainConfig.identityTemplate,
           characterDescription: charDescription.trim() || undefined,
           domainConfig,
+          review: interactiveReview,
         })
         if (summary) {
           yield* logToConsole("setup", "cli", summary)
