@@ -41,7 +41,10 @@ export const reviewDecisionFromAnswer = (
  *  Satisfies ReviewFn (Effect<ReviewDecision, never, never>) by:
  *  - using console.log directly (no CharacterLog service) for display
  *  - providing NodeTerminal.layer inline (satisfies Terminal requirement)
- *  - catching QuitException/errors (Ctrl-C during a prompt) and defaulting to "accept" */
+ *  - aborting the wizard on quit (Ctrl-C): Prompt fails only with QuitException;
+ *    we exit rather than fabricate an accept, so cancelling never writes an
+ *    unapproved artifact to disk. process.exit returns `never`, so this unifies
+ *    with the success branch and preserves the `never` error channel. */
 const interactiveReview: import("@roci/core/core/character-scaffold.js").ReviewFn = (step, content) =>
   Effect.gen(function* () {
     yield* Effect.sync(() => console.log(`\n----- ${step} -----\n${content}\n-----------------`))
@@ -64,7 +67,12 @@ const interactiveReview: import("@roci/core/core/character-scaffold.js").ReviewF
     return reviewDecisionFromAnswer(answer, content, edited, feedback)
   }).pipe(
     Effect.provide(NodeTerminal.layer),
-    Effect.catchAll(() => Effect.succeed({ action: "accept" as const, content })),
+    Effect.catchAll(() =>
+      Effect.sync(() => {
+        console.log("\nSetup cancelled.")
+        return process.exit(130) // 128 + SIGINT; returns never, so the `never` channel holds
+      }),
+    ),
   )
 
 /**
