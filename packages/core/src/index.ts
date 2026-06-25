@@ -1,7 +1,8 @@
 // Re-export core types and utilities
 export type { UnifiedEvent } from "./logging/events.js"
 
-export { scaffoldCharacter } from "./core/character-scaffold.js";
+export { scaffoldCharacter, autoAcceptReview } from "./core/character-scaffold.js";
+export type { ReviewFn, ReviewDecision } from "./core/character-scaffold.js";
 export type {
 	ContainerMount,
 	DomainBundle,
