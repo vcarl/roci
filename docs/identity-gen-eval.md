@@ -67,10 +67,10 @@ acceptable for identity generation.
    ```
 
 2. To test an alternate model without changing the default, pass a `CortexModelOverlay` to
-   `applyOverlay` (exported from `packages/core/src/model/handles.ts`). In a quick script:
+   `mergeCortexModels` (exported from `packages/core/src/model/handles.ts`). In a quick script:
    ```typescript
-   import { DEFAULT_CORTEX_MODELS, applyOverlay } from "./packages/core/src/model/handles.js"
-   const testModels = applyOverlay(DEFAULT_CORTEX_MODELS, {
+   import { DEFAULT_CORTEX_MODELS, mergeCortexModels } from "./packages/core/src/model/handles.js"
+   const testModels = mergeCortexModels(DEFAULT_CORTEX_MODELS, {
      conscious: { model: "mlx-community/SomeOtherModel-4bit", baseUrl: "http://127.0.0.1:8083/v1" },
    })
    // Pass testModels as the third arg to generateArtifact(step, prompt, testModels)
