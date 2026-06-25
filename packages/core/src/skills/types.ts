@@ -10,8 +10,9 @@ export type Disposition = "discard" | "accumulate" | "escalate"
  */
 export interface ObserveResult {
   readonly disposition: Disposition
-  /** Emoji mood line painted from the character's palette: count = intensity,
-   *  pole-lean = position, mixed poles = a chord. */
+  /** Emoji mood line painted from the character's palette: each palette row is a
+   *  5-emoji gradient between two poles — position = where you sit, repeats =
+   *  intensity, mixed rows = a chord. */
   readonly emotionalWeight: string
   /** Brief note on why this disposition was chosen. */
   readonly reason: string
