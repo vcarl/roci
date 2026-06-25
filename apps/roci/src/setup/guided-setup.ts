@@ -6,7 +6,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { DOMAIN_REGISTRY, resolveConfigs } from "../domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, type ReviewDecision } from "@roci/core/core/character-scaffold.js"
-import type { IdentityStep } from "@roci/core/core/identity-gen/prompts.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { validateAndStart } from "./validate-and-start.js"
 import { DEFAULT_MODEL_CONFIG } from "@roci/core/core/model-config.js"
@@ -160,7 +159,7 @@ export const runGuidedSetup = (projectRoot: string) =>
         yield* logToConsole("setup", "cli", `\nScaffolding ${name}...`)
 
         // Scaffold generic identity files
-        // Spins up a temporary container internally for AI identity generation.
+        // Generates identity locally via the conscious cortex tier, reviewed per-step.
         const { results: _scaffoldResults, summary } = yield* scaffoldCharacter({
           projectRoot,
           characterName: name,

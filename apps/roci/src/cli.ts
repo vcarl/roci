@@ -427,7 +427,7 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
       const charDir = path.resolve(PROJECT_ROOT, "players", charName, "me")
 
       // Scaffold generic identity files (background.md, VALUES.md, DIARY.md, SECRETS.md)
-      // Spins up a temporary container internally for AI identity generation.
+      // Generates identity locally via the conscious cortex tier (no container).
       const { summary } = yield* scaffoldCharacter({
         projectRoot: PROJECT_ROOT,
         characterName: charName,
