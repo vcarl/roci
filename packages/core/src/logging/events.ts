@@ -1,10 +1,14 @@
 import type { InternalEvent } from "./stream-normalizer.js"
 
+export type LogLevel = "debug" | "info" | "warn" | "error"
+
 export interface EventBase {
   timestamp: string
   character: string
   system: string
   subsystem: string
+  /** Optional explicit level; when absent, classifyLevel() supplies a default. */
+  level?: LogLevel
 }
 
 export type UnifiedEvent = EventBase & (
