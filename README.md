@@ -28,7 +28,7 @@ Supporting directories:
 - **Node.js** >= 20
 - **pnpm** >= 9
 - **Docker** -- Running and accessible (characters run in shared containers)
-- **Local model runtime** -- `mlx_lm.server` must be on the `PATH` of the shell that runs `roci setup`/`roci start`. The cortex loop (hindbrain/forebrain/conscious tiers) and interactive character creation generate against local MLX models, which the harness spawns by bare name. Verify with `which mlx_lm.server`. (On Apple Silicon this typically lives in a Python venv, e.g. `source ~/llm-env/bin/activate`.)
+- **Local model runtime** -- The cortex loop (hindbrain/forebrain/conscious tiers) and interactive character creation generate against local MLX models, which the harness spawns via `mlx_lm.server`. The harness resolves the binary automatically from a Python venv at `~/llm-env` (the typical Apple-Silicon location) -- so you do **not** need to `source ~/llm-env/bin/activate` before running `roci setup`/`roci start`. Override the venv root with `ROCI_LLM_ENV=/path/to/venv`. If the venv binary isn't found, the harness falls back to a `mlx_lm.server` on `PATH` (e.g. an already-activated shell or a system install). Install it with `pip install mlx-lm` inside the venv.
 - **Claude Code CLI** -- Installed and authenticated with OAuth (the in-container tool-using agent runtime)
 
 ## Quick Start
@@ -43,14 +43,14 @@ pnpm build
 # Initialize a new session directory
 pnpm --filter roci roci init
 
-# Make the local model runtime reachable, then create a character.
+# Create a character. The local model runtime is resolved automatically from
+# ~/llm-env (override with ROCI_LLM_ENV=/path/to/venv); no manual `source` needed.
 # `setup` is an interactive wizard: it generates each identity artifact
 # (background, values, palette, diary) with the local conscious model and
 # lets you accept / edit / regenerate / skip each step.
-which mlx_lm.server                 # must resolve; activate your venv if not
 pnpm --filter roci roci setup
 
-# Start a session (also needs mlx_lm.server on PATH)
+# Start a session (also uses the local model runtime).
 pnpm --filter roci roci start
 ```
 

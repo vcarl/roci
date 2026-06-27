@@ -1,9 +1,86 @@
 import { describe, it, expect } from "vitest"
 import { Cause, Effect, Exit, Option } from "effect"
 import { NodeContext } from "@effect/platform-node"
-import { buildMlxArgs, buildProbeRequest, makeMlxBackend } from "./mlx-backend.js"
+import * as path from "node:path"
+import {
+  buildMlxArgs,
+  buildProbeRequest,
+  makeMlxBackend,
+  resolveMlxCommand,
+  mlxNotFoundMessage,
+  MLX_SERVER_BIN,
+} from "./mlx-backend.js"
 import { resolveTierSpec } from "./model-tier-spec.js"
 import { ReadinessError } from "./model-backend.js"
+
+// resolveMlxCommand is a pure helper: it decides WHICH mlx_lm.server binary to
+// spawn from an injected env + homedir + existence check, so it is unit-testable
+// without spawning a real process or touching the real filesystem. These tests
+// pin the four resolution outcomes the default spawn seam relies on.
+describe("resolveMlxCommand", () => {
+  const home = "/home/tester"
+
+  it("returns the absolute venv binary and a PATH prepend when the venv binary exists", () => {
+    const binDir = path.join(home, "llm-env", "bin")
+    const venvBin = path.join(binDir, "mlx_lm.server")
+    const res = resolveMlxCommand({ PATH: "/usr/bin" }, home, (p) => p === venvBin)
+    expect(res.found).toBe(true)
+    if (res.found) {
+      expect(res.command).toBe(venvBin)
+      // The PATH prepend must include <venv>/bin so the server's own child
+      // resolution works even without an activated shell.
+      expect(res.pathPrepend).toBe(binDir)
+    }
+  })
+
+  it("uses the ROCI_LLM_ENV override root when set", () => {
+    const root = "/opt/custom-venv"
+    const binDir = path.join(root, "bin")
+    const venvBin = path.join(binDir, "mlx_lm.server")
+    const res = resolveMlxCommand(
+      { ROCI_LLM_ENV: root, PATH: "/usr/bin" },
+      home,
+      (p) => p === venvBin,
+    )
+    expect(res.found).toBe(true)
+    if (res.found) {
+      expect(res.command).toBe(venvBin)
+      expect(res.pathPrepend).toBe(binDir)
+    }
+  })
+
+  it("falls back to the bare command when no venv binary but it is resolvable on PATH", () => {
+    const onPath = "/usr/local/bin/mlx_lm.server"
+    const res = resolveMlxCommand({ PATH: "/usr/local/bin" }, home, (p) => p === onPath)
+    expect(res.found).toBe(true)
+    if (res.found) {
+      expect(res.command).toBe(MLX_SERVER_BIN)
+      // No venv was used, so there is nothing to prepend.
+      expect(res.pathPrepend).toBeUndefined()
+    }
+  })
+
+  it("reports not-found (with the searched bin dir) when neither venv nor PATH has it", () => {
+    const res = resolveMlxCommand({ PATH: "/usr/bin" }, home, () => false)
+    expect(res.found).toBe(false)
+    if (!res.found) {
+      expect(res.searchedBinDir).toBe(path.join(home, "llm-env", "bin"))
+    }
+  })
+})
+
+// The missing-runtime error is the message that surfaces when a model is spawned
+// without a reachable runtime, so it must be actionable: name the activation
+// hint, the env-var override, and the install hint.
+describe("mlxNotFoundMessage", () => {
+  it("includes the activation hint, the env-var name, and the pip install hint", () => {
+    const msg = mlxNotFoundMessage("/home/tester/llm-env/bin")
+    expect(msg).toContain("source ~/llm-env/bin/activate")
+    expect(msg).toContain("ROCI_LLM_ENV")
+    expect(msg).toContain("pip install mlx-lm")
+    expect(msg).toContain("/home/tester/llm-env/bin")
+  })
+})
 
 describe("buildMlxArgs", () => {
   it("builds mlx_lm.server --model <id> --port <p> for the conscious tier", () => {
