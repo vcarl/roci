@@ -90,6 +90,25 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 ARG OPENCODE_VERSION=latest
 RUN npm install -g opencode-ai@${OPENCODE_VERSION}
 
+# Install the pinned, unpublished SpaceMolt client-v2 CLI (`spacemolt` bin) from a
+# VENDORED tarball. This build (@spacemolt/client-v2, ws variant b1facd8) is NOT on
+# npm, so it is committed into the docker build context and installed from disk.
+# Still USER node with NPM_CONFIG_PREFIX=/usr/local/share/npm-global in effect, so
+# the bin lands on PATH at /usr/local/share/npm-global/bin.
+COPY --chown=node:node spacemolt-client-v2-ws-b1facd8-20260627150735.tgz /tmp/spacemolt-client-v2.tgz
+RUN npm install -g /tmp/spacemolt-client-v2.tgz && rm /tmp/spacemolt-client-v2.tgz
+# Verify the bin is on PATH WITHOUT hitting the network (`spacemolt --version` calls
+# the game API, so use a PATH lookup instead).
+RUN command -v spacemolt
+
+# Config for the `spacemolt` CLI. SPACEMOLT_URL is kept in sync with
+# SPACEMOLT_URL_DEFAULT in src/session.ts. SPACEMOLT_SESSION is a RELATIVE path:
+# the harness runs every in-game command with cwd /work/players/<name>, so this
+# resolves to that player's /work/players/<name>/me/.spacemolt-session.json for
+# every player without any per-exec env injection (containers are shared).
+ENV SPACEMOLT_URL=https://game.spacemolt.com/api/v2
+ENV SPACEMOLT_SESSION=me/.spacemolt-session.json
+
 # The container firewall blocks https://models.dev/api.json; without these, opencode
 # hangs at startup fetching its model registry instead of falling back to the
 # configured local provider. Defense-in-depth — the harness also injects these at

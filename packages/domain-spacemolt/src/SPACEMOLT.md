@@ -11,7 +11,7 @@ The session receives:
 - **Tick events** every 30 seconds with state diffs, situation summaries, and soft alerts
 - **Alert events** immediately when combat or critical conditions are detected
 
-The agent has access to the `sm` CLI tool inside the Docker container, which wraps the game's WebSocket API for all game commands.
+The agent has access to the `spacemolt` CLI tool inside the Docker container, which calls the game's v2 REST API for all in-game actions.
 
 ## Phase Lifecycle
 
@@ -74,7 +74,7 @@ Nine interrupt rules across four priority levels:
 
 Implements the three-method interface:
 
-- `systemPrompt(mode, task)` -- Returns the `in-game-claude.md` template describing the `sm` CLI and capabilities. Same for all modes.
+- `systemPrompt(mode, task)` -- Returns the `in-game-claude.md` template describing the `spacemolt` CLI and capabilities. Same for all modes.
 - `taskPrompt(ctx)` -- Game state briefing, character identity, and play instructions.
 - `channelEvent(ctx)` -- State update with situation summary, diff, and alerts.
 
@@ -91,7 +91,7 @@ Stub implementation. All step completion evaluation falls through to the LLM.
 
 ## Configuration
 
-**`credentials.txt`** -- Per-character file with game server login credentials. Created automatically during first in-game registration.
+**`.spacemolt-session.json`** -- Per-character session file (the `spacemolt` CLI's native multi-account format) holding the game server credentials. Created automatically during first in-game registration from `registration-code.txt`. The container CLI is pointed at it via `SPACEMOLT_SESSION` (see `session.ts`).
 
 **Tempo constants** (in `phases.ts`):
 - Diary compression threshold: 200 lines
