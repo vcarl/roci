@@ -4,8 +4,9 @@ import { Effect } from "effect"
 import type { DomainConfig, ContainerMount, ProcedureMessage, InitContext, DomainProcedure } from "@roci/core/core/domain-bundle.js"
 import { spaceMoltDomainBundle, spaceMoltServiceLayer } from "./index.js"
 import { spaceMoltPhaseRegistry } from "./phases.js"
-import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs"
+import { existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs"
 import { askUser } from "@roci/core/util/prompt.js"
+import { SESSION_FILE_NAME, validateSessionFile } from "./session.js"
 
 const IMAGE_NAME = "spacemolt-player"
 const SM_CLI_REPO = "git@github.com:vcarl/sm-cli.git"
@@ -59,26 +60,23 @@ const spaceMoltInitProcedure: DomainProcedure<InitContext> = {
   run: (ctx) =>
     Effect.sync(() => {
       const messages: ProcedureMessage[] = []
-      const credsPath = path.resolve(ctx.characterDir, "credentials.txt")
+      const sessionPath = path.resolve(ctx.characterDir, SESSION_FILE_NAME)
 
-      if (!existsSync(credsPath)) {
+      if (!existsSync(sessionPath)) {
         const regCodePath = path.resolve(ctx.characterDir, "registration-code.txt")
         if (existsSync(regCodePath)) {
-          messages.push({ level: "ok", text: `${ctx.characterName} — no credentials.txt yet, but registration-code.txt found (will auto-register on first run)` })
+          messages.push({ level: "ok", text: `${ctx.characterName} — no ${SESSION_FILE_NAME} yet, but registration-code.txt found (will auto-register on first run)` })
         } else {
-          messages.push({ level: "warning", text: `${ctx.characterName} — no credentials.txt or registration-code.txt. Run 'roci setup --domain spacemolt' to configure.` })
+          messages.push({ level: "warning", text: `${ctx.characterName} — no ${SESSION_FILE_NAME} or registration-code.txt. Run 'roci setup --domain spacemolt' to configure.` })
         }
         return messages
       }
 
-      const content = readFileSync(credsPath, "utf-8")
-      const hasUsername = /^Username:\s*.+/m.test(content)
-      const hasPassword = /^Password:\s*.+/m.test(content)
-
-      if (!hasUsername || !hasPassword) {
-        messages.push({ level: "error", text: `${ctx.characterName} — credentials.txt missing Username or Password line` })
+      const check = validateSessionFile(sessionPath)
+      if (check.ok) {
+        messages.push({ level: "ok", text: `${ctx.characterName} — ${SESSION_FILE_NAME} valid (account: ${check.username})` })
       } else {
-        messages.push({ level: "ok", text: `${ctx.characterName} — credentials.txt valid` })
+        messages.push({ level: "error", text: `${ctx.characterName} — ${SESSION_FILE_NAME} invalid: ${check.reason}` })
       }
 
       return messages

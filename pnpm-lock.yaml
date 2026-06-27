@@ -111,6 +111,9 @@ importers:
       '@roci/core':
         specifier: workspace:*
         version: link:../core
+      '@spacemolt/client-v2':
+        specifier: file:/private/tmp/claude-501/-Users-vcarl-workspace-client-v2/ff220a87-7d68-4197-8938-89afc5ea9a76/scratchpad/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz
+        version: file:../../../../../../../private/tmp/claude-501/-Users-vcarl-workspace-client-v2/ff220a87-7d68-4197-8938-89afc5ea9a76/scratchpad/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz(typescript@5.9.3)
       effect:
         specifier: ^3.19.19
         version: 3.19.19
@@ -744,6 +747,13 @@ packages:
 
   '@sinclair/typebox@0.34.48':
     resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
+
+  '@spacemolt/client-v2@file:../../../../../../../private/tmp/claude-501/-Users-vcarl-workspace-client-v2/ff220a87-7d68-4197-8938-89afc5ea9a76/scratchpad/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz':
+    resolution: {integrity: sha512-vGBrnvhhdlyFciPCkscDd6NULsiF5A6wIv9AbwyoiGBoVmrkwwPpw03lgv0UdPWkubQWaXmH3S8hyrP5iCZ9kQ==, tarball: file:../../../../../../../private/tmp/claude-501/-Users-vcarl-workspace-client-v2/ff220a87-7d68-4197-8938-89afc5ea9a76/scratchpad/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz}
+    version: 1.5.0
+    hasBin: true
+    peerDependencies:
+      typescript: ^5 || ^6
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -2072,6 +2082,10 @@ snapshots:
     optional: true
 
   '@sinclair/typebox@0.34.48': {}
+
+  '@spacemolt/client-v2@file:../../../../../../../private/tmp/claude-501/-Users-vcarl-workspace-client-v2/ff220a87-7d68-4197-8938-89afc5ea9a76/scratchpad/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz(typescript@5.9.3)':
+    dependencies:
+      typescript: 5.9.3
 
   '@standard-schema/spec@1.1.0': {}
 
