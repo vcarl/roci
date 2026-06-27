@@ -42,8 +42,11 @@ no conflict.
 ## client-v2 reference (verified from the published tarball, v1.5.0)
 
 - Package: `@spacemolt/client-v2`, ESM-only, Node 18+.
-- Install source for this work:
-  `/private/tmp/claude-501/-Users-vcarl-workspace-client-v2/ff220a87-7d68-4197-8938-89afc5ea9a76/scratchpad/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz`
+- **Pinned artifact (do NOT use npm):** this build is under active development
+  elsewhere and is not published. The exact `.tgz` is vendored in-repo at
+  `packages/domain-spacemolt/vendor/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz`
+  and referenced via a relative `file:` dep, pinned by integrity
+  `sha512-vGBr…iCZ9kQ==`. Never re-resolve from npm or a temp path.
 - Docs: `/Users/vcarl/workspace/client-v2/README.md`, `/Users/vcarl/workspace/client-v2/AGENTS.md`.
 
 **CLI:** binary `spacemolt`; 269 commands across 18 tool groups. Positional or
