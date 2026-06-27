@@ -1,264 +1,59 @@
-import type {
-  PlayerState,
-  ShipState,
-  SystemState,
-  PoiState,
-  NearbyPlayer,
-} from "./types.js"
+/**
+ * SpaceMolt event vocabulary — now a thin seam over `@spacemolt/client-v2`.
+ *
+ * The domain previously hand-rolled its own WebSocket event interfaces and a
+ * `parseGameEvent` JSON parser for the raw `ws` connection. The client-v2
+ * library now owns the wire protocol: `createSocket` yields a typed
+ * `ServerEvent` discriminated union and never hands us raw strings, so the
+ * parser is gone. This module re-exports the library's socket types under the
+ * names the rest of the domain already uses (`GameEvent`) plus the individual
+ * notification payload types the event-processor maps.
+ *
+ * Server -> client frames are identical across the library's `v1`/`v2`
+ * endpoints; only outbound framing differs (we use `v1`, the default).
+ */
 
-// =====================================================
-// Server → Client Events
-// =====================================================
-
-export interface WelcomeEvent {
-  type: "welcome"
-  payload: {
-    version: string
-    release_date: string
-    release_notes: string[]
-    tick_rate: number
-    current_tick: number
-    server_time: number
-    motd?: string
-    game_info: string
-    website: string
-    help_text: string
-    terms: string
-  }
-}
-
-export interface RegisteredEvent {
-  type: "registered"
-  payload: {
-    password: string
-    player_id: string
-  }
-}
-
-export interface LoggedInEvent {
-  type: "logged_in"
-  payload: {
-    player: PlayerState
-    ship: ShipState
-    system: SystemState
-    poi: PoiState | null
-    captains_log: Array<Record<string, unknown>>
-    pending_trades: Array<Record<string, unknown>>
-  }
-}
-
-export interface StateUpdateEvent {
-  type: "state_update"
-  payload: {
-    tick: number
-    player: PlayerState
-    ship: ShipState
-    nearby: NearbyPlayer[]
-    in_combat: boolean
-    travel_progress?: number
-    travel_destination?: string
-    travel_type?: "travel" | "jump"
-    travel_arrival_tick?: number
-  }
-}
-
-export interface TickEvent {
-  type: "tick"
-  payload: {
-    tick: number
-  }
-}
-
-export interface OkEvent {
-  type: "ok"
-  payload: Record<string, unknown>
-}
-
-export interface ErrorEvent {
-  type: "error"
-  payload: {
-    code: string
-    message: string
-    wait_seconds?: number
-  }
-}
-
-export interface CombatUpdateEvent {
-  type: "combat_update"
-  payload: {
-    tick: number
-    attacker: string
-    target: string
-    damage: number
-    damage_type: string
-    shield_hit: number
-    hull_hit: number
-    destroyed: boolean
-  }
-}
-
-export interface PlayerDiedEvent {
-  type: "player_died"
-  payload: {
-    killer_id: string
-    killer_name: string
-    respawn_base: string
-    cause: string
-    combat_log: Array<Record<string, unknown>>
-  }
-}
-
-export interface MiningYieldEvent {
-  type: "mining_yield"
-  payload: {
-    resource_id: string
-    quantity: number
-    remaining: number
-  }
-}
-
-export interface ChatMessageEvent {
-  type: "chat_message"
-  payload: {
-    id: string
-    channel: string
-    sender_id: string
-    sender: string
-    content: string
-    timestamp: number
-  }
-}
-
-export interface TradeOfferReceivedEvent {
-  type: "trade_offer_received"
-  payload: {
-    trade_id: string
-    from_player: string
-    from_name: string
-    offer_items: Array<Record<string, unknown>>
-    offer_credits: number
-    request_items: Array<Record<string, unknown>>
-    request_credits: number
-  }
-}
-
-export interface SkillLevelUpEvent {
-  type: "skill_level_up"
-  payload: {
-    skill_id: string
-    new_level: number
-    xp_gained: number
-  }
-}
-
-export interface PoiArrivalEvent {
-  type: "poi_arrival"
-  payload: {
-    username: string
-    clan_tag?: string
-    poi_name: string
-    poi_id: string
-  }
-}
-
-export interface PoiDepartureEvent {
-  type: "poi_departure"
-  payload: {
-    username: string
-    clan_tag?: string
-    poi_name: string
-    poi_id: string
-  }
-}
-
-export interface ScanResultEvent {
-  type: "scan_result"
-  payload: {
-    target_id: string
-    success: boolean
-    revealed_info: string[]
-    [key: string]: unknown
-  }
-}
-
-export interface ScanDetectedEvent {
-  type: "scan_detected"
-  payload: {
-    scanner_id: string
-    scanner_username: string
-    scanner_ship_class: string
-    revealed_info: string[]
-    message: string
-  }
-}
-
-export interface PilotlessShipEvent {
-  type: "pilotless_ship"
-  payload: {
-    player_id: string
-    player_username: string
-    ship_class: string
-    poi_id: string
-    expire_tick: number
-    ticks_remaining: number
-  }
-}
-
-export interface ReconnectedEvent {
-  type: "reconnected"
-  payload: {
-    message: string
-    was_pilotless: boolean
-    ticks_remaining: number
-  }
-}
-
-/** Catch-all for event types we haven't defined yet. */
-export interface UnknownEvent {
-  type: string
-  payload?: unknown
-}
-
-// =====================================================
-// Discriminated Union
-// =====================================================
-
-export type GameEvent =
-  | WelcomeEvent
-  | RegisteredEvent
-  | LoggedInEvent
-  | StateUpdateEvent
-  | TickEvent
-  | OkEvent
-  | ErrorEvent
-  | CombatUpdateEvent
-  | PlayerDiedEvent
-  | MiningYieldEvent
-  | ChatMessageEvent
-  | TradeOfferReceivedEvent
-  | SkillLevelUpEvent
-  | PoiArrivalEvent
-  | PoiDepartureEvent
-  | ScanResultEvent
-  | ScanDetectedEvent
-  | PilotlessShipEvent
-  | ReconnectedEvent
+import type { ServerEvent } from "@spacemolt/client-v2"
 
 /**
- * Parse a raw WS message into a GameEvent.
- * Unknown event types are cast to GameEvent — the consumer's switch/default handles them.
- * The UnknownEvent type above is available for explicit typing if needed.
+ * The domain's event type. Identical to the client-v2 `ServerEvent` closed
+ * discriminated union: control frames (`welcome`, `logged_in`, `registered`,
+ * `ok`, `result`, `error`, `action_result`, `action_error`) plus notifications
+ * (`combat_update`, `player_died`, `scan_result`, `scan_detected`,
+ * `pilotless_ship`, `reconnected`, `mining_yield`, `chat_message`,
+ * `trade_offer_received`, `skill_level_up`, `market_update`,
+ * `observation_update`, `crafting_update`).
+ *
+ * Unknown / future frame types are still delivered at runtime but fall outside
+ * this union — handle them in a `default:` branch as `RawServerFrame`.
  */
-export function parseGameEvent(data: string): GameEvent {
-  const parsed = JSON.parse(data)
-  return parsed as GameEvent
-}
+export type GameEvent = ServerEvent
 
-// =====================================================
-// Client → Server Messages
-// =====================================================
+// Re-export the library socket types the domain consumes so callers import from
+// one place (`./ws-types.js`) rather than reaching into the vendored package.
+export type {
+  ServerEvent,
+  RawServerFrame,
+  WelcomePayload,
+  LoggedInPayload,
+  RegisteredPayload,
+  ErrorPayload,
+} from "@spacemolt/client-v2"
 
-export type ClientMessage =
-  | { type: "login"; payload: { username: string; password: string } }
-  | { type: "logout" }
-  | { type: "register"; payload: { username: string; empire: string; registration_code: string } }
+// Notification payload types (generated from the OpenAPI spec), re-exported for
+// the event-processor's per-frame handlers.
+export type {
+  NotificationCombatUpdate,
+  NotificationObservationUpdate,
+  NotificationMiningYield,
+  NotificationPlayerDied,
+  NotificationChatMessage,
+  NotificationMarketUpdate,
+  NotificationScanResult,
+  NotificationScanDetected,
+  NotificationSkillLevelUp,
+  NotificationTradeOfferReceived,
+  NotificationCraftingUpdate,
+  NotificationPilotlessShip,
+  NotificationReconnected,
+} from "@spacemolt/client-v2"

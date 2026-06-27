@@ -4,7 +4,6 @@ import * as path from "node:path"
 import type { GameState } from "./types.js"
 import type { GameEvent } from "./ws-types.js"
 import { getModels, type Phase, type PhaseContext, type PhaseResult, type PhaseRegistry, type ConnectionState } from "@roci/core/core/phase.js"
-import { CharacterFs } from "@roci/core/services/CharacterFs.js"
 import { GameSocket } from "./game-socket.js"
 import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
 import { dinner } from "./dinner.js"
@@ -12,6 +11,7 @@ import { runCortex } from "@roci/core/cortex/loop.js"
 import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
+import { sessionFilePath, validateSessionFile } from "./session.js"
 import { askUser } from "@roci/core/util/prompt.js"
 
 /** Diary lines above this threshold trigger dream compression. */
@@ -27,17 +27,16 @@ const startupPhase = {
   name: "startup",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      const charFs = yield* CharacterFs
       const gameSocket = yield* GameSocket
 
-      // Try to read credentials — if missing, the character needs to register first
-      const credsResult = yield* charFs.readCredentials(context.char).pipe(
-        Effect.map((creds) => ({ _tag: "ok" as const, creds })),
-        Effect.catchAll(() => Effect.succeed({ _tag: "missing" as const, creds: null })),
-      )
+      // Auth source of truth: the per-player .spacemolt-session.json. Compute
+      // projectRoot from char.dir (<root>/players/<name>/me).
+      const projectRoot = path.resolve(context.char.dir, "..", "..", "..")
+      const sessionPath = sessionFilePath(projectRoot, context.char.name)
+      const sessionCheck = validateSessionFile(sessionPath)
 
-      if (credsResult._tag === "missing") {
-        // Try to auto-register using a registration code
+      if (!sessionCheck.ok) {
+        // No valid session file — register via a registration code.
         const fs = yield* FileSystem.FileSystem
         const regCodePath = path.join(context.char.dir, "registration-code.txt")
         const regCodeExists = yield* fs.exists(regCodePath).pipe(
@@ -89,10 +88,10 @@ const startupPhase = {
         yield* logToConsole(
           context.char.name,
           "orchestrator",
-          `No credentials found — registering as "${username}" in ${empire} empire...`,
+          `No session file (${sessionCheck.reason}) — registering as "${username}" in ${empire} empire...`,
         )
 
-        const regResult = yield* registerCharacter(username, empire, registrationCode).pipe(
+        const regResult = yield* registerCharacter(context.char, registrationCode).pipe(
           Effect.catchAll((e) => {
             return logToConsole(
               context.char.name,
@@ -105,33 +104,11 @@ const startupPhase = {
         yield* logToConsole(
           context.char.name,
           "orchestrator",
-          `Registered successfully as ${regResult.username} (player_id: ${regResult.playerId})`,
+          `Registered successfully as ${regResult.username} (player_id: ${regResult.playerId}) — wrote session file`,
         )
-
-        // Write credentials.txt
-        const credsContent = `Username: ${regResult.username}\nPassword: ${regResult.password}\n`
-        const credsPath = path.join(context.char.dir, "credentials.txt")
-        yield* fs.writeFileString(credsPath, credsContent).pipe(
-          Effect.catchAll((e) => {
-            return logToConsole(
-              context.char.name,
-              "orchestrator",
-              `Failed to write credentials.txt: ${e}`,
-            ).pipe(Effect.flatMap(() => Effect.fail(e)))
-          }),
-        )
-
-        yield* logToConsole(
-          context.char.name,
-          "orchestrator",
-          "Saved credentials.txt — proceeding with normal login",
-        )
-
-        // Now read credentials and continue with normal login flow
-        const creds = yield* charFs.readCredentials(context.char)
 
         const { events, initialState, tickIntervalSec, initialTick } =
-          yield* gameSocket.connect(creds, context.char.name)
+          yield* gameSocket.connect(context.char)
 
         yield* logToConsole(
           context.char.name,
@@ -145,9 +122,9 @@ const startupPhase = {
         return { _tag: "Continue", next: "active", connection } as PhaseResult
       }
 
-      // Connect to the game
+      // Valid session file — connect to the game
       const { events, initialState, tickIntervalSec, initialTick } =
-        yield* gameSocket.connect(credsResult.creds, context.char.name)
+        yield* gameSocket.connect(context.char)
 
       yield* logToConsole(
         context.char.name,

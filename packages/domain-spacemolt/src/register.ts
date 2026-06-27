@@ -1,11 +1,13 @@
 import { Effect } from "effect"
-import WebSocket from "ws"
-import { parseGameEvent } from "./ws-types.js"
-import type { RegisteredEvent } from "./ws-types.js"
-
-const WS_URL = "wss://game.spacemolt.com/ws"
+import * as path from "node:path"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { createClient, spacemoltAuthRegister } from "@spacemolt/client-v2"
+import type { CharacterConfig } from "@roci/core/services/CharacterFs.js"
+import { sessionFilePath, spaceMoltSocketBaseUrl } from "./session.js"
 
 const EMPIRES = ["solarian", "crimson", "nebula", "voidborn", "outerrim"] as const
+
+type Empire = (typeof EMPIRES)[number]
 
 export class RegistrationError {
   readonly _tag = "RegistrationError"
@@ -35,7 +37,7 @@ export function deriveUsername(characterName: string): string {
  * Pick an empire deterministically from the character name.
  * Uses a simple hash so the same character always gets the same empire.
  */
-export function pickEmpire(characterName: string): string {
+export function pickEmpire(characterName: string): Empire {
   let hash = 0
   for (let i = 0; i < characterName.length; i++) {
     hash = ((hash << 5) - hash + characterName.charCodeAt(i)) | 0
@@ -44,98 +46,68 @@ export function pickEmpire(characterName: string): string {
 }
 
 /**
- * Register a new SpaceMolt character via raw WebSocket.
- *
- * Opens a one-shot connection: connect -> welcome -> register -> registered -> close.
- * Returns the credentials on success.
+ * Register a new SpaceMolt character via the client-v2 REST API and persist the
+ * returned credentials to the per-player session file (the client-v2
+ * `MultiSessionFile`, version 2). On success the account is immediately usable
+ * by both the host library (`createSocket`) and the container CLI.
  */
 export function registerCharacter(
-  username: string,
-  empire: string,
+  char: CharacterConfig,
   registrationCode: string,
 ): Effect.Effect<RegistrationResult, RegistrationError> {
-  return Effect.async<RegistrationResult, RegistrationError>((resume) => {
-    const ws = new WebSocket(WS_URL)
-    let settled = false
+  return Effect.gen(function* () {
+    const username = deriveUsername(char.name)
+    const empire = pickEmpire(char.name)
 
-    const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true
-        ws.close()
-        resume(Effect.fail(new RegistrationError("Registration timed out after 30 seconds")))
-      }
-    }, 30_000)
+    const client = createClient({ baseUrl: spaceMoltSocketBaseUrl() })
 
-    const cleanup = () => {
-      clearTimeout(timeout)
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close()
-      }
+    const res = yield* Effect.tryPromise({
+      try: () =>
+        spacemoltAuthRegister({
+          client,
+          body: { username, empire, registration_code: registrationCode },
+        }),
+      catch: (e) => new RegistrationError("Registration request failed", e),
+    })
+
+    if (res.error) {
+      const err = res.error as { code?: string; message?: string }
+      const detail = err.code || err.message
+        ? `${err.code ?? "error"} — ${err.message ?? "unknown error"}`
+        : JSON.stringify(res.error)
+      return yield* Effect.fail(new RegistrationError(`Registration failed: ${detail}`))
     }
 
-    ws.on("error", (err) => {
-      if (!settled) {
-        settled = true
-        cleanup()
-        resume(Effect.fail(new RegistrationError("WebSocket connection failed", err)))
-      }
+    const password = res.data?.structuredContent?.password
+    if (!password) {
+      return yield* Effect.fail(
+        new RegistrationError("Registration succeeded but no password was returned"),
+      )
+    }
+    const playerId = res.data?.structuredContent?.player?.id ?? ""
+
+    // Persist credentials as the client-v2 v2 multi-account session file so
+    // readPlayerCredentials / validateSessionFile can recover them later.
+    const projectRoot = path.resolve(char.dir, "..", "..", "..")
+    const filePath = sessionFilePath(projectRoot, char.name)
+    const sessionContent = JSON.stringify(
+      {
+        version: 2,
+        activeAccount: username,
+        accounts: { [username]: { username, password } },
+      },
+      null,
+      2,
+    )
+
+    yield* Effect.try({
+      try: () => {
+        mkdirSync(path.dirname(filePath), { recursive: true })
+        writeFileSync(filePath, sessionContent + "\n", "utf-8")
+      },
+      catch: (e) => new RegistrationError(`Failed to write session file ${filePath}`, e),
     })
 
-    ws.on("close", () => {
-      if (!settled) {
-        settled = true
-        cleanup()
-        resume(Effect.fail(new RegistrationError("WebSocket closed before registration completed")))
-      }
-    })
-
-    ws.on("message", (data) => {
-      const raw = data.toString()
-      // Server may send multiple JSON objects in one WS frame (newline-delimited)
-      const chunks = raw.split("\n").filter((s) => s.trim().length > 0)
-      for (const chunk of chunks) {
-        if (settled) return
-        try {
-          const event = parseGameEvent(chunk)
-
-          if (event.type === "welcome") {
-            // Send registration
-            ws.send(JSON.stringify({
-              type: "register",
-              payload: { username, empire, registration_code: registrationCode },
-            }))
-            continue
-          }
-
-          if (event.type === "registered") {
-            const payload = (event as RegisteredEvent).payload
-            settled = true
-            cleanup()
-            resume(Effect.succeed({
-              username,
-              password: payload.password,
-              playerId: payload.player_id,
-            }))
-            return
-          }
-
-          if (event.type === "error") {
-            const errEvent = event as { type: "error"; payload: { code: string; message: string } }
-            settled = true
-            cleanup()
-            resume(Effect.fail(new RegistrationError(
-              `Registration failed: ${errEvent.payload.code} — ${errEvent.payload.message}`,
-            )))
-            return
-          }
-        } catch (err) {
-          if (!settled) {
-            settled = true
-            cleanup()
-            resume(Effect.fail(new RegistrationError("Failed to parse server message", err)))
-          }
-        }
-      }
-    })
+    return { username, password, playerId }
   })
 }
