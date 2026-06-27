@@ -13,8 +13,14 @@ export interface ModelParams {
   maxTokens?: number
   /**
    * Extra OpenAI-compatible body fields merged verbatim into the request
-   * (e.g. `response_format`, or llama.cpp's `grammar`/`json_schema`).
-   * Used by Plan 2 for grammar-constrained decoding.
+   * (e.g. mlx_lm's `chat_template_kwargs`, or llama.cpp's `grammar`/`json_schema`).
+   *
+   * NOTE: `response_format` (JSON-schema / grammar-constrained decoding) is NOT
+   * supported on the mlx provider — mlx_lm 0.31.2 has no constrained-decoding
+   * backend, so the server silently ignores the key (it does NOT enforce the
+   * schema). It would only take effect against a llama.cpp server, which does
+   * have a grammar/json_schema backend. Do not re-add `response_format` to an
+   * mlx tier expecting it to work; rely on the tolerant JSON extractor instead.
    */
   extraBody?: Record<string, unknown>
 }
@@ -47,22 +53,28 @@ export interface CortexModelOverlay {
  */
 export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   // hindbrain (observe) and forebrain (orient) must emit a parseable JSON result
-  // every tick. Reasoning models burn the token budget on a variable
-  // chain-of-thought and intermittently hit finish=length with empty content
-  // (Bug B on hindbrain; the same failure was directly observed on forebrain's
-  // GLM-4.7-Flash — 2/6 orient probes truncated). Instruct models emit the JSON
-  // directly (reasoningLen=0, finish=stop), so the structured-output tiers are
-  // pinned to instruct models. The maxTokens budget stays generous as headroom.
-  // The Qwen3.5 ladder models are "thinking" models: by default they emit a
+  // every tick (parseOr otherwise degrades to a "parse failure" fallback). The
+  // Qwen3.5 ladder models are "thinking" models: by default they emit a
   // chain-of-thought and can exhaust the token budget before producing the
   // required JSON (finish=length, content=null → "Orient parse failure" every
   // tick). Their chat templates gate reasoning on an `enable_thinking` kwarg
   // (default ON); mlx_lm.server forwards `chat_template_kwargs` from the request
-  // body into the template. Disabling it on the structured-output tiers makes
-  // them emit JSON directly (live-probed: finish=stop, content present, no
-  // reasoning monologue). The conscious tier deliberately omits this so its
-  // thinking stays ON. This rides the existing `extraBody` plumbing — client.ts
-  // spreads `...handle.params.extraBody` verbatim into the request body.
+  // body into the template. This rides the existing `extraBody` plumbing —
+  // client.ts spreads `...handle.params.extraBody` verbatim into the request body.
+  //
+  // The two structured-output tiers handle this differently:
+  //   - hindbrain DISABLES thinking (`enable_thinking: false`) so the small 2B
+  //     model emits JSON directly (live-probed: finish=stop, content present, no
+  //     reasoning monologue). Observe is mechanical and gains nothing from CoT.
+  //   - forebrain KEEPS thinking ON. Orient benefits from reasoning, so instead
+  //     of suppressing CoT we give it a large token budget (see below) so the
+  //     monologue AND the trailing JSON both fit, then recover the JSON with the
+  //     tolerant extractor (parse.ts firstBalancedObject). This is best-effort:
+  //     there is no hard guarantee the model closes the JSON — no constrained
+  //     decoding exists on this stack — but a generous budget removes the
+  //     truncation that caused the failures.
+  // Only the conscious tier is the designated deep-reasoner (largest budget,
+  // smallest output schema); it omits the kwarg entirely so thinking stays ON.
   hindbrain: {
     tier: "hindbrain",
     provider: "mlx",
@@ -74,6 +86,13 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
       extraBody: { chat_template_kwargs: { enable_thinking: false } },
     },
   },
+  // forebrain (orient) intentionally differs from hindbrain: thinking stays ON
+  // because orient benefits from reasoning. The trade-off is budget — the CoT
+  // monologue plus the trailing JSON must BOTH fit in maxTokens or the response
+  // truncates (finish=length, JSON never emitted → "Orient parse failure"). The
+  // old 4096 was too tight: the monologue alone exhausted it. 16384 gives ample
+  // headroom; it is a tunable starting value (the context window is 262K, so the
+  // only real cost of a larger budget is per-tick latency, not capacity).
   forebrain: {
     tier: "forebrain",
     provider: "mlx",
@@ -81,7 +100,7 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
     model: "mlx-community/Qwen3.5-9B-4bit",
     params: {
       temperature: 0.5,
-      maxTokens: 4096,
+      maxTokens: 16384,
       extraBody: { chat_template_kwargs: { enable_thinking: true } },
     },
   },

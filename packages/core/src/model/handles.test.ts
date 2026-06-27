@@ -60,19 +60,25 @@ describe("DEFAULT_CORTEX_MODELS", () => {
     expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("mlx-community/Qwen3.5-122B-A10B-4bit")
   })
 
-  // Live-confirmed fix: the Qwen3.5 ladder models are "thinking" models that
-  // emit chain-of-thought by default and exhaust their token budget before
-  // producing the required JSON (finish=length, content=null → "Orient parse
-  // failure" every tick). Their chat templates gate reasoning on an
-  // `enable_thinking` kwarg (default ON); mlx_lm.server forwards
-  // `chat_template_kwargs` from the request body into the template. The
-  // structured-output tiers (hindbrain/forebrain) must disable thinking so they
-  // emit JSON directly. This rides the existing `extraBody` plumbing
-  // (client.ts spreads `...handle.params.extraBody` into the request body).
-  it("disables thinking on the structured-output tiers (hindbrain/forebrain)", () => {
-    const expectedKwargs = { chat_template_kwargs: { enable_thinking: false } }
-    expect(DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody).toEqual(expectedKwargs)
-    expect(DEFAULT_CORTEX_MODELS.forebrain.params?.extraBody).toEqual(expectedKwargs)
+  // The Qwen3.5 ladder models are "thinking" models that emit chain-of-thought
+  // by default and can exhaust their token budget before producing the required
+  // JSON (finish=length, content=null → "Orient parse failure" every tick).
+  // Their chat templates gate reasoning on an `enable_thinking` kwarg (default
+  // ON); mlx_lm.server forwards `chat_template_kwargs` from the request body
+  // into the template (client.ts spreads `...handle.params.extraBody`).
+  //
+  // The two structured-output tiers handle this differently:
+  //   - hindbrain DISABLES thinking so the 2B model emits JSON directly.
+  //   - forebrain KEEPS thinking ON (orient benefits from reasoning) and instead
+  //     relies on a large maxTokens budget so CoT + JSON both fit, plus the
+  //     tolerant JSON extractor to recover the trailing object.
+  it("disables thinking on hindbrain but keeps it on for forebrain", () => {
+    expect(DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody).toEqual({
+      chat_template_kwargs: { enable_thinking: false },
+    })
+    expect(DEFAULT_CORTEX_MODELS.forebrain.params?.extraBody).toEqual({
+      chat_template_kwargs: { enable_thinking: true },
+    })
     // Drill the nested shape explicitly so a regression in the exact path the
     // chat template reads is caught.
     const hindKwargs = DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody?.chat_template_kwargs as
@@ -82,7 +88,7 @@ describe("DEFAULT_CORTEX_MODELS", () => {
       | { enable_thinking?: boolean }
       | undefined
     expect(hindKwargs?.enable_thinking).toBe(false)
-    expect(foreKwargs?.enable_thinking).toBe(false)
+    expect(foreKwargs?.enable_thinking).toBe(true)
   })
 
   // conscious (decide/evaluate) is the designated deep-reasoner and must KEEP
