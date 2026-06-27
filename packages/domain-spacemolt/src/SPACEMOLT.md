@@ -31,16 +31,18 @@ startup --> active (channel session) --> social (dinner) --> reflection (dream) 
 
 ### EventProcessor
 
-Translates raw WebSocket `GameEvent`s into state operations:
+Translates `@spacemolt/client-v2` `GameEvent`s into state operations:
 
 | Event | Handling |
 |-------|----------|
-| `state_update` | Full state merge: player, ship, nearby players, combat flag, travel |
-| `tick` | Heartbeat -- advances tick counter |
-| `combat_update` | Informational logging only |
+| `logged_in` | Initial full state on login/reconnect: player, ship, system, poi, cargo |
+| `observation_update` | Per-tick delta: advances tick counter, applies nearby-player upserts/departures |
+| `combat_update` | Sets `inCombat` flag, advances tick, emits a combat alert |
+| `mining_yield` | Adds the yielded resource to ship cargo |
 | `player_died` | `LifecycleReset` -- triggers plan abort and state reset |
 | `chat_message` | Accumulated as context for the next prompt |
-| `mining_yield`, `poi_arrival`, etc. | Suppressed -- available in raw logs |
+| `scan_detected` | Emits a "you were scanned" alert |
+| acks / informational frames (`welcome`, `ok`, `market_update`, etc.) | No-op -- still reach the hindbrain via the raw event stream |
 
 ### SituationClassifier
 

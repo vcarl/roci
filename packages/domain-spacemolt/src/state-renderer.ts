@@ -5,7 +5,7 @@ import { tag } from "@roci/core/logging/console-renderer.js"
 /** Extract a compact snapshot of key state values for logging. */
 export function snapshot(state: GameState): Record<string, unknown> {
   // Use player fields as authoritative source — poi/system objects are only
-  // set on login and NOT updated by state_update events, so they go stale.
+  // set on `logged_in` and NOT refreshed by `observation_update`, so they go stale.
   const poiLabel = state.player.current_poi
     ? (state.poi?.name && state.poi.id === state.player.current_poi ? state.poi.name : state.player.current_poi)
     : "unknown"
