@@ -85,13 +85,23 @@ describe("normalizeOpenCode", () => {
     expect(events).toEqual([{ type: "thinking", text: "thinking..." }])
   })
 
-  it("normalizes tool_use event", () => {
+  it("extracts tool name and input from the real opencode part shape", () => {
     const events = normalizeOpenCode({
       type: "tool_use",
-      part: { id: "t1", name: "bash", input: { command: "ls" } },
+      part: {
+        type: "tool",
+        id: "prt_abc",
+        tool: "bash",
+        callID: "4edb9b0f",
+        state: {
+          status: "completed",
+          input: { command: "ls", description: "list" },
+          output: "...",
+        },
+      },
     })
     expect(events).toEqual([
-      { type: "tool_use", id: "t1", name: "bash", input: { command: "ls" } },
+      { type: "tool_use", id: "prt_abc", name: "bash", input: { command: "ls", description: "list" } },
     ])
   })
 
