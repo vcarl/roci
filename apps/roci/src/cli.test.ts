@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { Command } from "@effect/cli"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import { NodeFileSystem } from "@effect/platform-node"
 import { existsSync, writeFileSync, rmSync } from "node:fs"
@@ -9,7 +9,7 @@ import { Docker, DockerError, type ContainerInfo } from "@roci/core/services/Doc
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { CharacterFs } from "@roci/core/services/CharacterFs.js"
 import { ModelService, ModelBackendTag } from "@roci/core/services/ModelService.js"
-import { rociCommand, serviceLayer } from "./cli.js"
+import { rociCommand, serviceLayer, resolveSetupDescription } from "./cli.js"
 
 /**
  * Regression guard for the mlx cold-load bug.
@@ -83,6 +83,30 @@ const makeSpawnTripwire = (spawned: { fired: boolean }) =>
       throw new Error("CommandExecutor.start tripwire fired")
     },
   }) as unknown as CommandExecutor.CommandExecutor
+
+describe("setup --description threading", () => {
+  // The pure seam that decides what gets passed as scaffoldCharacter's
+  // characterDescription. Testing the real generation is not appropriate here:
+  // scaffoldCharacter with a description makes a real local-model call. This
+  // covers the flag-threading + multi-character guard instead.
+
+  it("threads --description through for a single character", () => {
+    const result = resolveSetupDescription(Option.some("a grizzled void-trader"), 1)
+    expect(result).toEqual({ ok: true, characterDescription: "a grizzled void-trader" })
+  })
+
+  it("preserves blank-template behavior when no --description is given", () => {
+    // ok with no characterDescription => scaffoldCharacter writes seed templates.
+    expect(resolveSetupDescription(Option.none(), 1)).toEqual({ ok: true })
+    expect(resolveSetupDescription(Option.none(), 3)).toEqual({ ok: true })
+  })
+
+  it("rejects --description when more than one character is named", () => {
+    const result = resolveSetupDescription(Option.some("a grizzled void-trader"), 2)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/single character/)
+  })
+})
 
 describe("cli model-layer scoping", () => {
   it("the production serviceLayer does NOT provide ModelService or the mlx backend", async () => {

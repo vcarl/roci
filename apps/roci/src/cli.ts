@@ -379,8 +379,39 @@ const setupDomain = Options.text("domain").pipe(
   Options.withDescription("Domain to set up characters for (e.g. github, spacemolt)"),
   Options.optional,
 )
+const setupDescription = Options.text("description").pipe(
+  Options.withDescription(
+    "Identity description for ONE character — generates background/values/palette/diary via the local model (pass a single character name)",
+  ),
+  Options.optional,
+)
 
-const setupCommand = Command.make("setup", { characters: setupCharacters, domain: setupDomain }, (args) =>
+/** Resolve the optional --description into the value threaded to scaffoldCharacter.
+ *  --description is inherently per-character, so it is rejected when more than one
+ *  character is named. Pure (no Effect) so the threading + guard is unit-testable
+ *  without triggering scaffoldCharacter's real local-model call. */
+export type SetupDescriptionResult =
+  | { ok: true; characterDescription?: string }
+  | { ok: false; error: string }
+
+export const resolveSetupDescription = (
+  description: Option.Option<string>,
+  characterCount: number,
+): SetupDescriptionResult => {
+  if (Option.isNone(description)) return { ok: true }
+  if (characterCount > 1) {
+    return {
+      ok: false,
+      error: "--description applies to a single character; pass one character name at a time",
+    }
+  }
+  return { ok: true, characterDescription: description.value }
+}
+
+const setupCommand = Command.make(
+  "setup",
+  { characters: setupCharacters, domain: setupDomain, description: setupDescription },
+  (args) =>
   Effect.gen(function* () {
     const characters = [...args.characters]
 
@@ -401,6 +432,14 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
 
     if (characters.length === 0) {
       yield* logToConsole("setup", "cli", "No characters specified. Usage: roci setup <character> [character...] --domain <domain>")
+      return
+    }
+
+    // --description (optional) supplies the identity seed for one character. Reject
+    // it up front when more than one character is named — it cannot apply to all.
+    const descResult = resolveSetupDescription(args.description, characters.length)
+    if (!descResult.ok) {
+      yield* logToConsole("setup", "cli", descResult.error)
       return
     }
 
@@ -432,6 +471,7 @@ const setupCommand = Command.make("setup", { characters: setupCharacters, domain
         projectRoot: PROJECT_ROOT,
         characterName: charName,
         identityTemplate: domainConfig.identityTemplate,
+        characterDescription: descResult.characterDescription,
         domainConfig,
         review: autoAcceptReview,
       })
