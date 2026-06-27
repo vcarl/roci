@@ -20,7 +20,7 @@
   "dependencies": {
     "@effect/platform": "^0.94.5",
     "@roci/core": "workspace:*",
-    "@spacemolt/client-v2": "file:/private/tmp/claude-501/-Users-vcarl-workspace-client-v2/ff220a87-7d68-4197-8938-89afc5ea9a76/scratchpad/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz",
+    "@spacemolt/client-v2": "file:./vendor/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz",
     "effect": "^3.19.19",
     "ws": "^8.19.0"
   },

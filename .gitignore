@@ -4,6 +4,8 @@ dist/
 coverage/
 *.tsbuildinfo
 *.tgz
+# Vendored client-v2 tarball must be committed (pinned, not on npm)
+!packages/domain-spacemolt/vendor/*.tgz
 .ds_store
 __pycache__/
 .env
