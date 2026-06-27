@@ -82,7 +82,7 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
     params: {
       temperature: 0.5,
       maxTokens: 4096,
-      extraBody: { chat_template_kwargs: { enable_thinking: false } },
+      extraBody: { chat_template_kwargs: { enable_thinking: true } },
     },
   },
   // conscious (decide/evaluate) is the designated deep-reasoner: a reasoning
@@ -93,8 +93,8 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
     tier: "conscious",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8083/v1",
-    model: "mlx-community/Qwen3.5-122B-A10B-4bit",
-    params: { temperature: 0.7, maxTokens: 8192 },
+    model: "mlx-community/gemma-4-31b-it-8bit",
+    params: { temperature: 0.7, maxTokens: 16384 },
   },
 }
 

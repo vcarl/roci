@@ -86,7 +86,7 @@ describe("buildMlxArgs", () => {
   it("builds mlx_lm.server --model <id> --port <p> for the conscious tier", () => {
     const args = buildMlxArgs(resolveTierSpec("conscious"))
     expect(args).toEqual([
-      "--model", "mlx-community/Qwen3.5-122B-A10B-4bit",
+      "--model", "mlx-community/gemma-4-31b-it-8bit",
       "--port", "8083",
     ])
   })
