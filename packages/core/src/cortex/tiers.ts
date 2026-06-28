@@ -18,7 +18,7 @@ import type { CharacterConfig } from "../services/CharacterFs.js"
 import { extractJson, parseOr, tryParseJson, isPlainObject } from "./parse.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
-import { CharacterLog, logToConsole } from "../logging/log-writer.js"
+import { CharacterLog, logToConsole, logExchange } from "../logging/log-writer.js"
 
 export { extractJson, parseOr }
 
@@ -51,8 +51,13 @@ export interface EvaluateInput {
   remainingSteps: string
 }
 
-/** Run one prompt against the model backing `tier`, returning the raw text. */
-const callTier = (config: CortexRunnerConfig, tier: "hindbrain" | "forebrain" | "conscious", prompt: string) =>
+/** Run one prompt against the model backing `tier`, log the full exchange, return the raw text. */
+const callTier = (
+  config: CortexRunnerConfig,
+  tier: "hindbrain" | "forebrain" | "conscious",
+  step: "observe" | "orient" | "decide" | "evaluate",
+  prompt: string,
+) =>
   Effect.gen(function* () {
     const svc = yield* ModelService
     const client = yield* ModelClient
@@ -60,6 +65,12 @@ const callTier = (config: CortexRunnerConfig, tier: "hindbrain" | "forebrain" | 
     const res = yield* svc.withTier(tier)(
       client.complete(handle, [{ role: "user", content: prompt }]),
     )
+    // Full prompt+response archive (debug level; jsonl-complete). Never crash the loop.
+    yield* logExchange(config.char.name, "cortex", step, prompt, res.text, {
+      tier,
+      model: handle.model,
+      usage: res.usage,
+    }).pipe(Effect.catchAll(() => Effect.void))
     return res.text
   })
 
@@ -68,7 +79,7 @@ export function runHindbrain(
   config: CortexRunnerConfig,
   events: string[],
   waitState: WaitState | null,
-): Effect.Effect<ObserveResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
+): Effect.Effect<ObserveResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.observe.render({
     cadence: config.cadence,
     cadenceGuidance: getCadenceGuidance("observe", config.cadence),
@@ -78,7 +89,7 @@ export function runHindbrain(
       : "None — not currently waiting.",
     palette: config.palette ?? TEMPLATE_PALETTE,
   })
-  return callTier(config, "hindbrain", prompt).pipe(
+  return callTier(config, "hindbrain", "observe", prompt).pipe(
     Effect.map((text) =>
       parseOr<ObserveResult>(text, {
         disposition: "accumulate",
@@ -88,9 +99,6 @@ export function runHindbrain(
     ),
   )
 }
-
-/** Max length of raw forebrain text echoed to the log on a parse failure. */
-const RAW_FOREBRAIN_LOG_LIMIT = 2000
 
 /**
  * Safe defaults for every required OrientResult field. Used both as the
@@ -125,7 +133,7 @@ export function runForebrain(
     emotionalWeight,
   })
   const fallback = orientFallback(emotionalWeight)
-  return callTier(config, "forebrain", prompt).pipe(
+  return callTier(config, "forebrain", "orient", prompt).pipe(
     Effect.flatMap((text) => {
       const parsed = tryParseJson<OrientResult>(text)
       if (parsed.ok && isPlainObject(parsed.value)) {
@@ -143,17 +151,13 @@ export function runForebrain(
           sections: Array.isArray(merged.sections) ? merged.sections : [],
         })
       }
-      // Parse miss: log the raw forebrain output so the failure is diagnosable
-      // (previously silent). Truncate to keep the log line sane. Only fires on
-      // failure — the success path above never logs.
-      const truncated =
-        text.length > RAW_FOREBRAIN_LOG_LIMIT
-          ? `${text.slice(0, RAW_FOREBRAIN_LOG_LIMIT)}… [truncated ${text.length - RAW_FOREBRAIN_LOG_LIMIT} chars]`
-          : text
+      // Parse miss: log the FULL raw forebrain output so the failure is fully
+      // diagnosable. The console truncates long lines for display; events.jsonl
+      // keeps the complete text. Only fires on failure — the success path never logs here.
       return logToConsole(
         config.char.name,
         "cortex",
-        `tier=forebrain step=orient parse failure; raw output: ${truncated}`,
+        `tier=forebrain step=orient parse failure; raw output: ${text}`,
         "warn",
       ).pipe(
         // A log-write failure must never crash the loop — swallow it.
@@ -170,7 +174,7 @@ export function runConsciousDecide(
   orient: OrientResult,
   currentPlanState: string,
   availableActions: string,
-): Effect.Effect<DecideResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
+): Effect.Effect<DecideResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.decide.render({
     cadence: config.cadence,
     cadenceGuidance: getCadenceGuidance("decide", config.cadence),
@@ -187,7 +191,7 @@ export function runConsciousDecide(
     currentPlanState,
     availableSkills: availableActions,
   })
-  return callTier(config, "conscious", prompt).pipe(
+  return callTier(config, "conscious", "decide", prompt).pipe(
     Effect.map((text) =>
       parseOr<DecideResult>(text, { decision: "continue", reasoning: "parse failure — defaulting to continue" }),
     ),
@@ -225,7 +229,7 @@ function normalizeTransition(raw: EvaluateResult["transition"]): EvaluateTransit
 export function runConsciousEvaluate(
   config: CortexRunnerConfig,
   input: EvaluateInput,
-): Effect.Effect<EvaluateResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService> {
+): Effect.Effect<EvaluateResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const secondsBudgeted = input.ticksBudgeted * 30
   const secondsConsumed = input.ticksConsumed * 30
   const overrunWarning =
@@ -249,7 +253,7 @@ export function runConsciousEvaluate(
     emotionalState: input.emotionalState,
     remainingSteps: input.remainingSteps,
   })
-  return callTier(config, "conscious", prompt).pipe(
+  return callTier(config, "conscious", "evaluate", prompt).pipe(
     Effect.map((text) => {
       const result = parseOr<EvaluateResult>(text, {
         judgment: "partially_succeeded",
