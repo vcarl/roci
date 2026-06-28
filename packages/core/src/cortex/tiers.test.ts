@@ -76,6 +76,7 @@ describe("runHindbrain", () => {
         Layer.mergeAll(
           fixedClient('{"disposition":"escalate","emotionalWeight":"😰","reason":"under fire"}'),
           recordingService([]),
+          silentLog,
         ),
       ),
     )
@@ -86,7 +87,7 @@ describe("runHindbrain", () => {
     const out = await Effect.runPromise(
       Effect.provide(
         runHindbrain(config, ["x"], null),
-        Layer.mergeAll(fixedClient("the model rambled"), recordingService([])),
+        Layer.mergeAll(fixedClient("the model rambled"), recordingService([]), silentLog),
       ),
     )
     expect(out.disposition).toBe("accumulate")
@@ -138,7 +139,7 @@ describe("runHindbrain — reasoning-only response (Bug B regression)", () => {
     const out = await Effect.runPromise(
       Effect.provide(
         runHindbrain(reasoningConfig, ["type: tick\n{}"], null),
-        Layer.mergeAll(layer, recordingService([])),
+        Layer.mergeAll(layer, recordingService([]), silentLog),
       ),
     )
     expect(out.disposition).toBe("discard")
@@ -261,6 +262,7 @@ describe("runConsciousDecide — does not crash on malformed orient", () => {
         Layer.mergeAll(
           fixedClient('{"decision":"continue","reasoning":"steady"}'),
           recordingService([]),
+          silentLog,
         ),
       ),
     )
@@ -308,7 +310,7 @@ describe("runConsciousEvaluate — transition normalization", () => {
     Effect.runPromise(
       Effect.provide(
         runConsciousEvaluate(config, evalInput),
-        Layer.mergeAll(fixedClient(raw), recordingService([])),
+        Layer.mergeAll(fixedClient(raw), recordingService([]), silentLog),
       ),
     )
 
@@ -369,9 +371,49 @@ describe("callTier routes through ModelService.withTier", () => {
         Layer.mergeAll(
           fixedClient('{"disposition":"discard","emotionalWeight":"😐","reason":"x"}'),
           recordingService(wrapped),
+          silentLog,
         ),
       ),
     )
     expect(wrapped).toEqual(["hindbrain"])
+  })
+})
+
+describe("callTier emits a full prompt+response exchange", () => {
+  it("emits a cortex exchange with the full response on the hindbrain success path", async () => {
+    const logs: UnifiedEvent[] = []
+    const body = '{"disposition":"discard","emotionalWeight":"😐","reason":"noise"}'
+    await Effect.runPromise(
+      Effect.provide(
+        runHindbrain(config, ["type: tick\n{}"], null),
+        Layer.mergeAll(fixedClient(body), recordingService([]), recordingLog(logs)),
+      ),
+    )
+    const ex = logs.find((e) => e.kind === "exchange") as Extract<UnifiedEvent, { kind: "exchange" }> | undefined
+    expect(ex).toBeDefined()
+    expect(ex!.channel).toBe("cortex")
+    expect(ex!.step).toBe("observe")
+    expect(ex!.prompt.length).toBeGreaterThan(0)
+    expect(ex!.response).toBe(body) // full model output, verbatim
+  })
+})
+
+describe("runForebrain — full (untruncated) raw output on parse failure", () => {
+  it("logs the entire raw output, with no [truncated] marker, when it exceeds the old 2000-char cap", async () => {
+    const logs: UnifiedEvent[] = []
+    const raw = "NO-JSON " + "Q".repeat(3000) // > old RAW_FOREBRAIN_LOG_LIMIT
+    await Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        Layer.mergeAll(fixedClient(raw), recordingService([]), recordingLog(logs)),
+      ),
+    )
+    const msg = logs
+      .filter((e) => e.kind === "system")
+      .map((e) => (e as { message?: string }).message ?? "")
+      .find((m) => /parse failure/i.test(m))
+    expect(msg).toBeDefined()
+    expect(msg!).toContain(raw) // FULL raw present
+    expect(msg!).not.toMatch(/truncated/i)
   })
 })

@@ -20,6 +20,7 @@ export type UnifiedEvent = EventBase & (
   | { kind: "subagent_start"; description: string; data: unknown }
   | { kind: "subagent_stop"; data: unknown }
   | { kind: "error"; message: string }
+  | { kind: "exchange"; channel: string; step: string; prompt: string; response: string; meta?: Record<string, unknown> }
 )
 
 export function eventBase(character: string, system: string, subsystem: string): EventBase {

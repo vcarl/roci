@@ -75,3 +75,32 @@ export const logToConsole = (
       { ...eventBase(character, source, source), kind: "system", message, ...(level ? { level } : {}) },
     )
   })
+
+/**
+ * Emit a structured prompt+response exchange. Full content is stored in
+ * events.jsonl; classifyLevel ranks it `debug`, so it stays out of the default
+ * console view. Tag is [character:step].
+ */
+export const logExchange = (
+  character: string,
+  channel: string,
+  step: string,
+  prompt: string,
+  response: string,
+  meta?: Record<string, unknown>,
+) =>
+  Effect.gen(function* () {
+    const log = yield* CharacterLog
+    yield* log.emit(
+      { name: character, dir: "" } as CharacterConfig,
+      {
+        ...eventBase(character, channel, step),
+        kind: "exchange",
+        channel,
+        step,
+        prompt,
+        response,
+        ...(meta ? { meta } : {}),
+      },
+    )
+  })

@@ -33,6 +33,9 @@ describe("classifyLevel", () => {
   it("maps subagent_stop to info", () => {
     expect(classifyLevel({ ...base, kind: "subagent_stop", data: {} })).toBe("info")
   })
+  it("maps exchange to debug", () => {
+    expect(classifyLevel({ ...base, kind: "exchange", channel: "cortex", step: "orient", prompt: "p", response: "r" })).toBe("debug")
+  })
 })
 
 describe("effectiveLevel", () => {

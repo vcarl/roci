@@ -11,6 +11,7 @@ import {
 } from "./transport.js"
 import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
+import type { UnifiedEvent } from "../../../logging/events.js"
 
 const StubCharacterLog = Layer.succeed(
   CharacterLog,
@@ -173,6 +174,42 @@ describe("runTransport", () => {
       ),
     )
     expect(result.timedOut).toBe(true)
+  })
+
+  it("logs stderr in full (no 500-char truncation)", async () => {
+    const big = "E".repeat(1500)
+    const emitted: UnifiedEvent[] = []
+    const RecordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            emitted.push(event)
+          }),
+      }),
+    )
+    const recDeps = Layer.merge(NodeContext.layer, RecordingLog)
+
+    const command = Command.make("node", "-e", `process.stderr.write("E".repeat(1500))`)
+    await Effect.runPromise(
+      Effect.provide(
+        runTransport({
+          command,
+          normalize: normalizeClaude,
+          runtimeTag: "claude",
+          char,
+          role: "body",
+          timeoutMs: 5000,
+        }),
+        recDeps,
+      ),
+    )
+
+    const stderrEvents = emitted.filter(
+      (e) => e.kind === "system" && /^stderr:/.test((e as { message?: string }).message ?? ""),
+    )
+    expect(stderrEvents.length).toBe(1)
+    expect((stderrEvents[0] as { message: string }).message).toContain(big)
   })
 })
 

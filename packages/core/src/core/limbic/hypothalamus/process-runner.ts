@@ -16,7 +16,7 @@ import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
-import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
+import { CharacterLog, logToConsole, logExchange } from "../../../logging/log-writer.js"
 import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand, openCodeBodyEnv } from "./payload.js"
 import { runTransport } from "./transport.js"
 import { buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
@@ -35,6 +35,10 @@ export function buildExecArgs(config: TurnConfig, innerCmd: string, token: strin
   execArgs.push(config.containerId, "bash", "-c", innerCmd)
   return execArgs
 }
+
+/** Archive the body turn's prompt+output (debug level; jsonl-complete). Never crashes the turn. */
+const emitBodyExchange = (config: TurnConfig, output: string) =>
+  logExchange(config.char.name, "body", "act", config.prompt, output).pipe(Effect.catchAll(() => Effect.void))
 
 /**
  * Run one turn: build the payload, inject OAuth, exec inside the container,
@@ -72,7 +76,7 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
     // NOTE: runtimeTag is intentionally "claude" for both runtimes here, matching
     // pre-split behavior (Phase 1 is behavior-preserving). Phase 2 corrects the
     // tag for the opencode payload.
-    return yield* runTransport({
+    const result = yield* runTransport({
       command,
       normalize: normalizerFor(runtime),
       runtimeTag: "claude",
@@ -80,6 +84,8 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
       role: config.role,
       timeoutMs: config.timeoutMs,
     })
+    yield* emitBodyExchange(config, result.output)
+    return result
   }).pipe(
     Effect.mapError((e) =>
       e instanceof ClaudeError ? e : new ClaudeError("Process runner failed", e),
@@ -105,7 +111,7 @@ const runSdkWithStdin = (
 
     const command = Command.make("docker", ...execArgs).pipe(Command.stdin(stdin))
 
-    return yield* runTransport({
+    const result = yield* runTransport({
       command,
       normalize: normalizeSdk,
       runtimeTag: "sdk",
@@ -113,6 +119,8 @@ const runSdkWithStdin = (
       role: config.role,
       timeoutMs: config.timeoutMs,
     })
+    yield* emitBodyExchange(config, result.output)
+    return result
   }).pipe(
     Effect.mapError((e) => (e instanceof ClaudeError ? e : new ClaudeError("SDK runner failed", e))),
   )
@@ -199,6 +207,7 @@ export const runOpenCodeSessionTurn = (
       timeoutMs: config.timeoutMs,
       captureFromRaw: firstSessionId,
     })
+    yield* emitBodyExchange(config, result.output)
 
     const sessionId = result.sessionId ?? resume?.sessionId
     if (!sessionId) {

@@ -41,6 +41,13 @@ const SUPPRESS_RESULT_TOOLS = new Set(["Bash", "Read", "Glob", "Grep", "Write", 
 const toolUseRegistry = new Map<string, string>()
 const MAX_HEAD = 5
 const MAX_TAIL = 3
+const CONSOLE_LINE_LIMIT = 800
+
+/** Shorten one line for console display only; full text remains in events.jsonl. */
+function truncateLine(line: string): string {
+  if (line.length <= CONSOLE_LINE_LIMIT) return line
+  return `${line.slice(0, CONSOLE_LINE_LIMIT)} … (${line.length - CONSOLE_LINE_LIMIT} more chars — full in events.jsonl)`
+}
 
 function levelMarker(event: UnifiedEvent): string {
   const lvl = effectiveLevel(event)
@@ -54,12 +61,12 @@ export function renderEvent(event: UnifiedEvent): string[] {
 
   switch (event.kind) {
     case "system":
-      return event.message.split("\n").map(line => `${t} ${levelMarker(event)}${line}`)
+      return event.message.split("\n").map(line => `${t} ${levelMarker(event)}${truncateLine(line)}`)
 
     case "text": {
       const lines = event.text.split("\n").filter(l => l.trim().length > 0)
       const prefix = `${charName(event.character)}:`
-      return lines.map(line => `${prefix} ${line.trim()}`)
+      return lines.map(line => `${prefix} ${truncateLine(line.trim())}`)
     }
 
     case "thinking": {
@@ -101,8 +108,11 @@ export function renderEvent(event: UnifiedEvent): string[] {
     case "subagent_stop":
       return [`${colorFor(event.character)}<< subagent stop${RESET}`]
 
+    case "exchange":
+      return [`${t} ${levelMarker(event)}⟳ ${event.step} prompt=${event.prompt.length}c resp=${event.response.length}c`]
+
     case "error":
-      return [`${t} ${levelMarker(event)}error: ${event.message}`]
+      return [`${t} ${levelMarker(event)}${truncateLine(`error: ${event.message}`)}`]
   }
 }
 

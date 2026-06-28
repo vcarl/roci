@@ -187,7 +187,7 @@ export const runTransport = (input: TransportInput): Effect.Effect<
         yield* Fiber.join(streamFiber).pipe(Effect.catchAll(() => Effect.void))
         const stderr = yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.succeed("")))
         if (stderr && stderr.trim()) {
-          yield* logToConsole(input.char.name, input.role, `stderr: ${stderr.trim().slice(0, 500)}`)
+          yield* logToConsole(input.char.name, input.role, `stderr: ${stderr.trim()}`)
         }
         if (exitCode !== 0 && isAuthError(stderr)) {
           yield* logToConsole(input.char.name, input.role, "Auth error — token is invalid. Run 'claude setup-token' and update .oauth-token")
