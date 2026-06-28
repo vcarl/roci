@@ -1,14 +1,16 @@
 import { describe, it, expect } from "vitest"
 import { Effect, Layer, Stream } from "effect"
-import { Command } from "@effect/platform"
+import { Command, CommandExecutor } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
-import { buildExecArgs, runSdkTurn, runSdkSession, runOpenCodeSessionTurn, firstSessionId, sessionNotFoundMessage } from "./process-runner.js"
+import { buildExecArgs, runTurn, runSdkTurn, runSdkSession, runOpenCodeSessionTurn, firstSessionId, sessionNotFoundMessage } from "./process-runner.js"
 import { buildInnerCommand, openCodeBodyEnv } from "./payload.js"
 import type { TurnConfig } from "./types.js"
 import { runTransport } from "./transport.js"
 import { normalizeSdk } from "../../../logging/stream-normalizer.js"
 import { buildSdkStdin, taskLine, steerLine, endLine } from "./sdk-payload.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
+import type { UnifiedEvent } from "../../../logging/events.js"
 
 const base: TurnConfig = {
   containerId: "cabc",
@@ -174,5 +176,56 @@ describe("sessionNotFoundMessage", () => {
     expect(msg).toContain("resume")
     expect(msg).toContain("ses_abc")
     expect(msg).not.toBe(sessionNotFoundMessage())
+  })
+})
+
+// Fake process for stubbing CommandExecutor: zero output, immediate exit code 0.
+const fakeProcess = {
+  exitCode: Effect.succeed(0),
+  isRunning: Effect.succeed(false),
+  kill: () => Effect.void,
+  stderr: Stream.empty,
+  stdout: Stream.empty,
+  toJSON: () => ({}),
+  toString: () => "FakeProcess",
+} as unknown as CommandExecutor.Process
+
+// Stub executor: always returns fakeProcess; never actually runs docker.
+const StubExecutor = Layer.succeed(
+  CommandExecutor.CommandExecutor,
+  CommandExecutor.makeExecutor((_cmd) => Effect.succeed(fakeProcess) as never),
+)
+
+// Stub OAuthToken: returns a fixed token without any filesystem access.
+const StubOAuthToken = Layer.succeed(
+  OAuthToken,
+  OAuthToken.of({
+    getToken: Effect.succeed({ token: "stub-token", version: 0 }),
+    validateInContainer: () => Effect.succeed(true),
+  }),
+)
+
+describe("runTurn body exchange", () => {
+  it("emits a body exchange carrying the full task prompt", async () => {
+    const emitted: UnifiedEvent[] = []
+    const CapturingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) => Effect.sync(() => { emitted.push(event) }),
+      }),
+    )
+    const deps = Layer.mergeAll(CapturingLog, StubExecutor, StubOAuthToken)
+
+    await Effect.runPromise(
+      Effect.provide(
+        runTurn({ ...base, prompt: "# Task: do the thing" }),
+        deps,
+      ),
+    )
+
+    const ex = emitted.find((e) => e.kind === "exchange") as Extract<UnifiedEvent, { kind: "exchange" }> | undefined
+    expect(ex).toBeDefined()
+    expect(ex!.channel).toBe("body")
+    expect(ex!.prompt).toContain("# Task: do the thing")
   })
 })
