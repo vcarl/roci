@@ -54,3 +54,21 @@ describe("rate_limit end-to-end rendering", () => {
     expect(out).not.toContain("✖")
   })
 })
+
+describe("console line truncation", () => {
+  it("truncates a long system line for console but leaves the stored event full", () => {
+    const long = "Z".repeat(2000)
+    const event = { timestamp: "t", character: "c", system: "cortex", subsystem: "cortex", kind: "system" as const, message: `raw output: ${long}` }
+    const out = renderEvent(event).join("\n")
+    expect(out).toContain("… (") // truncation marker present
+    expect(out).toContain("full in events.jsonl")
+    expect(out.length).toBeLessThan(1200) // console line is shortened
+    expect(event.message).toBe(`raw output: ${long}`) // stored event UNCHANGED
+  })
+
+  it("does not truncate a short system line", () => {
+    const event = { timestamp: "t", character: "c", system: "s", subsystem: "s", kind: "system" as const, message: "short message" }
+    expect(renderEvent(event).join("\n")).toContain("short message")
+    expect(renderEvent(event).join("\n")).not.toContain("…")
+  })
+})
