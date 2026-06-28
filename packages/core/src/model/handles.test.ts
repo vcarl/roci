@@ -47,17 +47,21 @@ describe("DEFAULT_CORTEX_MODELS", () => {
   // chain-of-thought and intermittently hit finish=length with empty content
   // (directly observed: GLM-4.7-Flash failed 2/6 orient probes). Guard the
   // defaults for these structured-output tiers against regressing to a
-  // reasoning model. The conscious tier, by contrast, IS the deep-reasoner.
-  it("classifies conscious as a reasoning model and hindbrain/forebrain as not", () => {
-    expect(isReasoningModel(DEFAULT_CORTEX_MODELS.conscious.model)).toBe(true)
+  // reasoning model.
+  //
+  // The conscious tier is the designated deep-thinker, but as of
+  // gemma-4-31b-it-8bit it is an instruction-tuned model (no chain-of-thought
+  // regime), so isReasoningModel returns false for it too.
+  it("guards hindbrain/forebrain as non-reasoning; conscious (gemma-4-31b-it) is also not", () => {
     expect(isReasoningModel(DEFAULT_CORTEX_MODELS.hindbrain.model)).toBe(false)
     expect(isReasoningModel(DEFAULT_CORTEX_MODELS.forebrain.model)).toBe(false)
+    expect(isReasoningModel(DEFAULT_CORTEX_MODELS.conscious.model)).toBe(false)
   })
 
-  it("pins the unified Qwen3.5 ladder across the three tiers", () => {
+  it("pins hindbrain/forebrain to the Qwen3.5 ladder and conscious to gemma-4-31b-it", () => {
     expect(DEFAULT_CORTEX_MODELS.hindbrain.model).toBe("mlx-community/Qwen3.5-2B-4bit")
     expect(DEFAULT_CORTEX_MODELS.forebrain.model).toBe("mlx-community/Qwen3.5-9B-4bit")
-    expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("mlx-community/Qwen3.5-122B-A10B-4bit")
+    expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("mlx-community/gemma-4-31b-it-8bit")
   })
 
   // The Qwen3.5 ladder models are "thinking" models that emit chain-of-thought

@@ -3,9 +3,9 @@ import { MODEL_TIER_SPECS, resolveTierSpec } from "./model-tier-spec.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
 
 describe("MODEL_TIER_SPECS", () => {
-  it("pins conscious to the resident 122B on port 8083", () => {
+  it("pins conscious to the resident gemma-4-31b on port 8083", () => {
     const c = MODEL_TIER_SPECS.conscious
-    expect(c.model).toBe("mlx-community/Qwen3.5-122B-A10B-4bit")
+    expect(c.model).toBe("mlx-community/gemma-4-31b-it-8bit")
     expect(c.port).toBe(8083)
     expect(c.lifecycle).toBe("resident")
     expect(c.baseUrl).toBe("http://127.0.0.1:8083/v1")

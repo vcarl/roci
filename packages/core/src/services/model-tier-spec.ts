@@ -36,8 +36,8 @@ function specFor(
   return { tier, model: handle.model, port, baseUrl, spawnArgs: [], lifecycle, timeoutMs }
 }
 
-// The 122B can lose the cold-load race for minutes; the light tiers load in
-// seconds. Timeouts are generous headroom over observed cold-load times.
+// The conscious tier (gemma-4-31b) can lose the cold-load race for minutes;
+// the light tiers load in seconds. Timeouts are generous headroom over observed cold-load times.
 export const MODEL_TIER_SPECS: Readonly<Record<CortexTier, TierSpec>> = {
   hindbrain: specFor("hindbrain", 8081, "per-phase", 120_000),
   forebrain: specFor("forebrain", 8082, "per-phase", 180_000),

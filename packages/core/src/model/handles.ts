@@ -73,8 +73,9 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   //     there is no hard guarantee the model closes the JSON — no constrained
   //     decoding exists on this stack — but a generous budget removes the
   //     truncation that caused the failures.
-  // Only the conscious tier is the designated deep-reasoner (largest budget,
-  // smallest output schema); it omits the kwarg entirely so thinking stays ON.
+  // The conscious tier (decide/evaluate) omits chat_template_kwargs entirely —
+  // gemma-4-31b-it is an instruction model with no Qwen3.5-style enable_thinking
+  // gate, so no kwarg is needed or meaningful.
   hindbrain: {
     tier: "hindbrain",
     provider: "mlx",
@@ -104,10 +105,10 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
       extraBody: { chat_template_kwargs: { enable_thinking: true } },
     },
   },
-  // conscious (decide/evaluate) is the designated deep-reasoner: a reasoning
-  // model is appropriate here, and its larger 8192 budget + smaller output
-  // schema have held up in practice. The 122B-A10B MoE is the reasoning tier
-  // (see isReasoningModel); the dense 2B/9B siblings are not.
+  // conscious (decide/evaluate) is the designated deep-thinker. gemma-4-31b-it
+  // is a large instruction-tuned model — not a chain-of-thought reasoner like
+  // the former Qwen3.5-122B-A10B — so isReasoningModel returns false for it.
+  // The generous token budget gives headroom for multi-step decide/evaluate tasks.
   conscious: {
     tier: "conscious",
     provider: "mlx",
@@ -121,12 +122,15 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
  * Whether a model id denotes a reasoning ("thinking") model — one that spends
  * its token budget on an internal chain-of-thought before emitting a final
  * answer. The structured-output tiers (hindbrain/forebrain) must NOT be backed
- * by such a model (Bug B: they hit finish=length with empty content); the
- * conscious tier is deliberately the deep-reasoner.
+ * by such a model (Bug B: they hit finish=length with empty content).
  *
- * Classification is by name marker. Within the Qwen3.5 ladder the reasoning
- * member is the large 122B-A10B MoE; the dense small siblings (2B / 9B) are
- * plain generators. Known reasoning families outside the ladder are listed too.
+ * The conscious tier is the designated deep-thinker but is NOT required to be
+ * a reasoning model. As of gemma-4-31b-it-8bit it is instruction-tuned (no
+ * chain-of-thought regime), so isReasoningModel returns false for it.
+ *
+ * Classification is by name marker. Known reasoning families:
+ *   - Qwen3.5-122B-A10B MoE (the ladder's reasoning member; dense siblings are not)
+ *   - QwQ, DeepSeek-R1, Magistral, GLM-4.7-Flash
  *
  * This is only a classifier — it enforces nothing on its own. `mergeCortexModels`
  * applies overlays without consulting it, so an overlay can currently repoint a
