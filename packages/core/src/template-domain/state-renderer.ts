@@ -23,8 +23,8 @@
  *   (before and after plan steps) for diff tracking.
  * - `stateDiff()` should be deterministic and produce stable output
  *   for the same inputs.
- * - `logStateBar()` writes to stderr so it doesn't interfere with
- *   structured stdout output.
+ * - `formatStateBar()` returns a compact metric string that is emitted
+ *   through the leveled logging pipeline (no direct stderr writes).
  */
 
 import { Layer } from "effect";

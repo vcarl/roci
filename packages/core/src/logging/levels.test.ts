@@ -24,6 +24,15 @@ describe("classifyLevel", () => {
     expect(classifyLevel({ ...base, kind: "text", text: "x" })).toBe("info")
     expect(classifyLevel({ ...base, kind: "tool_use", tool: "bash", id: "1", input: {} })).toBe("info")
   })
+  it("maps tool_result to info", () => {
+    expect(classifyLevel({ ...base, kind: "tool_result", toolUseId: "1", text: "ok" })).toBe("info")
+  })
+  it("maps subagent_start to info", () => {
+    expect(classifyLevel({ ...base, kind: "subagent_start", description: "desc", data: {} })).toBe("info")
+  })
+  it("maps subagent_stop to info", () => {
+    expect(classifyLevel({ ...base, kind: "subagent_stop", data: {} })).toBe("info")
+  })
 })
 
 describe("effectiveLevel", () => {

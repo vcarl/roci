@@ -46,7 +46,7 @@ export function toUnifiedEvents(
       case "tool_result":
         return { ...base, kind: "tool_result", toolUseId: e.toolUseId, text: e.text }
       case "rate_limit":
-        return { ...base, kind: "error", message: `rate_limit: ${e.status}`, level: "warn" }
+        return { ...base, kind: "system", message: `rate_limit: ${e.status}`, level: "warn" }
       case "error":
         return { ...base, kind: "error", message: e.message }
       case "passthrough":

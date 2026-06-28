@@ -1,6 +1,4 @@
-import { SituationType } from "./types.js"
-import type { GameState, Situation } from "./types.js"
-import { tag } from "@roci/core/logging/console-renderer.js"
+import type { GameState } from "./types.js"
 
 /** Extract a compact snapshot of key state values for logging. */
 export function snapshot(state: GameState): Record<string, unknown> {
@@ -81,37 +79,4 @@ export function stateDiff(
   }
 
   return lines.length > 0 ? lines.join("\n") : "(no changes detected)"
-}
-
-/** Compact state bar logged every tick to console. */
-export function logStateBar(character: string, state: GameState, situation: Situation): void {
-  const { player, ship, nearby, inCombat, travelProgress } = state
-  const hp = `${ship.hull}/${ship.max_hull}hp`
-  const sh = ship.max_shield > 0 ? ` ${ship.shield}/${ship.max_shield}sh` : ""
-  const fuel = `${ship.fuel}/${ship.max_fuel}fuel`
-  const cargo = `${ship.cargo_used}/${ship.cargo_capacity}cargo`
-  const cr = `${player.credits}cr`
-
-  const parts: string[] = [hp + sh, fuel, cargo, cr]
-
-  if (nearby.length > 0) {
-    parts.push(`${nearby.length} nearby`)
-  }
-  if (inCombat) {
-    parts.push("COMBAT")
-  }
-  if (travelProgress) {
-    const pct = Math.round(travelProgress.travel_progress * 100)
-    parts.push(`${travelProgress.travel_type} -> ${travelProgress.travel_destination} ${pct}%`)
-  }
-
-  const situLabel = situation.type === SituationType.Docked
-    ? `docked@${player.docked_at_base ?? "base"}`
-    : situation.type === SituationType.InTransit
-      ? "in_transit"
-      : situation.type === SituationType.InCombat
-        ? "COMBAT"
-        : `space`
-
-  console.log(`${tag(character, "tick")} ${state.tick} | ${situLabel} | ${parts.join(" | ")}`)
 }

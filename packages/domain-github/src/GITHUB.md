@@ -73,7 +73,7 @@ Implements the three-method interface:
 - `snapshot` -- Compact view: repo name, issue/PR counts, CI status, tick.
 - `richSnapshot` -- Per-issue and per-PR detail for diff computation.
 - `stateDiff` -- Detects changes in issue counts, PR counts, CI status, labels, assignees, reviews.
-- `logStateBar` -- Compact status line: repo count, issue count, PR count, CI failures.
+- `formatStateBar` -- Compact status line: repo count, issue count, PR count, CI failures.
 
 ### SkillRegistry
 

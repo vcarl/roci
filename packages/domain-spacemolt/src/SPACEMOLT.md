@@ -85,7 +85,7 @@ Implements the three-method interface:
 - `snapshot` -- Compact: situation type, location, fuel/hull ratios, cargo, combat flag.
 - `richSnapshot` -- Extended detail for diff computation.
 - `stateDiff` -- Detects changes in location, fuel, hull, cargo, combat state.
-- `logStateBar` -- Status line: situation type, fuel %, hull %, cargo usage.
+- `formatStateBar` -- Status line: situation type, fuel %, hull %, cargo usage.
 
 ### SkillRegistry
 

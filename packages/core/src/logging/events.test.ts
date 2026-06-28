@@ -29,3 +29,14 @@ describe("renderEvent visibility", () => {
     expect(out).toContain("⚠")
   })
 })
+
+describe("rate_limit end-to-end rendering", () => {
+  it("renders rate_limit with ⚠ and message, no error: or ✖", () => {
+    const [e] = toUnifiedEvents([{ type: "rate_limit", status: "throttled" }], "c", "body", "claude")
+    const out = renderEvent(e).join("")
+    expect(out).toContain("⚠")
+    expect(out).toContain("rate_limit: throttled")
+    expect(out).not.toContain("error:")
+    expect(out).not.toContain("✖")
+  })
+})
