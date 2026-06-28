@@ -64,7 +64,7 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
     const redactedArgs = execArgs.map((a) =>
       a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
     )
-    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
+    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`, "debug")
 
     const promptStream = Stream.encodeText(Stream.make(config.prompt))
     const command = Command.make("docker", ...execArgs).pipe(Command.stdin(promptStream))
@@ -101,7 +101,7 @@ const runSdkWithStdin = (
     const redactedArgs = execArgs.map((a) =>
       a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
     )
-    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
+    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`, "debug")
 
     const command = Command.make("docker", ...execArgs).pipe(Command.stdin(stdin))
 
@@ -180,7 +180,7 @@ export const runOpenCodeSessionTurn = (
     const redactedArgs = execArgs.map((a) =>
       a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
     )
-    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`)
+    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`, "debug")
 
     // opencode `run` blocks at init reading stdin when stdin is an open pipe with no
     // EOF: `docker exec -i` (buildExecArgs) keeps stdin open, and Effect does not close

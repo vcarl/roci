@@ -133,16 +133,6 @@ function stateDiff(
   return changes.length > 0 ? changes.join("; ") : "(no changes detected)"
 }
 
-function logStateBar(name: string, metrics: Record<string, string | number | boolean>): void {
-  const parts: string[] = []
-  if (metrics.totalRepos !== undefined) parts.push(`repos:${metrics.totalRepos}`)
-  if (metrics.openIssues !== undefined) parts.push(`issues:${metrics.openIssues}`)
-  if (metrics.openPRs !== undefined) parts.push(`PRs:${metrics.openPRs}`)
-  if (metrics.ciFailingRepos !== undefined && Number(metrics.ciFailingRepos) > 0) parts.push(`CI-fail:${metrics.ciFailingRepos}`)
-  const line = `[${name}] ${parts.join(" ")}`
-  process.stderr.write(`\r${line}`)
-}
-
 const gitHubStateRenderer: StateRenderer = {
   snapshot(state) {
     return snapshot(state as GitHubState)
@@ -153,8 +143,13 @@ const gitHubStateRenderer: StateRenderer = {
   stateDiff(before, after) {
     return stateDiff(before, after)
   },
-  logStateBar(name, metrics) {
-    logStateBar(name, metrics)
+  formatStateBar(metrics) {
+    const parts: string[] = []
+    if (metrics.totalRepos !== undefined) parts.push(`repos:${metrics.totalRepos}`)
+    if (metrics.openIssues !== undefined) parts.push(`issues:${metrics.openIssues}`)
+    if (metrics.openPRs !== undefined) parts.push(`PRs:${metrics.openPRs}`)
+    if (metrics.ciFailingRepos !== undefined && Number(metrics.ciFailingRepos) > 0) parts.push(`CI-fail:${metrics.ciFailingRepos}`)
+    return parts.join(" ")
   },
 }
 

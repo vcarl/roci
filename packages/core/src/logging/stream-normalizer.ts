@@ -79,11 +79,12 @@ export function normalizeOpenCode(raw: RawEvent): InternalEvent[] {
   }
 
   if (type === "tool_use") {
+    const state = part?.state as RawEvent | undefined
     return [{
       type: "tool_use",
       id: (part?.id as string) ?? "",
-      name: (part?.name as string) ?? "",
-      input: (part?.input as Record<string, unknown>) ?? {},
+      name: (part?.tool as string) ?? "",
+      input: (state?.input as Record<string, unknown>) ?? {},
     }]
   }
 

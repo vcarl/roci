@@ -154,6 +154,7 @@ export function runForebrain(
         config.char.name,
         "cortex",
         `tier=forebrain step=orient parse failure; raw output: ${truncated}`,
+        "warn",
       ).pipe(
         // A log-write failure must never crash the loop — swallow it.
         Effect.catchAll(() => Effect.void),

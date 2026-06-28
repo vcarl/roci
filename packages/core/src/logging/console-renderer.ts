@@ -1,4 +1,5 @@
 import type { UnifiedEvent } from "./events.js"
+import { effectiveLevel } from "./levels.js"
 
 const RESET = "\x1b[0m"
 const DIM = "\x1b[2m"
@@ -41,12 +42,19 @@ const toolUseRegistry = new Map<string, string>()
 const MAX_HEAD = 5
 const MAX_TAIL = 3
 
+function levelMarker(event: UnifiedEvent): string {
+  const lvl = effectiveLevel(event)
+  if (lvl === "error") return "✖ "
+  if (lvl === "warn") return "⚠ "
+  return ""
+}
+
 export function renderEvent(event: UnifiedEvent): string[] {
   const t = tag(event.character, event.subsystem)
 
   switch (event.kind) {
     case "system":
-      return event.message.split("\n").map(line => `${t} ${line}`)
+      return event.message.split("\n").map(line => `${t} ${levelMarker(event)}${line}`)
 
     case "text": {
       const lines = event.text.split("\n").filter(l => l.trim().length > 0)
@@ -94,7 +102,7 @@ export function renderEvent(event: UnifiedEvent): string[] {
       return [`${colorFor(event.character)}<< subagent stop${RESET}`]
 
     case "error":
-      return [`${t} ${DIM}error: ${event.message}${RESET}`]
+      return [`${t} ${levelMarker(event)}error: ${event.message}`]
   }
 }
 

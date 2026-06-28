@@ -163,7 +163,7 @@ const templateSituationClassifier: SituationClassifier = {
 			situation,
 			headline,
 			sections: buildSections(s, situation),
-			// Metrics flow into the state bar (logStateBar) and can be
+			// Metrics flow into the state bar (formatStateBar) and can be
 			// used by interrupt rules for quick numeric checks.
 			metrics: {
 				situationType: situation.type,
