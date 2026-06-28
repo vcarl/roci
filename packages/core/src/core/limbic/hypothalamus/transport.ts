@@ -149,6 +149,7 @@ export const runTransport = (input: TransportInput): Effect.Effect<
           input.char.name,
           input.role,
           `still running — no output for ${silentSeconds}s (awaiting model/tool)`,
+          "debug",
         ),
       ).pipe(Effect.fork)
       // Guarantee no leaked heartbeat fiber on any exit path (failure, defect,
