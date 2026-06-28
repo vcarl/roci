@@ -12,8 +12,9 @@
  *      compares two rich snapshots and produces a human-readable
  *      string showing what changed.
  *
- *   3. **Console** — `logStateBar()` writes a compact one-line
- *      summary to stderr for live monitoring.
+ *   3. **Console** — `formatStateBar()` returns a compact one-line
+ *      metric string; the cortex loop emits it through the leveled
+ *      logging pipeline.
  *
  * ## Design guidance
  *
@@ -126,11 +127,11 @@ const templateStateRenderer: StateRenderer = {
 	/**
 	 * Compact console output line.
 	 *
-	 * Called per tick for live monitoring. Write to stderr to avoid
-	 * interfering with structured output. Use \r to overwrite the
-	 * current line for a live-updating dashboard effect.
+	 * Called per tick for live monitoring. Returns the metric body string
+	 * (no name prefix); empty string when there are no parts. Emitted
+	 * through the leveled logging pipeline by the cortex loop.
 	 */
-	logStateBar(name, metrics) {
+	formatStateBar(metrics) {
 		const parts: string[] = [];
 		if (metrics.situationType) parts.push(`${metrics.situationType}`);
 		if (typeof metrics.pendingCount === "number") parts.push(`pending:${metrics.pendingCount}`);
@@ -138,7 +139,7 @@ const templateStateRenderer: StateRenderer = {
 			parts.push(`done:${metrics.completedThisSession}`);
 		if (metrics.hasUrgentDeadline) parts.push("URGENT");
 		if (metrics.isOverloaded) parts.push("OVERLOADED");
-		process.stderr.write(`\r[${name}] ${parts.join(" | ")}`);
+		return parts.join(" | ");
 	},
 };
 

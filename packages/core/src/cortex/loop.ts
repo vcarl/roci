@@ -160,7 +160,8 @@ export const runCortex = (config: CortexLoopConfig) =>
 
       // 2. Classify + critical interrupts (the amygdala cuts the line).
       const summary = classifier.summarize(state as never)
-      renderer.logStateBar(config.char.name, summary.metrics)
+      const bar = renderer.formatStateBar(summary.metrics)
+      if (bar) yield* logToConsole(config.char.name, "state", bar)
       const criticals = interrupts.criticals(state as never, summary.situation)
       if (criticals.length > 0) {
         yield* logToConsole(

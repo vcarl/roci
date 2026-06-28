@@ -21,16 +21,14 @@ const spaceMoltStateRenderer: StateRenderer = {
     return stateDiff(before, after)
   },
 
-  logStateBar(name, metrics) {
-    // Reconstruct minimal state info from metrics for the existing logStateBar function
-    // The SpaceMolt logStateBar needs full state, so we just print key metrics
+  formatStateBar(metrics) {
     const parts: string[] = []
     if (metrics.situationType) parts.push(`${metrics.situationType}`)
     if (metrics.inCombat) parts.push("COMBAT")
     if (typeof metrics.fuel === "number") parts.push(`fuel:${Math.round(metrics.fuel * 100)}%`)
     if (typeof metrics.hull === "number") parts.push(`hull:${Math.round(metrics.hull * 100)}%`)
     if (metrics.cargoUsed !== undefined) parts.push(`cargo:${metrics.cargoUsed}/${metrics.cargoCapacity}`)
-    process.stderr.write(`\r[${name}] ${parts.join(" ")}`)
+    return parts.join(" ")
   },
 }
 
