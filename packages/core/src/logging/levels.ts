@@ -14,6 +14,7 @@ export function classifyLevel(event: UnifiedEvent): LogLevel {
     case "error":
       return "error"
     case "thinking":
+    case "exchange":
       return "debug"
     case "system":
     case "text":

@@ -30,6 +30,20 @@ describe("renderEvent visibility", () => {
   })
 })
 
+describe("exchange rendering", () => {
+  it("renders an exchange as a compact one-liner (sizes, not full content)", () => {
+    const out = renderEvent({
+      timestamp: "t", character: "c", system: "cortex", subsystem: "orient",
+      kind: "exchange", channel: "cortex", step: "orient",
+      prompt: "x".repeat(1200), response: "y".repeat(9000),
+    }).join("\n")
+    expect(out).toContain("orient")
+    expect(out).toContain("prompt=1200c")
+    expect(out).toContain("resp=9000c")
+    expect(out).not.toContain("yyyy") // full response must NOT appear on console
+  })
+})
+
 describe("rate_limit end-to-end rendering", () => {
   it("renders rate_limit with ⚠ and message, no error: or ✖", () => {
     const [e] = toUnifiedEvents([{ type: "rate_limit", status: "throttled" }], "c", "body", "claude")

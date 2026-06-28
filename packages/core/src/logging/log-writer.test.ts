@@ -4,7 +4,7 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { FileSystem } from "@effect/platform"
 import * as os from "node:os"
 import * as path from "node:path"
-import { CharacterLog, CharacterLogLive, logToConsole } from "./log-writer.js"
+import { CharacterLog, CharacterLogLive, logToConsole, logExchange } from "./log-writer.js"
 import { ProjectRoot } from "../services/ProjectRoot.js"
 
 let tmp: string
@@ -60,5 +60,18 @@ describe("CharacterLog emit", () => {
     process.env.LOG_LEVEL = "info"
     await run(logToConsole("c", "cortex", "decided"))
     expect(logSpy.mock.calls.flat().some((a) => String(a).includes("decided"))).toBe(true)
+  })
+
+  it("logExchange writes the full prompt and response to jsonl at debug", async () => {
+    process.env.LOG_LEVEL = "info"
+    const contents = await readJsonl(
+      logExchange("c", "cortex", "orient", "P".repeat(50), "R".repeat(5000), { tier: "forebrain" }),
+    )
+    const line = JSON.parse(contents.trim().split("\n").pop() as string)
+    expect(line.kind).toBe("exchange")
+    expect(line.level).toBe("debug")
+    expect(line.prompt.length).toBe(50)
+    expect(line.response.length).toBe(5000) // full, untruncated
+    expect(line.meta).toEqual({ tier: "forebrain" })
   })
 })

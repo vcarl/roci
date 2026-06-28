@@ -101,6 +101,9 @@ export function renderEvent(event: UnifiedEvent): string[] {
     case "subagent_stop":
       return [`${colorFor(event.character)}<< subagent stop${RESET}`]
 
+    case "exchange":
+      return [`${t} ${levelMarker(event)}⟳ ${event.step} prompt=${event.prompt.length}c resp=${event.response.length}c`]
+
     case "error":
       return [`${t} ${levelMarker(event)}error: ${event.message}`]
   }
