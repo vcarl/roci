@@ -44,6 +44,8 @@ Consider:
 - What context from the agent's identity (background, values, diary) is relevant right now? Don't surface everything — surface what matters for the current situation.
 - What metrics or quantitative signals would help the decision-maker calibrate?
 
+Assess not just the world but the agent's own footing in it. If it doesn't yet know its tools, the world's affordances, or the paths open to it, say so — surface those gaps as an optional **"Open questions"** entry inside `sections[]` — and set `confidence` accordingly. A cold start (little grounding in the live world) is normally **low** confidence.
+
 Distinguish confirmed facts (directly grounded in the events and state above) from inferences. Explicitly flag uncertainty — never assert threats, intentions, or conclusions the provided data does not support. When signals are ambiguous, say so rather than manufacturing certainty.
 
 You say "here is what's happening" — never "here is what you should do."
@@ -61,6 +63,7 @@ Respond with ONLY this JSON:
   ],
   "whatChanged": "<delta since last orientation>",
   "emotionalState": "<emoji string — carried forward from observations, potentially amplified>",
+  "confidence": "low | medium | high",
   "metrics": {
     "<key>": "<value>"
   }

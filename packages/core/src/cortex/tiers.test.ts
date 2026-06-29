@@ -199,6 +199,20 @@ describe("runForebrain", () => {
     // The log should identify tier=forebrain and step=orient.
     expect(messages.some((m) => /forebrain/i.test(m) && /orient/i.test(m))).toBe(true)
   })
+
+  it("fills confidence from the fallback when the model omits it (merge default = low)", async () => {
+    const out = await Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        Layer.mergeAll(
+          fixedClient('{"headline":"x","sections":[],"whatChanged":"y","emotionalState":"😐","metrics":{}}'),
+          recordingService([]),
+          silentLog,
+        ),
+      ),
+    )
+    expect(out.confidence).toBe("low")
+  })
 })
 
 // Regression for the live cortex crash: the tolerant JSON extractor now
@@ -271,6 +285,7 @@ describe("runConsciousDecide — does not crash on malformed orient", () => {
     headline: "h",
     whatChanged: "w",
     emotionalState: "😐",
+    confidence: "low" as const,
     metrics: {},
   }
 

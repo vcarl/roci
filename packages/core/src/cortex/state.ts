@@ -55,6 +55,54 @@ export function decideSteps(decide: DecideResult | null): readonly PlanStep[] {
 }
 
 /**
+ * Returns true when a discover decision has a well-formed payload: a `discover`
+ * object whose `questions` is a non-empty array.
+ *
+ * Mirrors decideSteps: the static type says `discover` is non-optional on the
+ * discover variant, but a small model can emit `{"decision":"discover","reasoning":"x"}`
+ * with no `discover` key. The cast to unknown pierces the static type so we can do
+ * the runtime check without TS complaining about a redundant optional-chain.
+ * The loop-branch guard uses this to degrade safely instead of crashing in
+ * discoverToPlan when `decide.discover` is undefined at runtime.
+ */
+export function isWellFormedDiscover(
+  decide: DecideResult | null,
+): decide is Extract<DecideResult, { decision: "discover" }> {
+  if (!decide || decide.decision !== "discover") return false
+  const raw = decide as unknown as { discover?: { questions?: unknown } }
+  return (
+    raw.discover !== undefined &&
+    Array.isArray(raw.discover.questions) &&
+    (raw.discover.questions as unknown[]).length > 0
+  )
+}
+
+/**
+ * Translate a `discover` decision into a synthetic one-step `plan` decision so it
+ * reuses the existing step→evaluate execution path (hybrid-C — no new loop
+ * machinery). The single step's `task` is "discover"; the questions become its
+ * goal; tier and timeoutTicks carry straight through to the step's fields.
+ */
+export function discoverToPlan(
+  decide: Extract<DecideResult, { decision: "discover" }>,
+): DecideResult {
+  return {
+    decision: "plan",
+    reasoning: decide.reasoning,
+    steps: [
+      {
+        task: "discover",
+        goal: `Discover your world. Answer: ${decide.discover.questions.join("; ")}`,
+        tier: decide.discover.tier,
+        successCondition:
+          "Findings on environment, capabilities, and available paths reported back.",
+        timeoutTicks: decide.discover.timeoutTicks,
+      },
+    ],
+  }
+}
+
+/**
  * Literal marker the conscious agent is instructed to print when it has fully
  * met the current step's success condition. 4b ships the mechanism; phrasing
  * robustness tuning and the escalation-request marker are Phase 4c.

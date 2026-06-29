@@ -31,6 +31,9 @@ export interface OrientResult {
   readonly whatChanged: string
   /** Emotional state — carried forward from observe, potentially amplified. */
   readonly emotionalState: string
+  /** Self-assessed footing in the world. Low = flying blind (unknown tools /
+   *  affordances / paths) → biases the decider toward `discover`. */
+  readonly confidence: "low" | "medium" | "high"
   readonly metrics: Record<string, string | number | boolean>
 }
 
@@ -58,6 +61,15 @@ export type DecideResult =
   | { readonly decision: "continue"; readonly reasoning: string }
   | { readonly decision: "wait"; readonly reasoning: string; readonly wait: WaitState }
   | { readonly decision: "terminate"; readonly reasoning: string; readonly summary: string }
+  | {
+      readonly decision: "discover"
+      readonly reasoning: string
+      readonly discover: {
+        readonly questions: ReadonlyArray<string>
+        readonly tier: "fast" | "smart"
+        readonly timeoutTicks: number
+      }
+    }
 
 /**
  * Judgment on whether a step succeeded.

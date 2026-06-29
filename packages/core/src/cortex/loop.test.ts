@@ -640,6 +640,135 @@ describe("runCortex (conscious-session executor)", () => {
     expect(result._tag).toBe("Completed")
   }, 20_000)
 
+  it("a discover decision becomes a one-step 'discover' plan that executes", async () => {
+    const capturedPrompts: string[] = []
+    const discoverClient = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return {
+                text: '{"judgment":"succeeded","reasoning":"learned","transition":{"transition":"terminate","summary":"done"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment)
+              return {
+                text: '{"headline":"cold start — unknown world","sections":[],"whatChanged":"x","emotionalState":"😰","confidence":"low","metrics":{}}',
+                raw: {},
+              }
+            // decide → discover
+            return {
+              text: '{"decision":"discover","reasoning":"flying blind","discover":{"questions":["what can my CLI do?","where are the docs?"],"tier":"fast","timeoutTicks":2}}',
+              raw: {},
+            }
+          }),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => {
+      capturedPrompts.push(_config.prompt)
+      return {
+        result: { output: `probed ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+        sessionId: "ses_discover",
+      }
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "boot" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(discoverClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The executed step was the synthetic discover step (formatStepTask emits "# Task: discover").
+    expect(capturedPrompts.some((p) => p.includes("# Task: discover"))).toBe(true)
+  }, 20_000)
+
+  it("malformed discover decision (missing discover object) degrades gracefully without crashing", async () => {
+    // Regression guard: a model can emit `{"decision":"discover","reasoning":"x"}` with no
+    // `discover` key. Without the loop-branch guard, discoverToPlan crashes with
+    // TypeError: Cannot read properties of undefined (reading 'questions').
+    // With the guard the loop falls through (no plan set this tick) and continues;
+    // a follow-up decide (triggered by a second event) returns terminate → Completed.
+    let decideCallCount = 0
+    const malformedDiscoverClient = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return {
+                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"done"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment)
+              return {
+                text: '{"headline":"cold start","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            // decide: first call is malformed discover (no discover payload), second is terminate
+            decideCallCount++
+            if (decideCallCount === 1)
+              return { text: '{"decision":"discover","reasoning":"x"}', raw: {} }
+            return { text: '{"decision":"terminate","reasoning":"done","summary":"all done"}', raw: {} }
+          }),
+      }),
+    )
+    const capturedPrompts: string[] = []
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => {
+      capturedPrompts.push(_config.prompt)
+      return {
+        result: { output: `probed ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+        sessionId: "ses_malformed",
+      }
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "boot" })
+      // Second event triggers a second orient → decide (returns terminate).
+      yield* Effect.forkDaemon(
+        Effect.sleep("8 millis").pipe(
+          Effect.andThen(Queue.offer(events, { type: "retry" })),
+        ),
+      )
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(malformedDiscoverClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    // Must NOT crash — degrades gracefully, loop continues past the malformed decision.
+    expect(result._tag).toBe("Completed")
+    // No discover step was executed (no plan was set from the malformed discover).
+    expect(capturedPrompts.some((p) => p.includes("# Task: discover"))).toBe(false)
+  }, 20_000)
+
   it("directive text is laundered (model-generated forebrain output, not raw event text)", async () => {
     // Verify that what onSteer receives is the formatted forebrain orient,
     // not the raw event string ("{ type: 'combat' }").

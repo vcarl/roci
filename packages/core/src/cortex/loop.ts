@@ -34,6 +34,8 @@ import {
   shouldForceOrient,
   planSteps,
   decideSteps,
+  discoverToPlan,
+  isWellFormedDiscover,
   formatStepTask,
   formatExecutionReport,
   formatSteerDirective,
@@ -241,6 +243,16 @@ export const runCortex = (config: CortexLoopConfig) =>
             cortex.waitState = decide.wait
             if (decide.wait.disposition === "terminate")
               return { _tag: "Completed" as const, finalState: state }
+          } else if (decide.decision === "discover" && isWellFormedDiscover(decide)) {
+            // Discover reuses the plan/step path: translate to a synthetic
+            // one-step plan and run it through the existing step executor.
+            // isWellFormedDiscover guards against a partial model output
+            // (`{"decision":"discover"}` with no `discover` object or a non-array
+            // `questions`). A malformed payload falls through here (no plan set
+            // this tick) — same graceful degradation as the empty-steps plan guard.
+            cortex.currentPlan = discoverToPlan(decide)
+            cortex.currentStepIndex = 0
+            planHeadline = orient.headline
           } else if (decideSteps(decide).length > 0) {
             // decideSteps is array-safe: a parseable `{"decision":"plan"}` with
             // a missing/non-array/empty `steps` yields [] here (parseOr's

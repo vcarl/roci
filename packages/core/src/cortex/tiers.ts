@@ -111,6 +111,7 @@ const orientFallback = (emotionalWeight: string): OrientResult => ({
   sections: [],
   whatChanged: "Unknown — forebrain could not parse",
   emotionalState: emotionalWeight,
+  confidence: "low",
   metrics: {},
 })
 
@@ -181,6 +182,7 @@ export function runConsciousDecide(
     headline: orient.headline,
     whatChanged: orient.whatChanged,
     emotionalState: orient.emotionalState,
+    confidence: orient.confidence,
     // Defensive: a malformed OrientResult (non-array/absent `sections`) must
     // never crash the decide builder. runForebrain normalizes this, but guard
     // here too in case an orient result is constructed elsewhere.

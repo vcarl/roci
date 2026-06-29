@@ -5,6 +5,8 @@ import {
   formatStepTask,
   planSteps,
   decideSteps,
+  discoverToPlan,
+  isWellFormedDiscover,
   STEP_DONE_MARKER,
   detectCompletion,
   formatSteerDirective,
@@ -124,6 +126,7 @@ describe("formatSteerDirective", () => {
     headline: "Login flow broken after auth refactor",
     whatChanged: "OAuth redirect URL changed",
     emotionalState: "😟",
+    confidence: "medium",
     sections: [
       { id: "s1", heading: "Impact", body: "Users cannot log in." },
       { id: "s2", heading: "Priority", body: "Fix immediately." },
@@ -154,5 +157,67 @@ describe("formatStepTask (extended with marker)", () => {
       "fixing bugs",
     )
     expect(task).toContain(STEP_DONE_MARKER)
+  })
+})
+
+describe("discoverToPlan", () => {
+  it("translates a discover decision into a single-step discover plan", () => {
+    const decide = {
+      decision: "discover" as const,
+      reasoning: "flying blind at cold start",
+      discover: {
+        questions: ["what can my CLI do?", "where are the docs?"],
+        tier: "fast" as const,
+        timeoutTicks: 3,
+      },
+    }
+    const plan = discoverToPlan(decide)
+    const steps = planSteps(plan)
+    expect(steps).toHaveLength(1)
+    expect(steps[0].task).toBe("discover")
+    expect(steps[0].tier).toBe("fast")
+    expect(steps[0].timeoutTicks).toBe(3)
+    expect(steps[0].goal).toContain("what can my CLI do?")
+    expect(steps[0].goal).toContain("where are the docs?")
+    expect(steps[0].successCondition.length).toBeGreaterThan(0)
+  })
+})
+
+describe("isWellFormedDiscover — shape-safe discover guard", () => {
+  it("returns true for a well-formed discover decision", () => {
+    const decide: DecideResult = {
+      decision: "discover",
+      reasoning: "x",
+      discover: { questions: ["q1"], tier: "fast", timeoutTicks: 2 },
+    }
+    expect(isWellFormedDiscover(decide)).toBe(true)
+  })
+
+  it("returns false when discover object is missing (the crash scenario)", () => {
+    const malformed = { decision: "discover", reasoning: "x" } as unknown as DecideResult
+    expect(isWellFormedDiscover(malformed)).toBe(false)
+  })
+
+  it("returns false when questions is not an array", () => {
+    const malformed = {
+      decision: "discover",
+      reasoning: "x",
+      discover: { questions: "soon", tier: "fast", timeoutTicks: 2 },
+    } as unknown as DecideResult
+    expect(isWellFormedDiscover(malformed)).toBe(false)
+  })
+
+  it("returns false when questions is an empty array", () => {
+    const malformed = {
+      decision: "discover",
+      reasoning: "x",
+      discover: { questions: [], tier: "fast", timeoutTicks: 2 },
+    } as unknown as DecideResult
+    expect(isWellFormedDiscover(malformed)).toBe(false)
+  })
+
+  it("returns false for non-discover decisions and null", () => {
+    expect(isWellFormedDiscover({ decision: "continue", reasoning: "x" })).toBe(false)
+    expect(isWellFormedDiscover(null)).toBe(false)
   })
 })
