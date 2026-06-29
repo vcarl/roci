@@ -30,15 +30,14 @@ describe("DEFAULT_CORTEX_MODELS", () => {
     }
   })
 
-  // Bug B defense-in-depth: the local tiers may be backed by reasoning models
-  // that spend tokens on chain-of-thought. Without a generous max_tokens budget
-  // they can exhaust the server default before emitting a final answer. Pin a
-  // budget so reasoning models have room to produce `content`.
-  it("pins a generous maxTokens budget on every local tier", () => {
-    for (const tier of ["hindbrain", "forebrain", "conscious"] as const) {
-      const h = DEFAULT_CORTEX_MODELS[tier]
-      expect(h.params?.maxTokens).toBeGreaterThanOrEqual(2048)
-    }
+  // Every tier must declare an explicit maxTokens so the server default can never
+  // silently truncate output. Forebrain thinking is OFF: 1024 is ~1.8x the observed
+  // max for thinking-off orient responses (326-579 tokens). Hindbrain is 4096;
+  // conscious is 16384.
+  it("pins an explicit maxTokens budget on every local tier", () => {
+    expect(DEFAULT_CORTEX_MODELS.hindbrain.params?.maxTokens).toBeGreaterThanOrEqual(1024)
+    expect(DEFAULT_CORTEX_MODELS.forebrain.params?.maxTokens).toBe(1024)
+    expect(DEFAULT_CORTEX_MODELS.conscious.params?.maxTokens).toBeGreaterThanOrEqual(1024)
   })
 
   // Run-2 QA finding: hindbrain (observe) and forebrain (orient) must emit a
@@ -64,24 +63,20 @@ describe("DEFAULT_CORTEX_MODELS", () => {
     expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("mlx-community/gemma-4-31b-it-8bit")
   })
 
-  // The Qwen3.5 ladder models are "thinking" models that emit chain-of-thought
-  // by default and can exhaust their token budget before producing the required
-  // JSON (finish=length, content=null → "Orient parse failure" every tick).
-  // Their chat templates gate reasoning on an `enable_thinking` kwarg (default
-  // ON); mlx_lm.server forwards `chat_template_kwargs` from the request body
-  // into the template (client.ts spreads `...handle.params.extraBody`).
-  //
-  // The two structured-output tiers handle this differently:
-  //   - hindbrain DISABLES thinking so the 2B model emits JSON directly.
-  //   - forebrain KEEPS thinking ON (orient benefits from reasoning) and instead
-  //     relies on a large maxTokens budget so CoT + JSON both fit, plus the
-  //     tolerant JSON extractor to recover the trailing object.
-  it("disables thinking on hindbrain but keeps it on for forebrain", () => {
+  // The Qwen3.5 ladder models are "thinking" models (enable_thinking defaults ON).
+  // Measured across 5 orient scenarios (blind-judged): thinking-ON ran 3,640-16,384
+  // tokens (41-213s); on complex multi-threaded inputs the monologue hit the cap
+  // (finish=length) and never emitted closing JSON — a hard parse failure. This mlx
+  // stack has NO constrained decoding to prevent it. Thinking-OFF produced valid JSON
+  // every run (326-579 tokens, 4-7s) and was equal-or-better on 4 of 5 scenarios.
+  // Both structured-output tiers now DISABLE thinking; ambiguity-discipline is
+  // recovered in the orient prompt instead of the CoT monologue.
+  it("disables thinking on both hindbrain and forebrain", () => {
     expect(DEFAULT_CORTEX_MODELS.hindbrain.params?.extraBody).toEqual({
       chat_template_kwargs: { enable_thinking: false },
     })
     expect(DEFAULT_CORTEX_MODELS.forebrain.params?.extraBody).toEqual({
-      chat_template_kwargs: { enable_thinking: true },
+      chat_template_kwargs: { enable_thinking: false },
     })
     // Drill the nested shape explicitly so a regression in the exact path the
     // chat template reads is caught.
@@ -92,7 +87,7 @@ describe("DEFAULT_CORTEX_MODELS", () => {
       | { enable_thinking?: boolean }
       | undefined
     expect(hindKwargs?.enable_thinking).toBe(false)
-    expect(foreKwargs?.enable_thinking).toBe(true)
+    expect(foreKwargs?.enable_thinking).toBe(false)
   })
 
   // conscious (decide/evaluate) is the designated deep-reasoner and must KEEP

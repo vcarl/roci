@@ -44,6 +44,8 @@ Consider:
 - What context from the agent's identity (background, values, diary) is relevant right now? Don't surface everything — surface what matters for the current situation.
 - What metrics or quantitative signals would help the decision-maker calibrate?
 
+Distinguish confirmed facts (directly grounded in the events and state above) from inferences. Explicitly flag uncertainty — never assert threats, intentions, or conclusions the provided data does not support. When signals are ambiguous, say so rather than manufacturing certainty.
+
 You say "here is what's happening" — never "here is what you should do."
 
 Respond with ONLY this JSON:

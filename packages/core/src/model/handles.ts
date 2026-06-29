@@ -56,23 +56,25 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   // every tick (parseOr otherwise degrades to a "parse failure" fallback). The
   // Qwen3.5 ladder models are "thinking" models: by default they emit a
   // chain-of-thought and can exhaust the token budget before producing the
-  // required JSON (finish=length, content=null → "Orient parse failure" every
-  // tick). Their chat templates gate reasoning on an `enable_thinking` kwarg
-  // (default ON); mlx_lm.server forwards `chat_template_kwargs` from the request
-  // body into the template. This rides the existing `extraBody` plumbing —
-  // client.ts spreads `...handle.params.extraBody` verbatim into the request body.
+  // required JSON (finish=length, content=null → parse failure every tick). Their
+  // chat templates gate reasoning on an `enable_thinking` kwarg (default ON);
+  // mlx_lm.server forwards `chat_template_kwargs` from the request body into the
+  // template. This rides the existing `extraBody` plumbing — client.ts spreads
+  // `...handle.params.extraBody` verbatim into the request body.
   //
-  // The two structured-output tiers handle this differently:
-  //   - hindbrain DISABLES thinking (`enable_thinking: false`) so the small 2B
-  //     model emits JSON directly (live-probed: finish=stop, content present, no
-  //     reasoning monologue). Observe is mechanical and gains nothing from CoT.
-  //   - forebrain KEEPS thinking ON. Orient benefits from reasoning, so instead
-  //     of suppressing CoT we give it a large token budget (see below) so the
-  //     monologue AND the trailing JSON both fit, then recover the JSON with the
-  //     tolerant extractor (parse.ts firstBalancedObject). This is best-effort:
-  //     there is no hard guarantee the model closes the JSON — no constrained
-  //     decoding exists on this stack — but a generous budget removes the
-  //     truncation that caused the failures.
+  // Measured across 5 orient scenarios (blind-judged): thinking-ON produced
+  // 3,640-16,384 tokens (41-213s); on the most complex scenario the monologue ran
+  // to the 16,384 cap (finish=length) and never closed the JSON — a hard orient
+  // failure. This mlx stack has NO constrained decoding, so no finite budget
+  // guarantees against the runaway. Thinking-OFF produced valid JSON every run
+  // (326-579 tokens, 4-7s) and was equal-or-better on 4 of 5 scenarios. The one
+  // ON advantage (careful hedging on ambiguous inputs) is now recovered via the
+  // orient prompt's epistemic-discipline instruction instead of the CoT monologue.
+  //
+  // Both structured-output tiers therefore DISABLE thinking:
+  //   - hindbrain (`enable_thinking: false`) — observe is mechanical, no CoT gain.
+  //   - forebrain (`enable_thinking: false`) — same decision after measurement;
+  //     prompt-level discipline replaces the monologue for ambiguity handling.
   // The conscious tier (decide/evaluate) omits chat_template_kwargs entirely —
   // gemma-4-31b-it is an instruction model with no Qwen3.5-style enable_thinking
   // gate, so no kwarg is needed or meaningful.
@@ -87,13 +89,13 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
       extraBody: { chat_template_kwargs: { enable_thinking: false } },
     },
   },
-  // forebrain (orient) intentionally differs from hindbrain: thinking stays ON
-  // because orient benefits from reasoning. The trade-off is budget — the CoT
-  // monologue plus the trailing JSON must BOTH fit in maxTokens or the response
-  // truncates (finish=length, JSON never emitted → "Orient parse failure"). The
-  // old 4096 was too tight: the monologue alone exhausted it. 16384 gives ample
-  // headroom; it is a tunable starting value (the context window is 262K, so the
-  // only real cost of a larger budget is per-tick latency, not capacity).
+  // forebrain (orient) — like hindbrain, thinking is now DISABLED. Measured:
+  // thinking-ON ran 41-213s and hit finish=length on complex inputs (no JSON
+  // emitted). Thinking-OFF is ~10x faster (4-7s, 326-579 tokens) and equal-or-
+  // better quality. maxTokens 1024 is ~1.8x the observed OFF maximum — ample
+  // headroom at ~11s warm, well inside the 300s client timeout even at contended
+  // 8 tok/s (~128s). Epistemic discipline (hedging on ambiguity) is enforced via
+  // the orient prompt, not the CoT monologue.
   forebrain: {
     tier: "forebrain",
     provider: "mlx",
@@ -101,8 +103,8 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
     model: "mlx-community/Qwen3.5-9B-4bit",
     params: {
       temperature: 0.5,
-      maxTokens: 16384,
-      extraBody: { chat_template_kwargs: { enable_thinking: true } },
+      maxTokens: 1024,
+      extraBody: { chat_template_kwargs: { enable_thinking: false } },
     },
   },
   // conscious (decide/evaluate) is the designated deep-thinker. gemma-4-31b-it
