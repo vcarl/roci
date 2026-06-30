@@ -1,7 +1,7 @@
 import { Effect, Fiber, Layer } from "effect"
 import { Docker, DockerError } from "@roci/core/services/Docker.js"
 import { runPhases } from "@roci/core/core/phase-runner.js"
-import { logToConsole } from "@roci/core/logging/log-writer.js"
+import { logToConsole, logBehavior, logSessionEnd } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { execSync } from "node:child_process"
@@ -84,6 +84,14 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
     const projectRoot = yield* ProjectRoot
     const docker = yield* Docker
 
+    const gitSha = yield* Effect.sync(() => {
+      try {
+        return execSync("git rev-parse --short HEAD", { stdio: "pipe" }).toString().trim()
+      } catch {
+        return "unknown"
+      }
+    })
+
     // Bring up the host long-term-memory embed server alongside the mlx tiers.
     // Placed HERE — the single chokepoint every start path funnels through
     // (`roci start` via startCommand AND bare `roci` via validateAndStart) — so
@@ -133,12 +141,17 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       const containerId = yield* ensureContainer(containerName, rd)
       containerIds.set(rd.name, containerId)
 
+      yield* logBehavior("orchestrator", "main", "provision", { type: "provision", component: "container", status: "ready", detail: containerName })
+
       // Provision the local conscious-tier provider at startup so the `local`
       // opencode provider exists before any dream (dreamCompression runs on it).
       // Idempotent; failure-tolerant — a provisioning failure only logs.
       yield* provisionConsciousProvider(containerId, DEFAULT_CORTEX_MODELS.conscious).pipe(
+        Effect.tap(() => logBehavior("orchestrator", "main", "provision", { type: "provision", component: "conscious_provider", status: "ready" })),
         Effect.catchAll((e) =>
-          logToConsole("orchestrator", "main", `conscious provider provisioning failed: ${e}`, "warn"),
+          logToConsole("orchestrator", "main", `conscious provider provisioning failed: ${e}`, "warn").pipe(
+            Effect.zipRight(logBehavior("orchestrator", "main", "provision", { type: "provision", component: "conscious_provider", status: "failed", detail: String(e) })),
+          ),
         ),
       )
 
@@ -153,8 +166,11 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       // exec; embedBaseUrl is the constant — no node-user or player-dir dependency.
       // Failure-tolerant: log loud and continue (long-term memory degrades).
       yield* provisionMemoryCli(containerId, { embedBaseUrl: DEFAULT_EMBED_BASE_URL }).pipe(
+        Effect.tap(() => logBehavior("orchestrator", "main", "provision", { type: "provision", component: "memory_cli", status: "ready" })),
         Effect.catchAll((e) =>
-          logToConsole("orchestrator", "main", `memory CLI provisioning failed (long-term memory unavailable): ${e}`, "warn"),
+          logToConsole("orchestrator", "main", `memory CLI provisioning failed (long-term memory unavailable): ${e}`, "warn").pipe(
+            Effect.zipRight(logBehavior("orchestrator", "main", "provision", { type: "provision", component: "memory_cli", status: "failed", detail: String(e) })),
+          ),
         ),
       )
     }
@@ -204,6 +220,13 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
         const loopEffect = Effect.scoped(
           Effect.gen(function* () {
             yield* logToConsole(char.name, "orchestrator", "Starting character loop...")
+            yield* logBehavior(char.name, "orchestrator", "main", {
+              type: "session_start",
+              domain: rd.name,
+              character: char.name,
+              gitSha,
+              tickIntervalMs: tickIntervalSeconds * 1000,
+            })
 
             yield* runPhases(
               {
