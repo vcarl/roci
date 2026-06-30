@@ -2,7 +2,7 @@
 import { appendFile, open, readFile, writeFile } from "node:fs/promises"
 import process from "node:process"
 import { compareBaseline } from "./baseline.js"
-import { emptyDigest, foldDigest, toPublicDigest, type RunDigest } from "./digest.js"
+import { emptyDigest, finalizeDigest, foldDigest, type RunDigest } from "./digest.js"
 import { type IngestState, ingestChunk, initialIngestState } from "./ingest.js"
 import { renderFeedLine } from "./render.js"
 import type { AnomalyType, FeedRecord, Severity } from "./types.js"
@@ -53,6 +53,7 @@ function parseArgs(raw: string[]): Args {
 }
 
 let finalised = false
+let sessionEndDigest: import("@roci/core").BehaviorDigest | undefined
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
@@ -88,6 +89,7 @@ async function main(): Promise<void> {
           offset = size
           const out = ingestChunk(ingest, buf.toString("utf8"))
           ingest = out.state
+          if (out.sessionEndDigest) sessionEndDigest = out.sessionEndDigest
           if (out.records.length > 0) {
             lastActivity = Date.now()
             stalled = false
@@ -110,12 +112,13 @@ async function main(): Promise<void> {
   const finalise = async (): Promise<void> => {
     if (finalised) return
     finalised = true
-    await writeFile(args.digestOut, `${JSON.stringify(toPublicDigest(digest), null, 2)}\n`)
+    const finalDigest = finalizeDigest(args.env, sessionEndDigest, digest)
+    await writeFile(args.digestOut, `${JSON.stringify(finalDigest, null, 2)}\n`)
     console.log(`run-digest written to ${args.digestOut}`)
     if (args.baseline) {
       try {
         const base = JSON.parse(await readFile(args.baseline, "utf8")) as RunDigest
-        const report = compareBaseline(digest, base)
+        const report = compareBaseline(finalDigest, base)
         console.log(
           report.ok
             ? "baseline drift: none"
