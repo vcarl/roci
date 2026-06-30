@@ -1,5 +1,5 @@
 import * as path from "node:path"
-import { Effect } from "effect"
+import { Cause, Effect } from "effect"
 import { ModelClient } from "../model/client.js"
 import type { ModelError } from "../model/errors.js"
 import { resolveHandle, type CortexModelConfig } from "../model/handles.js"
@@ -20,7 +20,7 @@ import type { CharacterConfig } from "../services/CharacterFs.js"
 import { extractJson, parseOr, tryParseJson, isPlainObject } from "./parse.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
-import { CharacterLog, logToConsole, logExchange } from "../logging/log-writer.js"
+import { CharacterLog, logToConsole, logExchange, logBehavior } from "../logging/log-writer.js"
 
 export { extractJson, parseOr }
 
@@ -80,6 +80,14 @@ export function stripThinking(text: string): string {
   return text.trim()
 }
 
+/** Map a tier-call failure to a tier_call outcome. Pure. */
+export function classifyTierOutcome(error: unknown): "error" | "timeout" {
+  if (error instanceof ReadinessError && error.timedOut) return "timeout"
+  const tag = (error as { _tag?: string })?._tag
+  if (tag === "TimeoutException" || (tag === "ReadinessError" && (error as ReadinessError).timedOut)) return "timeout"
+  return "error"
+}
+
 /** Run one prompt against the model backing `tier`, log the full exchange, return the raw text. */
 const callTier = (
   config: CortexRunnerConfig,
@@ -91,9 +99,28 @@ const callTier = (
     const svc = yield* ModelService
     const client = yield* ModelClient
     const handle = resolveHandle(config.models, tier)
-    const res = yield* svc.withTier(tier)(
-      client.complete(handle, [{ role: "user", content: prompt }]),
-    )
+    const startedAt = Date.now()
+    const res = yield* svc
+      .withTier(tier)(client.complete(handle, [{ role: "user", content: prompt }]))
+      .pipe(
+        Effect.tapErrorCause((cause) =>
+          logBehavior(config.char.name, "cortex", "tier_call", {
+            type: "tier_call",
+            tier,
+            latencyMs: Date.now() - startedAt,
+            // Cause.squash extracts the underlying error (ReadinessError / TimeoutException)
+            // from the failure Cause so classifyTierOutcome can inspect it. Do NOT use a
+            // `.squash` property access — squash is a function, not a field.
+            outcome: classifyTierOutcome(Cause.squash(cause)),
+          }),
+        ),
+      )
+    yield* logBehavior(config.char.name, "cortex", "tier_call", {
+      type: "tier_call",
+      tier,
+      latencyMs: Date.now() - startedAt,
+      outcome: "ok",
+    })
     // Full prompt+response archive (debug level; jsonl-complete). Never crash the loop.
     yield* logExchange(config.char.name, "cortex", step, prompt, res.text, {
       tier,
