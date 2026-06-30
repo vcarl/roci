@@ -15,8 +15,32 @@ import { resolveModel } from "../../model-config.js"
  */
 export const DIARY_TARGET_LINES = 150
 
+/**
+ * Wall-clock budget for a reflection (cull/consolidate) turn. These run the local
+ * reasoning model over the entire diary/secrets and can legitimately take minutes;
+ * the prior 120s budget routinely timed out, and a timed-out turn returns empty
+ * output that — absent the blank-turn guard below — silently wiped the file. 480s
+ * (8min) sits safely under the conscious tier's 600s readiness budget. Shared with
+ * the consolidate pass so both reflection writes use one source of truth.
+ */
+export const REFLECTION_TURN_TIMEOUT_MS = 480_000
+
 /** Count lines the same way the diary/secrets sizing is measured elsewhere. */
 const lineCount = (s: string) => s.split("\n").length
+
+/**
+ * A reflection turn produced NO usable content if it timed out or returned only
+ * empty/whitespace text. Such a turn must be treated as a failure so the existing
+ * content is preserved untouched — never overwritten with a blank file. (A timeout
+ * does not throw: `runTurn` resolves with `{ output: "", timedOut: true }`, and an
+ * empty string defeats the never-grows clamp because `lineCount("") === 1`.)
+ */
+const isBlankTurn = (r: { output: string; timedOut: boolean }): boolean =>
+  r.timedOut || r.output.trim().length === 0
+
+/** Reason string for a blank turn, for failure logging. */
+const blankTurnReason = (r: { output: string; timedOut: boolean }): string =>
+  r.timedOut ? "turn timed out (no output)" : "turn returned empty output"
 
 export type DreamType = "normal" | "good" | "nightmare"
 
@@ -112,13 +136,19 @@ export const dream = {
         prompt: diaryInput,
         systemPrompt: "",
         model: dreamModel,
-        timeoutMs: 120_000,
+        timeoutMs: REFLECTION_TURN_TIMEOUT_MS,
         role: "brain",
         noTools: true,
         addDirs: input.addDirs,
         env: input.env,
       }).pipe(
-        Effect.map((r) => ({ ok: true as const, text: r.output })),
+        // A timeout or empty/whitespace output is a FAILED turn (runTurn does not
+        // throw on timeout), not a valid 0-line compression — keep the original.
+        Effect.map((r) =>
+          isBlankTurn(r)
+            ? { ok: false as const, reason: blankTurnReason(r) }
+            : { ok: true as const, text: r.output },
+        ),
         Effect.catchAll((e) => Effect.succeed({ ok: false as const, reason: String(e) })),
       )
 
@@ -170,13 +200,19 @@ export const dream = {
         prompt: secretsInput,
         systemPrompt: "",
         model: dreamModel,
-        timeoutMs: 120_000,
+        timeoutMs: REFLECTION_TURN_TIMEOUT_MS,
         role: "brain",
         noTools: true,
         addDirs: input.addDirs,
         env: input.env,
       }).pipe(
-        Effect.map((r) => ({ ok: true as const, text: r.output })),
+        // A timeout or empty/whitespace output is a FAILED turn (runTurn does not
+        // throw on timeout), not a valid 0-line compression — keep the original.
+        Effect.map((r) =>
+          isBlankTurn(r)
+            ? { ok: false as const, reason: blankTurnReason(r) }
+            : { ok: true as const, text: r.output },
+        ),
         Effect.catchAll((e) => Effect.succeed({ ok: false as const, reason: String(e) })),
       )
 
