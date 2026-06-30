@@ -82,13 +82,13 @@ describe("buildFrontierCliScript", () => {
 })
 
 describe("provisionFrontierCli", () => {
-  it("execs a command that base64-writes the script to the CLI path and chmods it executable", async () => {
-    const calls: string[][] = []
+  it("execs AS ROOT a command that base64-writes the script to the CLI path and chmods it executable", async () => {
+    const calls: { command: string[]; user?: string }[] = []
     const StubDocker = Layer.succeed(
       Docker,
       Docker.of({
-        exec: (_id: string, command: string[]) => {
-          calls.push(command)
+        exec: (_id: string, command: string[], execOpts?: { user?: string }) => {
+          calls.push({ command, user: execOpts?.user })
           return Effect.succeed("")
         },
       } as unknown as typeof Docker.Service),
@@ -96,11 +96,13 @@ describe("provisionFrontierCli", () => {
     await Effect.runPromise(
       Effect.provide(provisionFrontierCli("cabc", { model: "sonnet", timeoutMs: 600000 }), StubDocker),
     )
-    const joined = calls.flat().join(" ")
+    const joined = calls.flatMap((c) => c.command).join(" ")
     expect(joined).toContain(FRONTIER_CLI_PATH)
     expect(joined).toContain("base64 -d")
     expect(joined).toContain("chmod 0755")
     const b64 = Buffer.from(buildFrontierCliScript({ model: "sonnet", timeoutMs: 600000 })).toString("base64")
     expect(joined).toContain(b64)
+    // Must run as root: /usr/local/bin is root-owned, container default user is node.
+    expect(calls[0].user).toBe("root")
   })
 })

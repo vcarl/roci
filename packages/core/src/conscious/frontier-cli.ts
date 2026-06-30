@@ -190,6 +190,11 @@ esac
  * provisionConsciousProvider). Idempotent — safe to run before each loop.
  * Error channel is `never`: a Docker failure is swallowed (a later `frontier`
  * call surfaces it as a tool failure the conscious mind reads, per spec §8).
+ *
+ * Provisions AS ROOT (`{ user: "root" }`, mirroring the memory CLI): `/usr/local/
+ * bin` is root-owned and the container's default user is `node`, so provisioning
+ * as `node` would `Permission denied`. The installed file ends up `root:root
+ * 0755`, which `node` can execute.
  */
 export function provisionFrontierCli(
   containerId: string,
@@ -200,6 +205,6 @@ export function provisionFrontierCli(
   const sh = `echo ${b64} | base64 -d > ${FRONTIER_CLI_PATH} && chmod 0755 ${FRONTIER_CLI_PATH}`
   return Effect.gen(function* () {
     const docker = yield* Docker
-    yield* docker.exec(containerId, ["bash", "-lc", sh])
+    yield* docker.exec(containerId, ["bash", "-lc", sh], { user: "root" })
   }).pipe(Effect.catchAll(() => Effect.void))
 }
