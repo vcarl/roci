@@ -22,7 +22,7 @@ Roles represent specific agent functions. Each role resolves to either a tier na
 | `brainInterrupt` | `reasoning` | Interrupt-driven replanning |
 | `brainEvaluate` | `reasoning` | Step evaluation |
 | `diarySubagent` | `smart` | Diary writing and updates |
-| `dreamCompression` | `reasoning` | Memory compression (hippocampus) |
+| `dreamCompression` | `local/mlx-community/gemma-4-31b-it-8bit` | Memory compression (hippocampus). Defaults to a raw model string, not a tier: runs on the **opencode** runtime against the local conscious-tier mlx server (port 8083). The literal MUST match `consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)`. On turn failure the dream phase degrades gracefully — it keeps the original diary/secrets and continues. |
 | `dinner` | `smart` | Social reflection (SpaceMolt) |
 | `timeoutSummary` | `fast` | Summarize timed-out output |
 | `scaffoldIdentity` | `smart` | Character identity generation |

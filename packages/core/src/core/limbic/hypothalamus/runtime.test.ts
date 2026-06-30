@@ -12,6 +12,10 @@ describe("runtimeBinary", () => {
     expect(runtimeBinary("openrouter/anthropic/claude-sonnet-4")).toBe("opencode")
     expect(runtimeBinary("gpt-4o")).toBe("opencode")
   })
+
+  it("routes the local conscious-tier dreamCompression model to opencode", () => {
+    expect(runtimeBinary("local/mlx-community/gemma-4-31b-it-8bit")).toBe("opencode")
+  })
 })
 
 describe("runtimeBaseArgs", () => {

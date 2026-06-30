@@ -61,6 +61,15 @@ export function buildInnerArgs(config: TurnConfig, runtime: AgentRuntime): strin
     }
   }
 
+  if (runtime === "opencode") {
+    // Provide an explicit session title so opencode does NOT fire its automatic
+    // title-generation call. That call hits the single-request local model server
+    // CONCURRENTLY with the main turn; the two concurrent requests wedge the
+    // resident model and the turn stalls for the full timeout. An explicit --title
+    // suppresses the title call, leaving exactly one request to the model.
+    args.push("--title", shellEscape(`turn-${config.playerName}`))
+  }
+
   // Tool access control
   if (config.noTools) {
     if (runtime === "claude") {
@@ -76,7 +85,9 @@ export function buildInnerArgs(config: TurnConfig, runtime: AgentRuntime): strin
     }
   }
 
-  if (config.addDirs) {
+  // --add-dir is a claude-only flag; opencode `run` may reject it. Dream/noTools
+  // turns don't need extra dirs anyway, so gate the loop to the claude runtime.
+  if (runtime === "claude" && config.addDirs) {
     for (const dir of config.addDirs) {
       args.push("--add-dir", dir)
     }

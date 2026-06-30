@@ -17,7 +17,7 @@ import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog, logToConsole, logExchange } from "../../../logging/log-writer.js"
-import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand, openCodeBodyEnv, wrapWithTimeout } from "./payload.js"
+import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand, openCodeBodyEnv, wrapWithTimeout, OPENCODE_DISABLE_NETWORK_ENV } from "./payload.js"
 import { runTransport } from "./transport.js"
 import { buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
 import { normalizeSdk, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
@@ -58,7 +58,11 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
     // Issue 3: self-bound the in-container process so a host-side timeout/interrupt
     // (which `docker exec` does not signal-forward) cannot orphan the agent.
     const innerCmd = wrapWithTimeout(buildInnerCommand(config, runtime), config.timeoutMs)
-    const execArgs = buildExecArgs(config, innerCmd, token)
+    // opencode turns must skip the firewall-blocked models.dev registry fetch and
+    // fall back to the configured local provider (see openCodeBodyEnv / the env doc).
+    const execEnv =
+      runtime === "opencode" ? { ...config.env, ...OPENCODE_DISABLE_NETWORK_ENV } : config.env
+    const execArgs = buildExecArgs({ ...config, env: execEnv }, innerCmd, token)
 
     // Diagnostic: confirm a token was resolved without leaking any of its value.
     yield* logToConsole(

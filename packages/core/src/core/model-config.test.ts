@@ -61,6 +61,13 @@ describe("resolveModel", () => {
     }
     expect(resolveModel(config, "brainPlan", "smart")).toBe("opus")
   })
+
+  it("routes dreamCompression to the local conscious mlx model by default", () => {
+    // Coupling: this literal MUST equal consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious).
+    expect(resolveModel(DEFAULT_MODEL_CONFIG, "dreamCompression", "smart")).toBe(
+      "local/mlx-community/gemma-4-31b-it-8bit",
+    )
+  })
 })
 
 describe("mergeModelConfig", () => {

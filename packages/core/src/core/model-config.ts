@@ -34,13 +34,17 @@ export interface ModelConfigOverlay {
   roles?: Partial<Record<Role, Tier | AnyModel>>
 }
 
-/** Default config: fast=haiku, smart=sonnet, reasoning=opus, no role overrides. */
+/** Default config: fast=haiku, smart=sonnet, reasoning=opus. */
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   tiers: {
     fast: "haiku",
     smart: "sonnet",
     reasoning: "opus",
   },
+  // Memory compression runs on the local conscious-tier mlx model (port 8083)
+  // via opencode. MUST equal consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)
+  // — kept as a literal here to avoid a dependency on the cortex/handles module.
+  roles: { dreamCompression: "local/mlx-community/gemma-4-31b-it-8bit" },
 }
 
 const TIER_NAMES = new Set<string>(["fast", "smart", "reasoning"])

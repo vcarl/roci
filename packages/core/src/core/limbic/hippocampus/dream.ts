@@ -1,7 +1,7 @@
 import * as path from "node:path"
 import { Effect } from "effect"
 import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs.js"
-import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
+import { CharacterLog, logToConsole, logError } from "../../../logging/log-writer.js"
 import { eventBase } from "../../../logging/events.js"
 import { loadTemplate, renderTemplate } from "../../template.js"
 import { runTurn } from "../hypothalamus/process-runner.js"
@@ -102,7 +102,10 @@ export const dream = {
       const diaryPrompt = renderTemplate(diaryPromptRaw, { TARGET_LINES: String(DIARY_TARGET_LINES) })
       const diaryInput = `${diaryPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="secrets">\n${secrets}\n</context>\n\n${diary}`
 
-      const compressedDiary = yield* runTurn({
+      // A failed turn (e.g. the local mlx server is down or times out) must NOT
+      // abort the dream — fall back to the ORIGINAL diary (the secrets prompt
+      // embeds it below) and record the failure without writing.
+      const diaryTurn = yield* runTurn({
         containerId: input.containerId,
         playerName: input.playerName,
         char: input.char,
@@ -114,27 +117,43 @@ export const dream = {
         noTools: true,
         addDirs: input.addDirs,
         env: input.env,
-      }).pipe(Effect.map((r) => r.output))
+      }).pipe(
+        Effect.map((r) => ({ ok: true as const, text: r.output })),
+        Effect.catchAll((e) => Effect.succeed({ ok: false as const, reason: String(e) })),
+      )
 
       // Hard invariant: the cull must never produce a larger file than its input.
       // If the model returned more lines than it was given, discard and keep the original.
-      let finalDiary = compressedDiary
-      let diaryCompressed = true
-      if (lineCount(compressedDiary) > lineCount(diary)) {
+      let finalDiary: string
+      let diaryCompressed: boolean
+      if (!diaryTurn.ok) {
+        finalDiary = diary
+        diaryCompressed = false
+        // Fail loud (Issue 2): a turn error is a genuine failure site, not the
+        // expected never-grows clamp below — surface it as a structured kind:"error"
+        // event. Best-effort continuation: keep the original and proceed to secrets.
+        yield* logError(
+          input.char.name,
+          "hippocampus",
+          `dream_diary_compression_failed: ${diaryTurn.reason} — keeping original`,
+        )
+      } else if (lineCount(diaryTurn.text) > lineCount(diary)) {
         finalDiary = diary
         diaryCompressed = false
         yield* logToConsole(
           input.char.name,
           "orchestrator",
-          `dream_diary_compression_discarded: cull produced ${lineCount(compressedDiary)} lines > ${lineCount(diary)} input lines — keeping original diary`,
+          `dream_diary_compression_discarded: cull produced ${lineCount(diaryTurn.text)} lines > ${lineCount(diary)} input lines — keeping original diary`,
           "warn",
         )
       } else {
-        yield* charFs.writeDiary(input.char, compressedDiary)
+        finalDiary = diaryTurn.text
+        diaryCompressed = true
+        yield* charFs.writeDiary(input.char, diaryTurn.text)
         yield* log.emit(input.char, {
           ...eventBase(input.char.name, "orchestrator", "dream"),
           kind: "text",
-          text: `dream_diary_compressed: ${dreamType} (${diary.length} -> ${compressedDiary.length})`,
+          text: `dream_diary_compressed: ${dreamType} (${diary.length} -> ${diaryTurn.text.length})`,
         })
       }
 
@@ -142,7 +161,9 @@ export const dream = {
       const secretsPrompt = yield* loadTemplate(path.join(PROMPTS_DIR, secretsTemplateFile[dreamType]))
       const secretsInput = `${secretsPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="diary">\n${finalDiary}\n</context>\n\n${secrets}`
 
-      const compressedSecrets = yield* runTurn({
+      // Symmetric graceful fallback — a diary turn failure does NOT skip this
+      // step, and a secrets turn failure keeps the original secrets without writing.
+      const secretsTurn = yield* runTurn({
         containerId: input.containerId,
         playerName: input.playerName,
         char: input.char,
@@ -154,24 +175,37 @@ export const dream = {
         noTools: true,
         addDirs: input.addDirs,
         env: input.env,
-      }).pipe(Effect.map((r) => r.output))
+      }).pipe(
+        Effect.map((r) => ({ ok: true as const, text: r.output })),
+        Effect.catchAll((e) => Effect.succeed({ ok: false as const, reason: String(e) })),
+      )
 
       // Same never-grows invariant for SECRETS.md.
-      let secretsCompressed = true
-      if (lineCount(compressedSecrets) > lineCount(secrets)) {
+      let secretsCompressed: boolean
+      if (!secretsTurn.ok) {
+        secretsCompressed = false
+        // Fail loud (Issue 2): structured kind:"error" for a genuine turn failure,
+        // distinct from the never-grows clamp; keep the original secrets.
+        yield* logError(
+          input.char.name,
+          "hippocampus",
+          `dream_secrets_compression_failed: ${secretsTurn.reason} — keeping original`,
+        )
+      } else if (lineCount(secretsTurn.text) > lineCount(secrets)) {
         secretsCompressed = false
         yield* logToConsole(
           input.char.name,
           "orchestrator",
-          `dream_secrets_compression_discarded: cull produced ${lineCount(compressedSecrets)} lines > ${lineCount(secrets)} input lines — keeping original secrets`,
+          `dream_secrets_compression_discarded: cull produced ${lineCount(secretsTurn.text)} lines > ${lineCount(secrets)} input lines — keeping original secrets`,
           "warn",
         )
       } else {
-        yield* charFs.writeSecrets(input.char, compressedSecrets)
+        secretsCompressed = true
+        yield* charFs.writeSecrets(input.char, secretsTurn.text)
         yield* log.emit(input.char, {
           ...eventBase(input.char.name, "orchestrator", "dream"),
           kind: "text",
-          text: `dream_secrets_compressed: ${dreamType} (${secrets.length} -> ${compressedSecrets.length})`,
+          text: `dream_secrets_compressed: ${dreamType} (${secrets.length} -> ${secretsTurn.text.length})`,
         })
       }
 
