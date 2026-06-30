@@ -2,6 +2,7 @@ import { Command } from "@effect/cli"
 import { NodeContext, NodeRuntime } from "@effect/platform-node"
 import { Effect } from "effect"
 import { reapResidentServers } from "@roci/core"
+import { recordShutdownSignal } from "@roci/core/logging/behavior-digest.js"
 import { reapEmbedServers } from "./embed-server.js"
 import { rociCommand, serviceLayer } from "./cli.js"
 
@@ -22,10 +23,12 @@ import { rociCommand, serviceLayer } from "./cli.js"
 // same shutdown window, so it can't orphan and leak its port on a SIGKILL race or
 // fatal teardown. Additive to runMain's own handlers; we don't call process.exit.
 process.on("SIGTERM", () => {
+  recordShutdownSignal("SIGTERM")
   reapResidentServers()
   reapEmbedServers()
 })
 process.on("SIGINT", () => {
+  recordShutdownSignal("SIGINT")
   reapResidentServers()
   reapEmbedServers()
 })

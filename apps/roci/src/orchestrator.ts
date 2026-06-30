@@ -1,7 +1,7 @@
 import { Effect, Fiber, Layer } from "effect"
 import { Docker, DockerError } from "@roci/core/services/Docker.js"
 import { runPhases } from "@roci/core/core/phase-runner.js"
-import { logToConsole, logBehavior, logSessionEnd } from "@roci/core/logging/log-writer.js"
+import { logToConsole, logBehavior } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { execSync } from "node:child_process"
@@ -13,6 +13,7 @@ import { provisionMemoryCli } from "@roci/core/conscious/memory-cli.js"
 import { DEFAULT_EMBED_BASE_URL } from "@roci/core/conscious/memory-embed.js"
 import { DEFAULT_CORTEX_MODELS } from "@roci/core/model/handles.js"
 import { launchEmbedServer, reapEmbedServers } from "./embed-server.js"
+import { withSessionEnd } from "./session-end.js"
 
 /**
  * Ensure a domain container exists and is running.
@@ -217,32 +218,35 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
         const char = makeCharacterConfig(projectRoot, charName)
 
         // Inline character loop: scoped phase runner
-        const loopEffect = Effect.scoped(
-          Effect.gen(function* () {
-            yield* logToConsole(char.name, "orchestrator", "Starting character loop...")
-            yield* logBehavior(char.name, "orchestrator", "main", {
-              type: "session_start",
-              domain: rd.name,
-              character: char.name,
-              gitSha,
-              tickIntervalMs: tickIntervalSeconds * 1000,
-            })
+        const loopEffect = withSessionEnd(
+          char.name,
+          Effect.scoped(
+            Effect.gen(function* () {
+              yield* logToConsole(char.name, "orchestrator", "Starting character loop...")
+              yield* logBehavior(char.name, "orchestrator", "main", {
+                type: "session_start",
+                domain: rd.name,
+                character: char.name,
+                gitSha,
+                tickIntervalMs: tickIntervalSeconds * 1000,
+              })
 
-            yield* runPhases(
-              {
-                char,
-                containerId,
-                containerEnv,
-                containerAddDirs: rd.config.containerAddDirs,
-                domainBundle: rd.config.bundle,
-                phaseData: {
-                  ...(manualApproval ? { manualApproval: true } : {}),
-                  models,
+              yield* runPhases(
+                {
+                  char,
+                  containerId,
+                  containerEnv,
+                  containerAddDirs: rd.config.containerAddDirs,
+                  domainBundle: rd.config.bundle,
+                  phaseData: {
+                    ...(manualApproval ? { manualApproval: true } : {}),
+                    models,
+                  },
                 },
-              },
-              rd.config.phaseRegistry,
-            )
-          }),
+                rd.config.phaseRegistry,
+              )
+            }),
+          ),
         ).pipe(
           Effect.catchAll((e) =>
             logToConsole(charName, "orchestrator", `Fatal error: ${e}`),
