@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import type { FeedRecord } from "./types.js"
-import { emptyDigest, foldDigest, toPublicDigest } from "./digest.js"
+import type { BehaviorDigest } from "@roci/core"
+import { emptyDigest, foldDigest, toPublicDigest, finalizeDigest } from "./digest.js"
 
 const env = { character: "ada", domain: "spacemolt", tickIntervalMs: 30000, gitSha: "abc1234" }
 const rec = (over: Partial<FeedRecord>): FeedRecord =>
@@ -91,5 +92,32 @@ describe("toPublicDigest", () => {
 
     // (c) serialized form excludes _terminalRank
     expect(JSON.stringify(pub)).not.toContain("_terminalRank")
+  })
+})
+
+describe("finalizeDigest", () => {
+  const endDigest: BehaviorDigest = {
+    counts: { session_start: 1, phase: 2, session_end: 1 },
+    sequence: ["session_start", "phase", "phase", "session_end"],
+    timings: { firstForebrainMs: 1800, firstPlanMs: 5000 },
+    startTs: "2026-06-21T00:00:00.000Z",
+    terminalCause: "session ended (clean)",
+  }
+
+  it("adopts the session_end digest as authoritative, attaching env", () => {
+    const fold = emptyDigest(env)
+    const out = finalizeDigest(env, endDigest, fold)
+    expect(out.env).toEqual(env)
+    expect(out.terminalCause).toBe("session ended (clean)")
+    expect(out.counts.phase).toBe(2)
+  })
+
+  it("falls back to the fold when no session_end digest is present (crash)", () => {
+    const crashFold = fold([
+      rec({ type: "SESSION_START" }),
+      rec({ kind: "anomaly", type: "PROCESS_DIED", summary: "session process 99 exited" }),
+    ])
+    const out = finalizeDigest(env, undefined, crashFold)
+    expect(out.terminalCause).toContain("session process 99 exited")
   })
 })

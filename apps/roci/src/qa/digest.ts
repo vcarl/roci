@@ -1,4 +1,5 @@
 import type { FeedRecord, TransitionType } from "./types.js"
+import type { BehaviorDigest } from "@roci/core"
 
 export interface RunDigest {
   env: { character: string; domain: string; tickIntervalMs: number; gitSha: string }
@@ -42,6 +43,27 @@ export function emptyDigest(env: RunDigest["env"]): RunDigest {
 export function toPublicDigest(d: RunDigest): RunDigest {
   const { _terminalRank: _, ...rest } = d as RunDigestInternal
   return rest
+}
+
+/**
+ * Choose the authoritative run digest. The emitted `session_end` digest is the
+ * source of truth (snapshotted live in the logging package); the regex fold
+ * survives only as a crash fallback for runs that die before `session_end`.
+ */
+export function finalizeDigest(
+  env: RunDigest["env"],
+  endDigest: BehaviorDigest | undefined,
+  fold: RunDigest,
+): RunDigest {
+  if (!endDigest) return toPublicDigest(fold)
+  return {
+    env,
+    counts: endDigest.counts,
+    sequence: endDigest.sequence as TransitionType[],
+    timings: endDigest.timings,
+    startTs: endDigest.startTs,
+    terminalCause: endDigest.terminalCause,
+  }
 }
 
 export function foldDigest(d: RunDigest, r: FeedRecord): RunDigest {
