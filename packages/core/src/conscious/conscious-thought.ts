@@ -5,7 +5,7 @@ import type { ModelHandle } from "../model/handles.js"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import type { TurnConfig, TurnResult } from "../core/limbic/hypothalamus/types.js"
 import { runOpenCodeSessionTurn } from "../core/limbic/hypothalamus/process-runner.js"
-import { CharacterLog } from "../logging/log-writer.js"
+import { CharacterLog, logError } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { Docker } from "../services/Docker.js"
 import {
@@ -16,6 +16,8 @@ import {
 } from "./opencode-config.js"
 import type { AnyModel } from "../core/limbic/hypothalamus/runtime.js"
 import { provisionFrontierCli } from "./frontier-cli.js"
+import { provisionMemoryCli } from "./memory-cli.js"
+import { DEFAULT_EMBED_BASE_URL } from "./memory-embed.js"
 
 /** Config for a single conscious-tier OpenCode turn. */
 export interface ConsciousTurnConfig {
@@ -44,6 +46,12 @@ export interface ProvisionOpts {
   frontierModel: AnyModel
   /** Wall-clock budget baked into the frontier worker (reuses workerTimeoutMs). */
   frontierTimeoutMs: number
+  /**
+   * Host embed server base URL for the long-term `memory` CLI. Loopback is fine —
+   * it is rewritten to host.docker.internal at provision time. Defaults to the
+   * standalone host embed server (`DEFAULT_EMBED_BASE_URL`, port 8084).
+   */
+  embedBaseUrl?: string
 }
 
 export class ConsciousThought extends Context.Tag("ConsciousThought")<
@@ -59,7 +67,7 @@ export class ConsciousThought extends Context.Tag("ConsciousThought")<
      * path into the step report and evaluate. Explicit provisioning diagnostics
      * are deferred to Phase 4c.
      */
-    readonly provision: (opts: ProvisionOpts) => Effect.Effect<void, never, Docker>
+    readonly provision: (opts: ProvisionOpts) => Effect.Effect<void, never, Docker | CharacterLog>
 
     /**
      * Run one turn of the conscious session. First call (no `resume`) opens a
@@ -78,7 +86,7 @@ export class ConsciousThought extends Context.Tag("ConsciousThought")<
   }
 >() {}
 
-const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker> =>
+const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker | CharacterLog> =>
   Effect.gen(function* () {
     // Write the project-local agent file (host-side fs). Deferred into the Effect so a
     // filesystem failure becomes a swallowed error, not a synchronous throw / defect.
@@ -99,6 +107,22 @@ const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker> 
       model: opts.frontierModel,
       timeoutMs: opts.frontierTimeoutMs,
     })
+    // Provision the memory CLI (append-only long-term store) into the container.
+    // Runs as root inside provisionMemoryCli; a failure PROPAGATES here so it is
+    // logged loud (kind:error) with the character context and the loop continues
+    // (long-term memory degrades, but the agent keeps running) — instead of the
+    // old silent swallow that surfaced only as a later "command not found".
+    yield* provisionMemoryCli(opts.containerId, {
+      embedBaseUrl: opts.embedBaseUrl ?? DEFAULT_EMBED_BASE_URL,
+    }).pipe(
+      Effect.catchAll((e) =>
+        logError(
+          opts.char.name,
+          "conscious",
+          `memory CLI provisioning failed (long-term memory unavailable this run): ${e}`,
+        ).pipe(Effect.catchAll(() => Effect.void)),
+      ),
+    )
   }).pipe(
     // Error channel is `never`: a write failure or DockerError is swallowed (idempotent;
     // safe to retry next run) and surfaces downstream as a turn-1 failure.
@@ -159,7 +183,7 @@ export const ConsciousThoughtTest = (
   Layer.succeed(
     ConsciousThought,
     ConsciousThought.of({
-      provision: () => Effect.void as Effect.Effect<void, never, Docker>,
+      provision: () => Effect.void as Effect.Effect<void, never, Docker | CharacterLog>,
       turn: (config, resume) =>
         Effect.sync(() => {
           // Capture steer directives: any resume call's prompt is a directive.

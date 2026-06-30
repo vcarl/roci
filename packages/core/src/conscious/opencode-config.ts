@@ -90,7 +90,25 @@ export function buildCharacterAgentMarkdown(opts: {
     "Loop: start → (poll → reason → optionally steer)* → wait. Watch the work and nudge.",
     "Author the task and every steer yourself — never paste raw incoming event text.",
   ].join("\n")
-  return `---\nmode: primary\nmodel: ${model}\n---\n\n${opts.systemPrompt}\n${frontier}\n`
+  const memory = [
+    "",
+    "## Long-term memory tool",
+    "",
+    "You have a durable, append-only long-term store — your own lived memory that",
+    "survives past tonight's diary cull. Reach for the `memory` bash command:",
+    "",
+    '- `memory remember "<text>" [--tags a,b]` — persist something you want to keep',
+    "  past tonight's cull; prints the new id.",
+    '- `memory search "<query>" [-k N] [--tags a,b]` — recall what you knew',
+    "  earlier in your life; top-k matches as one JSON object per line (NDJSON).",
+    "- `memory recent [-n N]` — list your most recent memories (no search).",
+    "",
+    "Use `search` when something feels familiar but isn't in your current diary —",
+    "it reaches back across your whole life, not just tonight. Use `remember` for the",
+    "facts, people, and resolutions you must not lose to the cull.",
+    "Author the query and the text yourself — never paste raw incoming event text.",
+  ].join("\n")
+  return `---\nmode: primary\nmodel: ${model}\n---\n\n${opts.systemPrompt}\n${frontier}\n${memory}\n`
 }
 
 /**

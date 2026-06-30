@@ -151,6 +151,22 @@ describe("writeCharacterAgentFile", () => {
   })
 })
 
+describe("buildCharacterAgentMarkdown long-term memory section", () => {
+  const md = buildCharacterAgentMarkdown({ systemPrompt: "You are Ada.", modelLabel: LABEL })
+  it("teaches the three memory verbs", () => {
+    expect(md).toMatch(/memory remember/)
+    expect(md).toMatch(/memory search/)
+    expect(md).toMatch(/memory recent/)
+  })
+  it("frames WHEN to use it (recall earlier life; persist past tonight's cull)", () => {
+    expect(md.toLowerCase()).toContain("earlier in your life")
+    expect(md.toLowerCase()).toContain("cull")
+  })
+  it("carries the laundering note (author the text yourself, never raw event text)", () => {
+    expect(md).toContain("never paste raw")
+  })
+})
+
 describe("buildCharacterAgentMarkdown frontier section", () => {
   const md = buildCharacterAgentMarkdown({ systemPrompt: "You are Ada.", modelLabel: LABEL })
   it("teaches the optional --model selector on frontier start", () => {

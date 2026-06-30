@@ -14,6 +14,30 @@ export class DockerError {
   toString() { return this.message }
 }
 
+/** Options for `exec`. `user` maps to `docker exec -u <user>` (run as that user). */
+export interface DockerExecOpts {
+  interactive?: boolean
+  /** Run the command as this container user (e.g. "root"). Inserted as `-u <user>`. */
+  user?: string
+}
+
+/**
+ * Build the `docker exec [...]` argv. Pure + exported so the flag construction is
+ * unit-testable without spawning docker. `-u <user>` and `-it` are inserted
+ * BEFORE the containerId (docker requires options before the container + command).
+ */
+export function buildExecArgs(
+  containerId: string,
+  command: string[],
+  opts?: DockerExecOpts,
+): string[] {
+  const args = ["exec"]
+  if (opts?.interactive) args.push("-it")
+  if (opts?.user) args.push("-u", opts.user)
+  args.push(containerId, ...command)
+  return args
+}
+
 export class Docker extends Context.Tag("Docker")<
   Docker,
   {
@@ -37,7 +61,7 @@ export class Docker extends Context.Tag("Docker")<
     readonly exec: (
       containerId: string,
       command: string[],
-      opts?: { interactive?: boolean },
+      opts?: DockerExecOpts,
     ) => Effect.Effect<string, DockerError>
 
     readonly execStream: (
@@ -151,10 +175,7 @@ export const DockerLive = Layer.effect(
 
       exec: (containerId, command, opts) =>
         Effect.gen(function* () {
-          const args = ["exec"]
-          if (opts?.interactive) args.push("-it")
-          args.push(containerId, ...command)
-          return yield* runDockerCommand(args, executor)
+          return yield* runDockerCommand(buildExecArgs(containerId, command, opts), executor)
         }),
 
       execStream: (containerId, command) =>

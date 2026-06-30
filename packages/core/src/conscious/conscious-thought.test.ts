@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import nodePath from "node:path"
 import { ConsciousThought, ConsciousThoughtTest, ConsciousThoughtLive } from "./conscious-thought.js"
 import { FRONTIER_CLI_PATH } from "./frontier-cli.js"
+import { MEMORY_CLI_PATH } from "./memory-cli.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { Docker } from "../services/Docker.js"
@@ -186,6 +187,15 @@ describe("index re-exports ConsciousThought", () => {
 })
 
 describe("ConsciousThought.provision writes the frontier CLI", () => {
+  const provisionOpts = (tempDir: string) => ({
+    containerId: "cabc",
+    char: { name: "ada", dir: nodePath.join(tempDir, "me") },
+    handle: DEFAULT_CORTEX_MODELS.conscious,
+    systemPrompt: "You are Ada.",
+    frontierModel: "sonnet" as const,
+    frontierTimeoutMs: 600000,
+  })
+
   it("execs a docker command writing the frontier CLI path", async () => {
     const calls: string[][] = []
     const StubDockerCapturing = Layer.succeed(
@@ -200,17 +210,66 @@ describe("ConsciousThought.provision writes the frontier CLI", () => {
     const tempDir = mkdtempSync(nodePath.join(tmpdir(), "roci-test-"))
     const program = Effect.gen(function* () {
       const ct = yield* ConsciousThought
-      yield* ct.provision({
-        containerId: "cabc",
-        char: { name: "ada", dir: nodePath.join(tempDir, "me") },
-        handle: DEFAULT_CORTEX_MODELS.conscious,
-        systemPrompt: "You are Ada.",
-        frontierModel: "sonnet",
-        frontierTimeoutMs: 600000,
-      })
+      yield* ct.provision(provisionOpts(tempDir))
     })
-    await Effect.runPromise(Effect.provide(program, Layer.merge(ConsciousThoughtLive, StubDockerCapturing)))
+    await Effect.runPromise(
+      Effect.provide(program, Layer.mergeAll(ConsciousThoughtLive, StubDockerCapturing, StubCharacterLog)),
+    )
     const joined = calls.flat().join(" ")
     expect(joined).toContain(FRONTIER_CLI_PATH)
+  })
+
+  it("execs the memory CLI provisioning AS ROOT (the /usr/local/bin permission fix)", async () => {
+    const calls: { command: string[]; user?: string }[] = []
+    const StubDockerCapturing = Layer.succeed(
+      Docker,
+      Docker.of({
+        exec: (_id: string, command: string[], execOpts?: { user?: string }) => {
+          calls.push({ command, user: execOpts?.user })
+          return Effect.succeed("")
+        },
+      } as unknown as typeof Docker.Service),
+    )
+    const tempDir = mkdtempSync(nodePath.join(tmpdir(), "roci-test-"))
+    const program = Effect.gen(function* () {
+      const ct = yield* ConsciousThought
+      yield* ct.provision(provisionOpts(tempDir))
+    })
+    await Effect.runPromise(
+      Effect.provide(program, Layer.mergeAll(ConsciousThoughtLive, StubDockerCapturing, StubCharacterLog)),
+    )
+    const memoryCall = calls.find((c) => c.command.join(" ").includes(MEMORY_CLI_PATH))
+    expect(memoryCall).toBeDefined()
+    expect(memoryCall!.user).toBe("root")
+  })
+
+  it("logs a STRUCTURED error and still returns void when memory provisioning fails", async () => {
+    // Fail ONLY the memory CLI exec; the provider/frontier execs succeed.
+    const FailMemoryDocker = Layer.succeed(
+      Docker,
+      Docker.of({
+        exec: (_id: string, command: string[]) =>
+          command.join(" ").includes(MEMORY_CLI_PATH)
+            ? Effect.fail(new Error("Permission denied"))
+            : Effect.succeed(""),
+      } as unknown as typeof Docker.Service),
+    )
+    const errorMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_c, e) => Effect.sync(() => { if (e.kind === "error") errorMessages.push(e.message) }),
+      }),
+    )
+    const tempDir = mkdtempSync(nodePath.join(tmpdir(), "roci-test-"))
+    const program = Effect.gen(function* () {
+      const ct = yield* ConsciousThought
+      yield* ct.provision(provisionOpts(tempDir))
+    })
+    // Must NOT throw — provisioning is best-effort, the loop keeps running.
+    await Effect.runPromise(
+      Effect.provide(program, Layer.mergeAll(ConsciousThoughtLive, FailMemoryDocker, recordingLog)),
+    )
+    expect(errorMessages.some((m) => m.toLowerCase().includes("memory cli provisioning failed"))).toBe(true)
   })
 })
