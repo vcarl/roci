@@ -4,7 +4,7 @@ import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterFs } from "../services/CharacterFs.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
-import { CharacterLog, logToConsole } from "../logging/log-writer.js"
+import { CharacterLog, logToConsole, logError } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { EventProcessorTag } from "../core/limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "../core/limbic/thalamus/situation-classifier.js"
@@ -36,6 +36,7 @@ import {
   planSteps,
   decideSteps,
   discoverToPlan,
+  isWedgedEmptyPlan,
   isWellFormedDiscover,
   formatStepTask,
   formatExecutionReport,
@@ -104,6 +105,20 @@ export const runCortex = (config: CortexLoopConfig) =>
       palette,
     }
 
+    // Issue 1 (fail loud): read an identity/memory file, but never silently
+    // swallow a read failure. On error, emit a structured kind:"error" event
+    // (so the model's loss of grounding is diagnosable) and degrade to "". The
+    // log-write itself is swallowed so logging can never crash the loop.
+    const readOrEmpty = (label: string, read: Effect.Effect<string, unknown, never>) =>
+      read.pipe(
+        Effect.catchAll((e) =>
+          logError(config.char.name, "cortex", `${label} read failed; using empty: ${e}`).pipe(
+            Effect.catchAll(() => Effect.void),
+            Effect.as(""),
+          ),
+        ),
+      )
+
     let state = config.initialState
     const cortex = freshCortexState()
     let tick = 0
@@ -156,7 +171,13 @@ export const runCortex = (config: CortexLoopConfig) =>
             const r = eventProcessor.processEvent(event as never, state as never)
             if (r.stateUpdate) state = r.stateUpdate(state as never)
             if (r.log) r.log()
-          }).pipe(Effect.catchAll((e) => logToConsole(config.char.name, "error", `event error: ${e}`)))
+          }).pipe(
+            Effect.catchAll((e) =>
+              logError(config.char.name, "cortex", `event error: ${e}`).pipe(
+                Effect.catchAll(() => Effect.void),
+              ),
+            ),
+          )
           tickEvents.push(
             typeof event === "object" && event !== null
               ? `type: ${(event as Record<string, unknown>).type ?? "unknown"}\n${JSON.stringify(event)}`
@@ -225,15 +246,9 @@ export const runCortex = (config: CortexLoopConfig) =>
       if (cortex.currentPlan === null) {
         // 5a. Idle path: orient → decide → plan (unchanged from pre-4b).
         if (escalate) {
-          const background = yield* charFs
-            .readBackground(config.char)
-            .pipe(Effect.catchAll(() => Effect.succeed("")))
-          const values = yield* charFs
-            .readValues(config.char)
-            .pipe(Effect.catchAll(() => Effect.succeed("")))
-          const diary = yield* charFs
-            .readDiary(config.char)
-            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const background = yield* readOrEmpty("background", charFs.readBackground(config.char))
+          const values = yield* readOrEmpty("values", charFs.readValues(config.char))
+          const diary = yield* readOrEmpty("diary", charFs.readDiary(config.char))
           const orient = yield* runForebrain(
             runnerConfig,
             cortex.accumulatedEvents,
@@ -271,6 +286,18 @@ export const runCortex = (config: CortexLoopConfig) =>
             cortex.currentPlan = decide
             cortex.currentStepIndex = 0
             planHeadline = orient.headline
+          } else if (decide.decision === "plan") {
+            // Issue 4 (fail loud): the model decided "plan" but produced no
+            // actionable steps. The guard above correctly keeps it from going
+            // active, but dropping it silently hides a misbehaving model — an
+            // agent that keeps emitting empty plans would spin invisibly. Warn
+            // (not error): self-healing, since the next escalate tick re-orients.
+            yield* logToConsole(
+              config.char.name,
+              "cortex",
+              "decide=plan produced no actionable steps; dropped (will re-orient)",
+              "warn",
+            )
           }
         }
       } else {
@@ -279,15 +306,9 @@ export const runCortex = (config: CortexLoopConfig) =>
         // Runs on EVERY non-discard tick (spec §3-5b / §4); the cadence throttle
         // (DEFAULT_STEER_CADENCE_TICKS) + capacity-1 coalescing bound the actual steer turns.
         if (nonDiscard) {
-          const background = yield* charFs
-            .readBackground(config.char)
-            .pipe(Effect.catchAll(() => Effect.succeed("")))
-          const values = yield* charFs
-            .readValues(config.char)
-            .pipe(Effect.catchAll(() => Effect.succeed("")))
-          const diary = yield* charFs
-            .readDiary(config.char)
-            .pipe(Effect.catchAll(() => Effect.succeed("")))
+          const background = yield* readOrEmpty("background", charFs.readBackground(config.char))
+          const values = yield* readOrEmpty("values", charFs.readValues(config.char))
+          const diary = yield* readOrEmpty("diary", charFs.readDiary(config.char))
           const orient = yield* runForebrain(
             runnerConfig,
             cortex.accumulatedEvents,
@@ -307,7 +328,20 @@ export const runCortex = (config: CortexLoopConfig) =>
       if (cortex.currentPlan !== null && !consciousFiber) {
         const steps = planSteps(cortex.currentPlan)
         const step = steps[cortex.currentStepIndex]
-        if (step) {
+        if (isWedgedEmptyPlan(cortex.currentPlan)) {
+          // Issue 4 (structural invariant): an active plan with no executable
+          // steps would wedge the loop forever (no step → no execute → no
+          // evaluate → no advance). Unreachable via the guarded assignment site
+          // above, but assert it defensively: fail loudly with a structured error
+          // and self-heal by clearing the plan + forcing a fresh orient.
+          yield* logError(
+            config.char.name,
+            "cortex",
+            "invariant violation: active plan has no executable steps; resetting to re-orient",
+          ).pipe(Effect.catchAll(() => Effect.void))
+          cortex.currentPlan = null
+          cortex.lastOrientTick = 0
+        } else if (step) {
           const ticksConsumed = tick - stepStartTick
           // A step cannot be "over budget" before it has opened a session (forked its
           // first turn). Without this guard, a stale stepStartTick (e.g. a plan assigned
@@ -353,6 +387,11 @@ export const runCortex = (config: CortexLoopConfig) =>
             // old optional `diaryEntry` field the small conscious model omitted). The
             // turn is bounded and best-effort: a timeout or model error degrades to an
             // empty entry rather than stalling or crashing the loop.
+            //
+            // Issue 1 (fail loud): a timeout OR model error must NOT vanish — emit a
+            // structured kind:"error" event (distinguishing the timeout tag from a
+            // model error) before degrading to "". Losing one reflection is
+            // tolerable; losing it invisibly is not.
             const diaryEntry = yield* runDiaryTurn(runnerConfig, {
               charName: config.char.name,
               task: step.task,
@@ -363,17 +402,25 @@ export const runCortex = (config: CortexLoopConfig) =>
               emotionalState: cortex.emotionalWeight,
             }).pipe(
               Effect.timeout("30 seconds"),
-              Effect.catchAll(() => Effect.succeed("")),
+              Effect.catchAll((e) =>
+                logError(
+                  config.char.name,
+                  "cortex",
+                  `diary turn failed (${(e as { _tag?: string })._tag ?? "error"}); entry dropped: ${e}`,
+                ).pipe(Effect.catchAll(() => Effect.void), Effect.as("")),
+              ),
             )
             if (diaryEntry) {
-              const existing = yield* charFs
-                .readDiary(config.char)
-                .pipe(Effect.catchAll(() => Effect.succeed("")))
+              // Read the existing diary loudly too: a swallowed read here would
+              // clobber prior entries (existing="" → overwrite with just the new one).
+              const existing = yield* readOrEmpty("diary", charFs.readDiary(config.char))
               yield* charFs
                 .writeDiary(config.char, existing ? `${existing}\n\n${diaryEntry}` : diaryEntry)
                 .pipe(
                   Effect.catchAll((e) =>
-                    logToConsole(config.char.name, "error", `diary write failed: ${e}`),
+                    logError(config.char.name, "cortex", `diary write failed: ${e}`).pipe(
+                      Effect.catchAll(() => Effect.void),
+                    ),
                   ),
                 )
               yield* logToConsole(

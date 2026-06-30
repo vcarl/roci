@@ -103,6 +103,18 @@ export function discoverToPlan(
 }
 
 /**
+ * The execution-block invariant: an "active" plan (`currentPlan !== null`) whose
+ * actionable steps are empty. Such a plan would wedge the loop — the execution
+ * block keeps finding no step at `currentStepIndex`, never executes, never
+ * evaluates, never advances. The plan-assignment guard (`decideSteps(...).length
+ * > 0`) makes this unreachable through the normal path, so a `true` here signals
+ * a genuine invariant violation the loop must fail loudly on and self-heal from.
+ */
+export function isWedgedEmptyPlan(currentPlan: DecideResult | null): boolean {
+  return currentPlan !== null && decideSteps(currentPlan).length === 0
+}
+
+/**
  * Literal marker the conscious agent is instructed to print when it has fully
  * met the current step's success condition. 4b ships the mechanism; phrasing
  * robustness tuning and the escalation-request marker are Phase 4c.

@@ -17,7 +17,7 @@ import type { TurnConfig, TurnResult } from "./types.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog, logToConsole, logExchange } from "../../../logging/log-writer.js"
-import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand, openCodeBodyEnv } from "./payload.js"
+import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand, openCodeBodyEnv, wrapWithTimeout } from "./payload.js"
 import { runTransport } from "./transport.js"
 import { buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
 import { normalizeSdk, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
@@ -55,7 +55,9 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
     const { token } = yield* oauthToken.getToken
 
     const runtime = selectRuntime(config)
-    const innerCmd = buildInnerCommand(config, runtime)
+    // Issue 3: self-bound the in-container process so a host-side timeout/interrupt
+    // (which `docker exec` does not signal-forward) cannot orphan the agent.
+    const innerCmd = wrapWithTimeout(buildInnerCommand(config, runtime), config.timeoutMs)
     const execArgs = buildExecArgs(config, innerCmd, token)
 
     // Diagnostic: token prefix/suffix to verify it matches the saved file.
@@ -101,7 +103,9 @@ const runSdkWithStdin = (
     const oauthToken = yield* OAuthToken
     const { token } = yield* oauthToken.getToken
 
-    const innerCmd = buildSdkInnerCommand()
+    // Issue 3: self-bound the in-container process (see runTurn). `timeout`
+    // forwards stdin, so the runner's NDJSON task/steer stream still reaches it.
+    const innerCmd = wrapWithTimeout(buildSdkInnerCommand(), config.timeoutMs)
     const execArgs = buildExecArgs({ ...config, env: sdkEnv(config) }, innerCmd, token)
 
     const redactedArgs = execArgs.map((a) =>
@@ -180,7 +184,9 @@ export const runOpenCodeSessionTurn = (
     const oauthToken = yield* OAuthToken
     const { token } = yield* oauthToken.getToken
 
-    const innerCmd = buildOpenCodeSessionCommand(config, resume)
+    // Issue 3: self-bound the in-container process (see runTurn). The empty,
+    // immediately-closing stdin below is forwarded by `timeout` unchanged.
+    const innerCmd = wrapWithTimeout(buildOpenCodeSessionCommand(config, resume), config.timeoutMs)
     // Inject the env that lets opencode skip the firewall-blocked models.dev fetch
     // and fall back to the configured local provider (see openCodeBodyEnv).
     const execArgs = buildExecArgs({ ...config, env: openCodeBodyEnv(config) }, innerCmd, token)

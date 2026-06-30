@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest"
-import { selectRuntime, buildInnerArgs, buildInnerCommand, normalizerFor, shellEscape, openCodeBodyEnv } from "./payload.js"
+import {
+  selectRuntime,
+  buildInnerArgs,
+  buildInnerCommand,
+  normalizerFor,
+  shellEscape,
+  openCodeBodyEnv,
+  wrapWithTimeout,
+  CONTAINER_TIMEOUT_GRACE_SECONDS,
+  CONTAINER_TIMEOUT_KILL_AFTER_SECONDS,
+} from "./payload.js"
 import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import type { TurnConfig } from "./types.js"
 
@@ -86,6 +96,28 @@ describe("buildInnerCommand", () => {
   it("prefixes the opencode binary name", () => {
     const cfg: TurnConfig = { ...base, model: "gpt-4o" }
     expect(buildInnerCommand(cfg, "opencode").startsWith("opencode run")).toBe(true)
+  })
+})
+
+describe("wrapWithTimeout — in-container self-bounding (issue 3)", () => {
+  it("prefixes coreutils timeout with --kill-after and an in-container budget above the host turn budget", () => {
+    const inner = "opencode run --format json"
+    const wrapped = wrapWithTimeout(inner, 5000)
+    // SIGTERM at the budget, SIGKILL backstop --kill-after seconds later.
+    expect(wrapped.startsWith(`timeout --kill-after=${CONTAINER_TIMEOUT_KILL_AFTER_SECONDS}s `)).toBe(true)
+    // budget = ceil(5000/1000)=5 host seconds + grace → backstop only, host stays primary.
+    const expectedBudget = 5 + CONTAINER_TIMEOUT_GRACE_SECONDS
+    expect(wrapped).toContain(` ${expectedBudget}s ${inner}`)
+  })
+
+  it("leaves the original inner command intact as the timeout target (single foreground process, no pipeline)", () => {
+    const inner = "node /home/node/sdk-runner/sdk-runner.mjs"
+    expect(wrapWithTimeout(inner, 1000).endsWith(inner)).toBe(true)
+  })
+
+  it("never produces a sub-second or zero budget (floors the host seconds at 1)", () => {
+    const wrapped = wrapWithTimeout("x", 0)
+    expect(wrapped).toContain(` ${1 + CONTAINER_TIMEOUT_GRACE_SECONDS}s x`)
   })
 })
 

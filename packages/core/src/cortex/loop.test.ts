@@ -3,6 +3,7 @@ import { Effect, Layer, Queue, Fiber, Option } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import { runCortex } from "./loop.js"
 import { ModelClient } from "../model/client.js"
+import { ModelError } from "../model/errors.js"
 import type { ModelHandle } from "../model/handles.js"
 import { ConsciousThought, ConsciousThoughtTest } from "../conscious/conscious-thought.js"
 import { Docker } from "../services/Docker.js"
@@ -12,7 +13,7 @@ import { SituationClassifierTag } from "../core/limbic/thalamus/situation-classi
 import { InterruptRegistryTag } from "../core/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../core/state-renderer.js"
 import { PromptBuilderTag } from "../core/prompt-builder.js"
-import { CharacterFs } from "../services/CharacterFs.js"
+import { CharacterFs, CharacterFsError } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { STEP_DONE_MARKER } from "./state.js"
@@ -581,6 +582,247 @@ describe("runCortex (conscious-session executor)", () => {
     // The dedicated diary turn ran and appended its prose.
     expect(diaryWrites.length).toBeGreaterThanOrEqual(1)
     expect(diaryWrites.join("\n")).toContain("Fixture diary text.")
+  }, 20_000)
+
+  it("a decide=plan with no actionable steps is dropped LOUDLY (warn) and never goes active", async () => {
+    // Issue 4: a parseable `{"decision":"plan","steps":[]}` must NOT enter the
+    // active state (no conscious turn forked) AND must emit a warn-level log so the
+    // silent drop is diagnosable. A follow-up event re-escalates → second decide
+    // returns terminate so the loop completes deterministically.
+    const warnMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            if (event.kind === "system" && event.level === "warn") warnMessages.push(event.message)
+          }),
+      }),
+    )
+    let decideCount = 0
+    const emptyPlanClient = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return { text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}', raw: {} }
+            if (hasHeadline && !hasJudgment)
+              return { text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}', raw: {} }
+            // decide: first call → empty-steps plan (must be dropped); second → terminate.
+            decideCount++
+            if (decideCount === 1)
+              return { text: '{"decision":"plan","reasoning":"go","steps":[]}', raw: {} }
+            return { text: '{"decision":"terminate","reasoning":"stop"}', raw: {} }
+          }),
+      }),
+    )
+    let turnCount = 0
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => {
+      turnCount++
+      return { result: { output: "should never run", timedOut: false, durationMs: 1 }, sessionId: "ses_none" }
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "event-a" }) // tick 1: orient → decide=plan(empty) → dropped
+      yield* Effect.forkDaemon(
+        Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "event-b" }))),
+      )
+      const result = yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(emptyPlanClient, ctLayer, fakeDomain, Layer.mergeAll(fakeFs, recordingLog), fakeRuntimeDeps, noopModelService)))
+      return { result, turnCount }
+    })
+    const { result, turnCount: tc } = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The empty plan never went active — no conscious turn was forked.
+    expect(tc).toBe(0)
+    // The drop was loud: a warn-level log fired mentioning the dropped plan.
+    expect(warnMessages.some((m) => m.toLowerCase().includes("no actionable steps"))).toBe(true)
+  }, 20_000)
+
+  it("a failing diary turn is logged LOUDLY (kind:error) and degrades without stalling the loop", async () => {
+    // Issue 1: runDiaryTurn failing (model error) must NOT be swallowed silently.
+    // A structured kind:"error" event fires and the entry degrades to "" — the
+    // loop still completes (the dropped reflection is visible, not invisible).
+    const errorMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            if (event.kind === "error") errorMessages.push(event.message)
+          }),
+      }),
+    )
+    const diaryFailClient = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          // The diary turn (unique "plain prose" phrase) FAILS.
+          if (p.includes("plain prose"))
+            return Effect.fail(new ModelError({ tier: "forebrain", model: "m", baseUrl: "u", reason: "diary boom" }))
+          return Effect.sync(() => {
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return { text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}', raw: {} }
+            if (hasHeadline && !hasJudgment)
+              return { text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}', raw: {} }
+            return { text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}', raw: {} }
+          })
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: `task done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+      sessionId: "ses_diaryfail",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(diaryFailClient, ctLayer, fakeDomain, Layer.mergeAll(fakeFs, recordingLog), fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    expect(errorMessages.some((m) => m.toLowerCase().includes("diary turn failed"))).toBe(true)
+  }, 20_000)
+
+  it("swallowed identity reads (background/values/diary) now fail LOUDLY (kind:error)", async () => {
+    // Issue 1 folded scope: a failing identity/memory read must log a structured
+    // error before degrading to "" — the forebrain's loss of grounding must be
+    // diagnosable, not invisible. The loop still completes.
+    const errorMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            if (event.kind === "error") errorMessages.push(event.message)
+          }),
+      }),
+    )
+    const failingFs = Layer.succeed(
+      CharacterFs,
+      CharacterFs.of({
+        readDiary: () => Effect.fail(new CharacterFsError("diary read boom")),
+        writeDiary: () => Effect.void,
+        readSecrets: () => Effect.succeed(""),
+        writeSecrets: () => Effect.void,
+        readCredentials: () => Effect.succeed({ username: "", password: "" }),
+        readBackground: () => Effect.fail(new CharacterFsError("background read boom")),
+        readValues: () => Effect.fail(new CharacterFsError("values read boom")),
+        readPalette: () => Effect.succeed(""),
+        characterExists: () => Effect.succeed(true),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: `task done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+      sessionId: "ses_idfail",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, fakeDomain, Layer.mergeAll(failingFs, recordingLog), fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    const joined = errorMessages.join(" ").toLowerCase()
+    expect(joined).toContain("background")
+    expect(joined).toContain("values")
+    expect(joined).toContain("diary")
+  }, 20_000)
+
+  it("a throwing event processor fails LOUDLY (kind:error) without stopping the tick", async () => {
+    // The event-drain error path must emit a structured kind:"error" event (not an
+    // info-classified system line) and keep going — the tick still triages and the
+    // loop completes.
+    const errorMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            if (event.kind === "error") errorMessages.push(event.message)
+          }),
+      }),
+    )
+    const throwingDomain = Layer.mergeAll(
+      Layer.succeed(
+        EventProcessorTag,
+        EventProcessorTag.of({ processEvent: () => { throw new Error("boom event") } }),
+      ),
+      Layer.succeed(
+        SituationClassifierTag,
+        SituationClassifierTag.of({
+          summarize: () => ({ situation: {} as never, headline: "h", sections: [], metrics: {} }),
+        }),
+      ),
+      Layer.succeed(
+        InterruptRegistryTag,
+        InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals: () => [] }),
+      ),
+      Layer.succeed(
+        StateRendererTag,
+        StateRendererTag.of({ snapshot: () => ({}), richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
+      ),
+      Layer.succeed(PromptBuilderTag, PromptBuilderTag.of({ systemPrompt: () => "x" })),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+      sessionId: "ses_evt",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, throwingDomain, Layer.mergeAll(fakeFs, recordingLog), fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    expect(errorMessages.some((m) => m.toLowerCase().includes("event error"))).toBe(true)
   }, 20_000)
 
   it("returns Interrupted when a critical interrupt fires", async () => {

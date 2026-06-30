@@ -7,7 +7,7 @@ import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
 import { consolidate } from "../limbic/hippocampus/consolidate.js"
 import { dream } from "../limbic/hippocampus/dream.js"
 import type { Alert } from "../types.js"
-import { logToConsole } from "../../logging/log-writer.js"
+import { logToConsole, logError } from "../../logging/log-writer.js"
 import type { ModelConfig } from "../model-config.js"
 
 // ── Types ────────────────────────────────────────────────────
@@ -39,17 +39,27 @@ export const runReflection = (
   env?: Record<string, string>,
 ) =>
   Effect.gen(function* () {
+    // Issue 2 (fail loud, best-effort continuation): a consolidate/dream failure
+    // must NOT be a low-visibility info line (logToConsole(..., "error") emits a
+    // kind:"system" event that classifies to `info`). Emit a structured
+    // kind:"error" event instead — and do NOT halt: a one-cycle reflection skip
+    // is recoverable, but the next cycle proceeds with stale, unbounded memory,
+    // so the failure has to be loud and diagnosable.
     yield* logToConsole(char.name, "orchestrator", "Reflecting — consolidating diary...")
     yield* consolidate.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
       Effect.catchAll((e) =>
-        logToConsole(char.name, "error", `Consolidate failed: ${e}`),
+        logError(char.name, "hippocampus", `Consolidate failed: ${e}`).pipe(
+          Effect.catchAll(() => Effect.void),
+        ),
       ),
     )
 
     yield* logToConsole(char.name, "orchestrator", "Reflecting — dreaming (cull)...")
     yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
       Effect.catchAll((e) =>
-        logToConsole(char.name, "error", `Dream failed: ${e}`),
+        logError(char.name, "hippocampus", `Dream failed: ${e}`).pipe(
+          Effect.catchAll(() => Effect.void),
+        ),
       ),
     )
   })
@@ -84,7 +94,8 @@ export const runBreak = (config: BreakConfig) =>
             eventProcessor.processEvent(event, currentState)
           ).pipe(
             Effect.catchAll((e) =>
-              logToConsole(config.char.name, "error", `Event processing error during break: ${e}`).pipe(
+              logError(config.char.name, "orchestrator", `Event processing error during break: ${e}`).pipe(
+                Effect.catchAll(() => Effect.void),
                 Effect.map(() => ({ category: undefined, stateUpdate: undefined, log: undefined })),
               ),
             ),

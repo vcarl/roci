@@ -4,7 +4,7 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { FileSystem } from "@effect/platform"
 import * as os from "node:os"
 import * as path from "node:path"
-import { CharacterLog, CharacterLogLive, logToConsole, logExchange } from "./log-writer.js"
+import { CharacterLog, CharacterLogLive, logToConsole, logExchange, logError } from "./log-writer.js"
 import { ProjectRoot } from "../services/ProjectRoot.js"
 
 let tmp: string
@@ -60,6 +60,21 @@ describe("CharacterLog emit", () => {
     process.env.LOG_LEVEL = "info"
     await run(logToConsole("c", "cortex", "decided"))
     expect(logSpy.mock.calls.flat().some((a) => String(a).includes("decided"))).toBe(true)
+  })
+
+  it("logError emits a structured kind:error event resolved at error level", async () => {
+    const contents = await readJsonl(logError("c", "hippocampus", "Consolidate failed: boom"))
+    const line = JSON.parse(contents.trim().split("\n").pop() as string)
+    expect(line.kind).toBe("error")
+    expect(line.level).toBe("error")
+    expect(line.message).toBe("Consolidate failed: boom")
+    expect(line.subsystem).toBe("hippocampus")
+  })
+
+  it("logError renders to console even under a warn threshold (error outranks it)", async () => {
+    process.env.LOG_LEVEL = "warn"
+    await run(logError("c", "cortex", "diary turn failed"))
+    expect(logSpy.mock.calls.flat().some((a) => String(a).includes("diary turn failed"))).toBe(true)
   })
 
   it("logExchange writes the full prompt and response to jsonl at debug", async () => {

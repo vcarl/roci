@@ -99,6 +99,39 @@ export function buildInnerCommand(config: TurnConfig, runtime: AgentRuntime): st
 }
 
 /**
+ * Issue 3: seconds added to the host turn budget for the in-container backstop.
+ * The in-container `timeout` budget is set ABOVE the host wall-clock timeout so
+ * the host transport timeout stays primary (observable timeout behavior is
+ * unchanged); the in-container `timeout` only reaps a process the host has
+ * abandoned. `docker exec` does NOT signal-forward the death of its host-side
+ * client to the in-container process, so without this an interrupted/timed-out
+ * turn orphans the agent inside the container (CPU/RAM + a held model-server
+ * connection). This bounds that orphan's lifetime to budget + kill-after.
+ */
+export const CONTAINER_TIMEOUT_GRACE_SECONDS = 60
+
+/**
+ * Seconds between `timeout`'s SIGTERM and its SIGKILL backstop (`--kill-after`).
+ * SIGTERM lets the agent shut down cleanly; SIGKILL guarantees death even if the
+ * agent ignores SIGTERM. The inner command is always a single foreground process
+ * (claude / opencode / node sdk-runner) — `timeout`'s direct child — so the
+ * signal reaches the agent directly with no intervening pipeline.
+ */
+export const CONTAINER_TIMEOUT_KILL_AFTER_SECONDS = 10
+
+/**
+ * Wrap an inner command so it self-terminates inside the container at a wall-clock
+ * budget, independent of the host. Uses coreutils `timeout` (always present on the
+ * Debian `node:20` image). The budget is the host turn seconds plus a grace margin,
+ * so it is a backstop, not the primary timeout. See CONTAINER_TIMEOUT_GRACE_SECONDS.
+ */
+export function wrapWithTimeout(innerCmd: string, timeoutMs: number): string {
+  const hostSeconds = Math.max(1, Math.ceil(timeoutMs / 1000))
+  const budgetSeconds = hostSeconds + CONTAINER_TIMEOUT_GRACE_SECONDS
+  return `timeout --kill-after=${CONTAINER_TIMEOUT_KILL_AFTER_SECONDS}s ${budgetSeconds}s ${innerCmd}`
+}
+
+/**
  * Env vars the opencode body invocation needs inside the network-locked container.
  *
  * opencode otherwise tries to fetch its model registry from

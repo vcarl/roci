@@ -77,6 +77,26 @@ export const logToConsole = (
   })
 
 /**
+ * Emit a structured `kind:"error"` event. Unlike `logToConsole(..., "error")`
+ * — which emits a `kind:"system"` line whose `source` arg is cosmetic and which
+ * classifies to `info` — this builds a true error event (`classifyLevel` resolves
+ * it to `error`, so it outranks any console threshold) for genuine failure sites.
+ * `source` maps to both `system` and `subsystem`, mirroring `logToConsole`.
+ */
+export const logError = (
+  character: string,
+  source: string,
+  message: string,
+) =>
+  Effect.gen(function* () {
+    const log = yield* CharacterLog
+    yield* log.emit(
+      { name: character, dir: "" } as CharacterConfig,
+      { ...eventBase(character, source, source), kind: "error", message },
+    )
+  })
+
+/**
  * Emit a structured prompt+response exchange. Full content is stored in
  * events.jsonl; classifyLevel ranks it `debug`, so it stays out of the default
  * console view. Tag is [character:step].

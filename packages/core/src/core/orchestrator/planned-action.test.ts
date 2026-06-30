@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Queue } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { CommandExecutor } from "@effect/platform"
 
@@ -9,11 +9,15 @@ vi.mock("../limbic/hypothalamus/process-runner.js", () => ({
   runTurn: runTurnMock,
 }))
 
-import { runReflection } from "./planned-action.js"
+import { runReflection, runBreak } from "./planned-action.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
 import { DEFAULT_MODEL_CONFIG } from "../model-config.js"
+import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
+import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
+import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
+import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
 
 const char = { name: "ada", dir: "/work/players/ada/me" }
 
@@ -93,6 +97,59 @@ describe("runReflection — per-cycle consolidate then cull", () => {
     expect(call).toBe(3)
   })
 
+  it("logs a STRUCTURED error (kind:error) and continues when consolidate fails", async () => {
+    const fs = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+    const errorMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_c, e) => Effect.sync(() => { if (e.kind === "error") errorMessages.push(e.message) }),
+      }),
+    )
+    // Call 1 = consolidate (fails); calls 2,3 = dream culls (succeed).
+    let call = 0
+    runTurnMock.mockImplementation(() => {
+      call++
+      if (call === 1) return Effect.fail(new Error("consolidate boom"))
+      return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+    })
+
+    const program = runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
+      Effect.provide(Layer.mergeAll(fs.layer, recordingLog, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)),
+    )
+    // Must NOT throw — reflection is best-effort; the agent keeps running.
+    await run(program as Effect.Effect<unknown, unknown, never>)
+
+    expect(errorMessages.some((m) => m.toLowerCase().includes("consolidate"))).toBe(true)
+    // The dream cull still ran after the consolidate failure (best-effort continuation).
+    expect(call).toBe(3)
+  })
+
+  it("logs a STRUCTURED error (kind:error) and continues when dream (cull) fails", async () => {
+    const fs = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+    const errorMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_c, e) => Effect.sync(() => { if (e.kind === "error") errorMessages.push(e.message) }),
+      }),
+    )
+    // Call 1 = consolidate (succeeds); call 2 = dream diary cull (fails).
+    let call = 0
+    runTurnMock.mockImplementation(() => {
+      call++
+      if (call === 1) return Effect.succeed({ output: "CONSOLIDATED", timedOut: false, durationMs: 1 })
+      return Effect.fail(new Error("dream boom"))
+    })
+
+    const program = runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
+      Effect.provide(Layer.mergeAll(fs.layer, recordingLog, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)),
+    )
+    await run(program as Effect.Effect<unknown, unknown, never>)
+
+    expect(errorMessages.some((m) => m.toLowerCase().includes("dream"))).toBe(true)
+  })
+
   it("consolidates the diary BEFORE the cull and writes the consolidate output", async () => {
     const fs = makeFs({ diary: lines(3, "raw"), secrets: lines(4, "sec") })
 
@@ -112,5 +169,44 @@ describe("runReflection — per-cycle consolidate then cull", () => {
     // The first diary write came from consolidate, before the cull's write.
     expect(fs.diaryWrites[0]).toBe("CONSOLIDATED_OUTPUT")
     expect(fs.diaryWrites).toContain("CONSOLIDATED_OUTPUT")
+  })
+})
+
+describe("runBreak — event-processing error path", () => {
+  it("logs a STRUCTURED error (kind:error) on a throwing processEvent and keeps draining", async () => {
+    const errorMessages: string[] = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_c, e) => Effect.sync(() => { if (e.kind === "error") errorMessages.push(e.message) }),
+      }),
+    )
+    const throwingProcessor = Layer.succeed(
+      EventProcessorTag,
+      EventProcessorTag.of({ processEvent: () => { throw new Error("boom") } }),
+    )
+    const classifier = Layer.succeed(
+      SituationClassifierTag,
+      SituationClassifierTag.of({
+        summarize: () => ({ situation: {} as never, headline: "h", sections: [], metrics: {} }),
+      }),
+    )
+    const interrupts = Layer.succeed(
+      InterruptRegistryTag,
+      InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals: () => [] }),
+    )
+    // A tiny break window so the loop drains the bad event then exits promptly.
+    const tempo = { breakDurationMs: 1, breakPollIntervalSec: 0 } as unknown as PlannedActionTempo
+
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "x" })
+      return yield* runBreak({ char, events, initialState: {}, tempo })
+    }).pipe(Effect.provide(Layer.mergeAll(throwingProcessor, classifier, interrupts, recordingLog)))
+
+    const result = await Effect.runPromise(program as Effect.Effect<{ _tag: string }, unknown, never>)
+    // Control flow unchanged: best-effort, the break still completes.
+    expect(result._tag).toBe("Completed")
+    expect(errorMessages.some((m) => m.toLowerCase().includes("event processing error during break"))).toBe(true)
   })
 })

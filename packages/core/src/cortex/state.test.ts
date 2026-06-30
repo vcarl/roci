@@ -6,6 +6,7 @@ import {
   planSteps,
   decideSteps,
   discoverToPlan,
+  isWedgedEmptyPlan,
   isWellFormedDiscover,
   STEP_DONE_MARKER,
   detectCompletion,
@@ -97,6 +98,35 @@ describe("planSteps — array safety (delegates to decideSteps)", () => {
   it("returns [] for a plan decision with a non-array steps (no crash)", () => {
     const malformed = { decision: "plan", reasoning: "go", steps: null } as unknown as DecideResult
     expect(planSteps(malformed)).toEqual([])
+  })
+})
+
+// The execution-block invariant (issue 4): an "active" plan with no executable
+// steps is a wedge — the loop would spin forever on an absent step. The entry
+// guard (decideSteps length>0 at the plan-assignment site) makes this unreachable
+// today, but isWedgedEmptyPlan lets the execution block assert it defensively so
+// any future violating path fails loudly + self-heals instead of hanging.
+describe("isWedgedEmptyPlan — execution-block invariant", () => {
+  it("is false when there is no active plan", () => {
+    expect(isWedgedEmptyPlan(null)).toBe(false)
+  })
+  it("is false for an active plan with executable steps", () => {
+    const plan: DecideResult = {
+      decision: "plan",
+      reasoning: "go",
+      steps: [{ task: "t", goal: "g", tier: "fast", successCondition: "c", timeoutTicks: 2 }],
+    }
+    expect(isWedgedEmptyPlan(plan)).toBe(false)
+  })
+  it("is true for an active plan with an empty steps array", () => {
+    const empty: DecideResult = { decision: "plan", reasoning: "go", steps: [] }
+    expect(isWedgedEmptyPlan(empty)).toBe(true)
+  })
+  it("is true for an active plan with missing/non-array steps", () => {
+    const missing = { decision: "plan", reasoning: "go" } as unknown as DecideResult
+    const nonArray = { decision: "plan", reasoning: "go", steps: "soon" } as unknown as DecideResult
+    expect(isWedgedEmptyPlan(missing)).toBe(true)
+    expect(isWedgedEmptyPlan(nonArray)).toBe(true)
   })
 })
 
