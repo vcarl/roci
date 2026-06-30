@@ -60,11 +60,12 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
     const innerCmd = wrapWithTimeout(buildInnerCommand(config, runtime), config.timeoutMs)
     const execArgs = buildExecArgs(config, innerCmd, token)
 
-    // Diagnostic: token prefix/suffix to verify it matches the saved file.
+    // Diagnostic: confirm a token was resolved without leaking any of its value.
     yield* logToConsole(
       config.char.name,
       config.role,
-      `token len=${token.length} prefix=${token.slice(0, 15)}... suffix=...${token.slice(-10)}`,
+      `oauth token resolved=${token.length > 0}`,
+      "debug",
     )
     // Log the full docker exec command (redact token values).
     const redactedArgs = execArgs.map((a) =>
