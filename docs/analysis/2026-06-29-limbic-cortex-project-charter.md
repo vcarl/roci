@@ -461,3 +461,55 @@ All three blocker spikes PASSED; implementation gate lifted. Pinned parameters:
 - **Decision:** GO. Embed model bge-small/384-dim, sqlite-vec 0.1.9, WAL +
   in-container-only. FTS5 hybrid carried as a documented later optimization for
   exact-fact recall, not part of B's core.
+
+### Subteam B — outcome (2026-06-30): SHIPPED
+
+Implemented test-first (pure helpers → CLI → embed client → provisioning →
+promotion → roci wiring), independently reviewed (APPROVE-WITH-NITS, all folded),
+then **live-integration-QA'd** before commit. Core suite 626 passed / 4 skipped;
+4-project build green. Committed in 6 logical commits on `worktree-dream-sequence`
+(not pushed):
+- `b2b9d8f` docs(memory): design spec + charter record.
+- `48188e0` feat(memory): append-only sqlite-vec store engine + baked `vec0.so`
+  (memory-sql/args/format/embed; linux-arm64 0.1.9 extension baked into both
+  domain images; firewall host-gateway note).
+- `e0cb2a9` feat(memory): `memory` subprocess CLI (`remember/search/recent`,
+  bun, clone of `frontier`) + `LongtermStore` seam; `Docker.exec` gained a `user`
+  opt; provisions as root + fail-loud; tool documented in the agent prompt.
+- `6b13846` feat(memory): pre-cull raw-diary promotion in `runReflection` with a
+  bounded `{len,hash}` high-water mark; best-effort, never blocks the cull.
+- `d722f3b` feat(roci): provide `LongtermStoreLive` + auto-launch the host
+  embed server in `roci start` (resilient sibling, log-and-continue).
+- `9ddcff4` fix(conscious): provision the `frontier` CLI as root (pre-existing
+  bug, see QA below).
+
+**Live integration QA (the gate that earned its keep).** Exercised the real
+generated `memory` CLI in a real container against the live `mlx-embeddings`
+server: retrieval ranks correctly on every query, planted-fact paraphrase recall
+works, promotion + `mark-get/set` round-trip. It caught a **production blocker
+unit tests + static review both missed** — `provisionMemoryCli` wrote root-owned
+`/usr/local/bin` while execing as the default `node` user → silent
+`Permission denied`, CLI never installs. Fixed by provisioning as root + failing
+loud. The same QA surfaced the **identical pre-existing bug in the shipped
+`frontier` tool** (fixed in `9ddcff4`).
+
+**Deferred follow-ups (carry forward):**
+- **`ROCI_EMBED_PYTHON` operational wiring (highest-priority to make the feature
+  live).** The embed launcher resolves Python via `ROCI_EMBED_PYTHON` (default
+  `python3`), but `mlx-embeddings` lives in the `~/llm-env` venv — so out of the
+  box the server logs-loud-and-skips and long-term memory stays **dormant** until
+  the user sets `ROCI_EMBED_PYTHON=~/llm-env/bin/python` or runs `roci` from the
+  activated venv (same operational requirement as `mlx_lm.server` on PATH).
+  Candidate: default it to the known venv python, or document in the runbook.
+- **Embed retry/timeout.** A slow cold first embed throws (`HTTP <status>`) and
+  aborts the `remember`/`search`; no backoff (mirrors the cortex transport-retry
+  gap in `roci-qa` CALIBRATION).
+- **`frontier` fail-loud.** Its provisioning still swallows errors
+  (`catchAll(() => void)`); only the root-exec fix was applied (scope).
+- **FTS5 hybrid** for exact-fact recall (one planted-fact miss in QA; vectors
+  still beat FTS5 there) — later optimization.
+- **Read-seam retrieval (spec Unit 8).** Backing the whole-file diary reads at
+  `cortex/loop.ts:316-318/410-412` (+ consolidate/dream reads) with retrieval —
+  deferred because it touches the hot loop.
+- **Tuning note:** bge-small scores are compressed (~0.46–0.62); KNN ordering is
+  reliable but an absolute score threshold is risky.
