@@ -48,7 +48,28 @@ describe("scaffoldCharacter", () => {
     )
     expect(existsSync(path.join(meDir("tmpl"), "background.md"))).toBe(true)
     expect(readFileSync(path.join(meDir("tmpl"), "DIARY.md"), "utf-8")).toContain("# Diary")
+    // DRIVES.md is written from the core template even with no description.
+    expect(readFileSync(path.join(meDir("tmpl"), "DRIVES.md"), "utf-8")).toContain("- agency —")
     expect(out.summary).toBeUndefined()
+  })
+
+  it("merges the domain's domainDrives into DRIVES.md alongside the core drives", async () => {
+    const domainWithDrives = {
+      identityTemplate: {
+        backgroundHints: "h",
+        valuesHints: "v",
+        domainDrives: [{ name: "voyage", description: "progress toward your destination" }],
+      },
+    } as unknown as DomainConfig
+    await Effect.runPromise(
+      Effect.provide(
+        scaffoldCharacter({ projectRoot: root, characterName: "merged", domainConfig: domainWithDrives, review: autoAcceptReview }),
+        layers,
+      ),
+    )
+    const drives = readFileSync(path.join(meDir("merged"), "DRIVES.md"), "utf-8")
+    expect(drives).toContain("- safety —")
+    expect(drives).toContain("- voyage — progress toward your destination")
   })
 
   it("with a description generates each artifact and accepts them", async () => {
@@ -67,12 +88,13 @@ describe("scaffoldCharacter", () => {
   })
 
   it("regenerate threads feedback then accept; skip writes template", async () => {
-    // step order: background, values, palette, diary, summary
+    // step order: background, values, palette, drives, diary, summary
     const review = scriptedReview([
       { action: "regenerate", feedback: "grimmer" },        // background: re-roll once
       { action: "accept", content: "BG-OK" },               // background: accept edited
       { action: "accept", content: "VAL-OK" },              // values
       { action: "skip" },                                    // palette → TEMPLATE_PALETTE
+      { action: "skip" },                                    // drives → core+domain template
       { action: "accept", content: "# Diary\nstuff" },      // diary
       { action: "accept", content: "summary text" },        // summary
     ])
@@ -88,6 +110,10 @@ describe("scaffoldCharacter", () => {
     expect(readFileSync(path.join(meDir("mix"), "background.md"), "utf-8")).toContain("BG-OK")
     // skipped palette falls to the template default
     expect(readFileSync(path.join(meDir("mix"), "PALETTE.md"), "utf-8")).toContain("→")
+    // skipped drives falls to the core+domain template (DRIVES.md is written)
+    const drives = readFileSync(path.join(meDir("mix"), "DRIVES.md"), "utf-8")
+    expect(drives).toContain("# Drives")
+    expect(drives).toContain("- safety —")
   })
 
   it("never overwrites an existing file", async () => {

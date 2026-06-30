@@ -3,6 +3,7 @@ import {
   buildBackgroundPrompt,
   buildValuesPrompt,
   buildPalettePrompt,
+  buildDrivesPrompt,
   buildDiaryPrompt,
   buildSummaryPrompt,
   promptForStep,
@@ -42,6 +43,13 @@ describe("prompt builders", () => {
     expect(p).toContain("VAL")
     // 8 numbered example structures
     for (let n = 1; n <= 8; n++) expect(p).toContain(`${n}.`)
+  })
+
+  it("drives prompt threads the base drive block and demands stable names + line format", () => {
+    const p = buildDrivesPrompt({ ...base, background: "BG", values: "VAL", baseDrives: "- safety — DRIVE-MARKER" })
+    expect(p).toContain("DRIVE-MARKER")
+    expect(p).toContain("VAL")
+    expect(p.toLowerCase()).toContain("do not rename")
   })
 
   it("summary prompt asks for exactly 4 sentences from the background", () => {

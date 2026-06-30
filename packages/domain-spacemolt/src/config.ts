@@ -135,5 +135,12 @@ export const spaceMoltDomainConfig = (projectRoot: string): DomainConfig => ({
     valuesHints:
       "Your priorities include resource management, faction loyalty, combat readiness, exploration of unknown sectors, " +
       "and maintaining social relationships with allies and rivals.",
+    domainDrives: [
+      {
+        name: "voyage",
+        description:
+          "progress toward your destination and mission: making headway, reaching the next system, completing the run you set out on.",
+      },
+    ],
   },
 })

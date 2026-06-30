@@ -88,5 +88,15 @@ export interface DomainConfig {
 	readonly identityTemplate?: {
 		readonly backgroundHints: string;
 		readonly valuesHints: string;
+		/**
+		 * Domain-specific innate drives, merged with the 3 core drives
+		 * (safety/sustenance/agency) into the character's DRIVES.md at scaffold /
+		 * identity-gen time. A closed `{name, description}` vocabulary so the
+		 * per-event `ObserveResult.drive` field picks from a known set (§3.3).
+		 */
+		readonly domainDrives?: ReadonlyArray<{
+			readonly name: string;
+			readonly description: string;
+		}>;
 	};
 }

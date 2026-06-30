@@ -261,5 +261,12 @@ export const gitHubDomainConfig = (projectRoot: string): DomainConfig => ({
     valuesHints:
       "Your priorities include code review thoroughness, issue triage responsiveness, CI health and test coverage, " +
       "and fostering constructive collaboration practices across contributors.",
+    domainDrives: [
+      {
+        name: "stewardship",
+        description:
+          "the health and forward progress of the repositories you tend: green CI, reviewed PRs, triaged issues, a codebase that stays maintainable.",
+      },
+    ],
   },
 })

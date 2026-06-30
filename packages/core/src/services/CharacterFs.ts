@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
+import { TEMPLATE_DRIVES } from "../core/drives.js"
 
 export interface Credentials {
   username: string
@@ -30,6 +31,7 @@ export class CharacterFs extends Context.Tag("CharacterFs")<
     readonly readBackground: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly readValues: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly readPalette: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
+    readonly readDrives: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly characterExists: (char: CharacterConfig) => Effect.Effect<boolean, CharacterFsError>
   }
 >() {}
@@ -99,6 +101,9 @@ export const CharacterFsLive = Layer.effect(
 
       readPalette: (char) =>
         readFileOr(path.join(char.dir, "PALETTE.md"), TEMPLATE_PALETTE),
+
+      readDrives: (char) =>
+        readFileOr(path.join(char.dir, "DRIVES.md"), TEMPLATE_DRIVES),
 
       characterExists: (char) =>
         fs.exists(char.dir).pipe(

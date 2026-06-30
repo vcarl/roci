@@ -8,6 +8,7 @@ import type { ModelService } from "../services/ModelService.js"
 import type { ModelError } from "../model/errors.js"
 import type { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { TEMPLATE_PALETTE, paletteFile } from "./palette.js"
+import { renderDriveLines, drivesFile } from "./drives.js"
 import {
   promptForStep,
   type IdentityContext,
@@ -115,11 +116,20 @@ export const scaffoldCharacter = (opts: {
       ? VALUES_TEMPLATE + `\n## Domain Context\n\n${identityTemplate.valuesHints}\n`
       : VALUES_TEMPLATE
     let paletteBody = TEMPLATE_PALETTE
+    // Core drives + this domain's drives — the scaffold default; identity-gen may
+    // personalize the descriptions/voice while the names stay stable (§3.3).
+    const domainDrives = opts.domainConfig.identityTemplate?.domainDrives
+    let driveBody = renderDriveLines(domainDrives)
     let diaryContent = DIARY_TEMPLATE
     let summary: string | undefined
 
     if (characterDescription) {
-      const ctx: IdentityContext = { characterName, characterDescription, identityTemplate }
+      const ctx: IdentityContext = {
+        characterName,
+        characterDescription,
+        identityTemplate,
+        baseDrives: driveBody,
+      }
 
       const bg = yield* runStep("background", ctx, opts.cortexModels, review)
       if (bg.kind === "content") {
@@ -136,6 +146,9 @@ export const scaffoldCharacter = (opts: {
       const pal = yield* runStep("palette", ctx, opts.cortexModels, review)
       if (pal.kind === "content") paletteBody = pal.value.trim()
 
+      const drv = yield* runStep("drives", ctx, opts.cortexModels, review)
+      if (drv.kind === "content") driveBody = drv.value.trim()
+
       const diary = yield* runStep("diary", ctx, opts.cortexModels, review)
       if (diary.kind === "content") diaryContent = diary.value.trim() + "\n"
 
@@ -149,6 +162,7 @@ export const scaffoldCharacter = (opts: {
       { name: "background.md", content: backgroundContent },
       { name: "VALUES.md", content: valuesContent },
       { name: "PALETTE.md", content: paletteFile(paletteBody) },
+      { name: "DRIVES.md", content: drivesFile(driveBody) },
       { name: "DIARY.md", content: diaryContent },
       { name: "SECRETS.md", content: SECRETS_TEMPLATE },
     ]

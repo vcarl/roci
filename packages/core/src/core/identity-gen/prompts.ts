@@ -1,4 +1,4 @@
-export type IdentityStep = "background" | "values" | "palette" | "diary" | "summary"
+export type IdentityStep = "background" | "values" | "palette" | "drives" | "diary" | "summary"
 
 export interface IdentityContext {
   characterName: string
@@ -7,6 +7,9 @@ export interface IdentityContext {
   /** Approved prior artifacts, threaded forward as later steps are generated. */
   background?: string
   values?: string
+  /** The merged core+domain drive block — the base the drives step personalizes
+   *  (names stay stable, descriptions/voice may be tuned to the character). */
+  baseDrives?: string
   /** Operator feedback to steer a regeneration of the current step. */
   feedback?: string
 }
@@ -52,6 +55,23 @@ Give this character 4-6 emotional axes — the axes they feel along (their nonve
 Output ONLY the axis lines, no commentary.`
 }
 
+export const buildDrivesPrompt = (ctx: IdentityContext): string => {
+  return `You are personalizing the innate DRIVES for an AI character named "${ctx.characterName}".
+
+Approved background:
+${ctx.background ?? "(none)"}
+
+Approved values:
+${ctx.values ?? "(none)"}
+
+Here are this character's drives — the survival motivators the character weighs every event against. The FIRST three (safety, sustenance, agency) are universal core drives; any below them are domain-specific:
+${ctx.baseDrives ?? "(none)"}
+${feedbackBlock(ctx)}
+Rewrite ONLY the descriptions so they speak in THIS character's voice and world, while keeping the meaning and the same set of drive NAMES (do not rename, add, or drop drives). Keep the exact "- <name> — <description>" line format, one drive per line.
+
+Output ONLY the drive lines, no commentary.`
+}
+
 export const buildDiaryPrompt = (ctx: IdentityContext): string => {
   return `You are designing the DIARY structure for an AI character named "${ctx.characterName}".
 
@@ -90,6 +110,8 @@ export const promptForStep = (step: IdentityStep, ctx: IdentityContext): string 
       return buildValuesPrompt(ctx)
     case "palette":
       return buildPalettePrompt(ctx)
+    case "drives":
+      return buildDrivesPrompt(ctx)
     case "diary":
       return buildDiaryPrompt(ctx)
     case "summary":
