@@ -9,6 +9,8 @@ import { dream } from "../limbic/hippocampus/dream.js"
 import type { Alert } from "../types.js"
 import { logToConsole, logError } from "../../logging/log-writer.js"
 import type { ModelConfig } from "../model-config.js"
+import { CharacterFs } from "../../services/CharacterFs.js"
+import { LongtermStore, newSinceMark, diaryMark } from "../../conscious/longterm-store.js"
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -45,6 +47,42 @@ export const runReflection = (
     // kind:"error" event instead — and do NOT halt: a one-cycle reflection skip
     // is recoverable, but the next cycle proceeds with stale, unbounded memory,
     // so the failure has to be loud and diagnosable.
+    // Deterministic promotion of RAW episodic entries (spec §5 Route 2 / §1.3),
+    // run BEFORE consolidate rewrites the diary and before the destructive cull —
+    // this is the rawest text available at this in-scope reflection seam. The loop
+    // only appends `\n\n`-separated entries during a session, so the diary left by
+    // the previous reflection is a verbatim PREFIX of the current one; a bounded
+    // high-water mark (length + sha256 of that previous diary, in the db's meta
+    // table) isolates exactly the new appends — no full-history scan, no
+    // re-promotion across cycles. BEST-EFFORT: any embed/write failure logs loud
+    // (kind:error) and does NOT block consolidate/cull (anti-loss skip).
+    yield* Effect.gen(function* () {
+      const charFs = yield* CharacterFs
+      const store = yield* LongtermStore
+      const diary = yield* charFs.readDiary(char)
+      const mark = yield* store.readMark(containerId, char)
+      const fresh = newSinceMark(diary, mark)
+      if (fresh.length === 0) return
+      const n = yield* store.promote(containerId, char, fresh)
+      yield* logToConsole(
+        char.name,
+        "orchestrator",
+        `Reflecting — promoted ${n} raw diary entr${n === 1 ? "y" : "ies"} to long-term memory before cull`,
+      )
+    }).pipe(
+      Effect.catchAll((e) =>
+        logError(char.name, "hippocampus", `Long-term promotion failed: ${e}`).pipe(
+          Effect.catchAll(() => Effect.void),
+        ),
+      ),
+    )
+
+    // Issue 2 (fail loud, best-effort continuation): a consolidate/dream failure
+    // must NOT be a low-visibility info line (logToConsole(..., "error") emits a
+    // kind:"system" event that classifies to `info`). Emit a structured
+    // kind:"error" event instead — and do NOT halt: a one-cycle reflection skip
+    // is recoverable, but the next cycle proceeds with stale, unbounded memory,
+    // so the failure has to be loud and diagnosable.
     yield* logToConsole(char.name, "orchestrator", "Reflecting — consolidating diary...")
     yield* consolidate.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
       Effect.catchAll((e) =>
@@ -58,6 +96,24 @@ export const runReflection = (
     yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
       Effect.catchAll((e) =>
         logError(char.name, "hippocampus", `Dream failed: ${e}`).pipe(
+          Effect.catchAll(() => Effect.void),
+        ),
+      ),
+    )
+
+    // Re-baseline the promotion high-water mark to the diary AS LEFT by this
+    // reflection (post-consolidate + cull). Next cycle's session appends to this
+    // exact text, so marking it now lets the next promotion isolate only the new
+    // raw appends. Best-effort: a failure leaves a stale mark, which the prefix
+    // check degrades to a whole-diary re-promotion (anti-loss), logged loud.
+    yield* Effect.gen(function* () {
+      const charFs = yield* CharacterFs
+      const store = yield* LongtermStore
+      const culled = yield* charFs.readDiary(char)
+      yield* store.writeMark(containerId, char, diaryMark(culled))
+    }).pipe(
+      Effect.catchAll((e) =>
+        logError(char.name, "hippocampus", `Long-term mark update failed: ${e}`).pipe(
           Effect.catchAll(() => Effect.void),
         ),
       ),
