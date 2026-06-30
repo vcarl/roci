@@ -1,12 +1,12 @@
 # GitHub Domain
 
-AI agents that manage GitHub repositories through persistent channel sessions. Each character monitors a set of repos, triages issues, reviews PRs, investigates CI failures, and implements code changes -- all within a structured cycle of work and reflection.
+AI agents that manage GitHub repositories through the cortex loop. Each character monitors a set of repos, triages issues, reviews PRs, investigates CI failures, and implements code changes -- all within a structured cycle of work and reflection.
 
 ## Execution Model
 
-The GitHub domain uses a persistent channel session (`runChannelSession` from `core/orchestrator/channel-session.ts`). The orchestrator spawns a `claude --channels` process in Docker and pushes state updates every 30 seconds.
+The GitHub domain runs on the cortex loop (`runCortex` from `@roci/core/cortex/loop.js`). State updates arrive as events every 30 seconds; the loop runs tool-using work as an OpenCode session inside Docker.
 
-The session receives:
+The loop receives:
 - An **initial task** with the full situation briefing, agent identity, and work instructions
 - **Tick events** every 30 seconds with state diffs, situation summaries, and soft alerts
 - **Alert events** immediately when the event processor detects something urgent
@@ -23,11 +23,11 @@ startup --> active --> break --> reflection --> active (loop)
 
 - **startup** -- Reads `github.json`, validates the token against `/user`, clones all configured repos into `/work/repos/owner--repo`, creates worktree directories, starts the `GitHubClient` polling fiber.
 
-- **active** -- Runs `runChannelSession` with the domain bundle. On completion, transitions to `break`. If a critical interrupt fires, returns `Interrupted` and re-enters `active` immediately.
+- **active** -- Runs `runCortex` with the domain bundle. On completion, transitions to `break`. If a critical interrupt fires, returns `Interrupted` and re-enters `active` immediately.
 
 - **break** -- Sleeps for 90 minutes via `runBreak`, polling for critical interrupts every 5 seconds. If a critical fires (e.g., CI starts failing), exits early to `active`. Otherwise, proceeds to `reflection`.
 
-- **reflection** -- Runs `runReflection` to compress the diary if it exceeds 200 lines (the dream threshold). Always transitions back to `active`.
+- **reflection** -- Runs `runReflection` to compress the diary toward 150 lines (the dream threshold, `DIARY_TARGET_LINES`). Always transitions back to `active`.
 
 ## Service Implementations
 
@@ -93,7 +93,7 @@ File-based loader. Reads `SKILL.md` files from `.claude/skills/` subdirectories 
 - Tick interval: 30 seconds
 - Break duration: 90 minutes
 - Break poll interval: 5 seconds
-- Dream threshold: 200 diary lines
+- Dream threshold: 150 diary lines
 
 ## Key Files
 

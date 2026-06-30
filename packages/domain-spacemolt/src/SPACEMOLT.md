@@ -1,12 +1,12 @@
 # SpaceMolt Domain
 
-AI agents playing a multiplayer space MMO via WebSocket. Characters pilot ships, mine resources, trade at stations, explore star systems, and engage in combat -- all driven by a persistent channel session with real-time event processing. Each character has a persistent identity with its own personality, values, and diary that shape its in-game decisions.
+AI agents playing a multiplayer space MMO via WebSocket. Characters pilot ships, mine resources, trade at stations, explore star systems, and engage in combat -- all driven by the cortex loop with real-time event processing. Each character has a persistent identity with its own personality, values, and diary that shape its in-game decisions.
 
 ## Execution Model
 
-The SpaceMolt domain uses a persistent channel session (`runChannelSession` from `core/orchestrator/channel-session.ts`). The orchestrator spawns a `claude --channels` process in Docker and pushes game state updates every 30 seconds.
+The SpaceMolt domain runs on the cortex loop (`runCortex` from `@roci/core/cortex/loop.js`; see [CORTEX.md](../../../docs/CORTEX.md)). Game state updates arrive as events every 30 seconds; the loop appraises them, plans, and runs tool-using work as an OpenCode session inside Docker.
 
-The session receives:
+The loop receives:
 - An **initial task** with the game state briefing, character identity, and play instructions
 - **Tick events** every 30 seconds with state diffs, situation summaries, and soft alerts
 - **Alert events** immediately when combat or critical conditions are detected
@@ -16,12 +16,12 @@ The agent has access to the `spacemolt` CLI tool inside the Docker container, wh
 ## Phase Lifecycle
 
 ```
-startup --> active (channel session) --> social (wind-down) --> reflection (consolidate + cull) --> active
+startup --> active (cortex loop) --> social (wind-down) --> reflection (consolidate + cull) --> active
 ```
 
 - **startup** -- Reads `credentials.txt` from the character's `me/` directory. Connects to the game server via WebSocket (`GameSocket.connect`). Runs the per-cycle reflection pass (consolidate + cull). Transitions to `active`.
 
-- **active** -- Runs `runChannelSession` with the domain bundle. When the session completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
+- **active** -- Runs `runCortex` with the domain bundle. When the loop completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
 
 - **social** -- A quiet wind-down boundary at the end of a session. The diary rewrite that used to live here (the "dinner" phase) is now the domain-agnostic consolidate pass run inside `runReflection`. Transitions to `reflection`.
 
@@ -96,7 +96,7 @@ Stub implementation. All step completion evaluation falls through to the LLM.
 **`.spacemolt-session.json`** -- Per-character session file (the `spacemolt` CLI's native multi-account format) holding the game server credentials. Created automatically during first in-game registration from `registration-code.txt`. The container CLI is pointed at it via `SPACEMOLT_SESSION` (see `session.ts`).
 
 **Tempo constants** (in `phases.ts`):
-- Diary target size: `DIARY_TARGET_LINES` = 150 lines (defined in core's `dream.ts`); the per-cycle cull compresses toward it and never grows the file
+- Diary target size: `DIARY_TARGET_LINES` = 150 lines (defined in `core/limbic/hippocampus/dream.ts:16`); the per-cycle cull compresses toward it and never grows the file
 - Tick interval: 30 seconds (set by server)
 
 ## Key Files

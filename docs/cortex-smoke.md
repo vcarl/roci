@@ -15,9 +15,9 @@ The cortex tiers require three OpenAI-compatible servers for hindbrain, forebrai
 
 | Port | Tier       | Use         | Default Model                          |
 |------|------------|-------------|----------------------------------------|
-| 8081 | hindbrain  | Fast triage | `mlx-community/Qwen3.5-9B-4bit`        |
-| 8082 | forebrain  | Planning    | `mlx-community/GLM-4.7-Flash-4bit`     |
-| 8083 | conscious  | Reasoning   | `mlx-community/Qwen3.5-122B-A10B-4bit` |
+| 8081 | hindbrain  | Fast triage | `mlx-community/Qwen3.5-2B-4bit`        |
+| 8082 | forebrain  | Planning    | `mlx-community/Qwen3.5-9B-4bit`        |
+| 8083 | conscious  | Reasoning   | `mlx-community/gemma-4-31b-it-8bit`    |
 
 ### Option A: MLX Server (Recommended — Best Performance)
 
@@ -25,13 +25,13 @@ MLX servers are macOS-native and offer best throughput on Apple Silicon. See `~/
 
 ```bash
 # Terminal 1: hindbrain (port 8081) — small/fast tier
-mlx_lm.server --model mlx-community/Qwen3.5-9B-4bit --port 8081
+mlx_lm.server --model mlx-community/Qwen3.5-2B-4bit --port 8081
 
 # Terminal 2: forebrain (port 8082) — medium tier
-mlx_lm.server --model mlx-community/GLM-4.7-Flash-4bit --port 8082
+mlx_lm.server --model mlx-community/Qwen3.5-9B-4bit --port 8082
 
 # Terminal 3: conscious (port 8083) — large/slow tier
-mlx_lm.server --model mlx-community/Qwen3.5-122B-A10B-4bit --port 8083
+mlx_lm.server --model mlx-community/gemma-4-31b-it-8bit --port 8083
 ```
 
 To measure per-tier latency (first-token + total time), use:
@@ -69,17 +69,17 @@ Each tier must reach the local model server. Run the model smoke test against ea
 ```bash
 # Hindbrain (port 8081)
 ROCI_MODEL_SMOKE_URL=http://127.0.0.1:8081/v1 \
-ROCI_MODEL_SMOKE_MODEL=mlx-community/Qwen3.5-9B-4bit \
+ROCI_MODEL_SMOKE_MODEL=mlx-community/Qwen3.5-2B-4bit \
 npx vitest run packages/core/src/model/client.smoke.test.ts
 
 # Forebrain (port 8082)
 ROCI_MODEL_SMOKE_URL=http://127.0.0.1:8082/v1 \
-ROCI_MODEL_SMOKE_MODEL=mlx-community/GLM-4.7-Flash-4bit \
+ROCI_MODEL_SMOKE_MODEL=mlx-community/Qwen3.5-9B-4bit \
 npx vitest run packages/core/src/model/client.smoke.test.ts
 
 # Conscious (port 8083)
 ROCI_MODEL_SMOKE_URL=http://127.0.0.1:8083/v1 \
-ROCI_MODEL_SMOKE_MODEL=mlx-community/Qwen3.5-122B-A10B-4bit \
+ROCI_MODEL_SMOKE_MODEL=mlx-community/gemma-4-31b-it-8bit \
 npx vitest run packages/core/src/model/client.smoke.test.ts
 ```
 
@@ -98,13 +98,13 @@ npx vitest run packages/core/src/model/client.smoke.test.ts
 # Build all packages
 npx nx run-many -t build
 
-# Run full test suite (100 passed, 2 skipped)
+# Run full test suite (the core suite passes; smoke/session tests skip without their env guards)
 npx vitest run
 # or
 npx nx run-many -t test
 ```
 
-**Expected output:** `100 passed, 2 skipped` (the 2 skipped are guarded by `ROCI_MODEL_SMOKE_URL` and `ROCI_OPENCODE_SESSION_CONTAINER` env vars, tested in Steps 1 and 7).
+**Expected output:** the core suite passes; the model-smoke and conscious-session tests skip unless their guard env vars (`ROCI_MODEL_SMOKE_URL` and `ROCI_OPENCODE_SESSION_CONTAINER`) are set, which happens in Steps 1 and 7.
 
 **Failure mode:** If unit tests fail, fix before proceeding. Smoke tests are not run by default to avoid requiring GPU + Docker at test-time.
 
@@ -209,7 +209,9 @@ The container id and player name are assigned by the orchestrator and threaded
 as parameters — there is **no** env var to set (unlike the Step 4 delegate
 smoke); the tool is provisioned automatically by `ConsciousThought.provision`
 before each tick, idempotently writing `/usr/local/bin/frontier` into the
-container.
+container. The long-term `memory` CLI is `frontier`'s structural sibling —
+provisioned the same way (base64-pipe, as root) by the same call; see
+[docs/MEMORY.md](MEMORY.md).
 
 **Laundering invariant:** the conscious mind authors every task text and steer
 directive — no raw inbound event text reaches the worker. All `$1`/`$2` args to

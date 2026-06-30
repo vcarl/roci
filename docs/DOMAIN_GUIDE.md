@@ -4,7 +4,7 @@ How to build a new domain for the Roci orchestrator. New domains should be creat
 
 ## What is a Domain?
 
-The orchestrator is a generic engine for running autonomous character-driven sessions. It spawns persistent channel sessions inside Docker containers, pushes state updates as events, and monitors for interrupts. None of this logic knows about any specific game or environment.
+The orchestrator is a generic engine for running autonomous character-driven sessions. The execution engine is the **cortex loop** (`runCortex`, `packages/core/src/cortex/loop.ts`) -- a per-character cognitive tick loop that drains domain events, appraises them across three model tiers, runs tool-using work inside Docker containers, and monitors for interrupts. None of this logic knows about any specific game or environment. See [CORTEX.md](CORTEX.md) for the engine reference.
 
 A **domain** plugs into this engine by implementing 6 service interfaces (plus a phase registry and config object). The core never imports domain code -- services are injected via Effect tags at startup. SpaceMolt and GitHub are the two reference implementations.
 
@@ -140,7 +140,7 @@ The `SituationSummary` shape:
 - **`situation`** -- your domain-specific situation object (opaque to the core)
 - **`headline`** -- one-line summary used in prompts and logging
 - **`sections`** -- structured content blocks (each has `id`, `heading`, `body`)
-- **`metrics`** -- key/value pairs passed to `StateRenderer.logStateBar()`
+- **`metrics`** -- key/value pairs passed to `StateRenderer.formatStateBar()`
 
 ### 4. `StateRenderer` -- Snapshots, Diffs, Console Bar
 
@@ -162,8 +162,8 @@ const myRenderer = {
     if (!before) return "(initial state)"
     return `Issues: ${before.issues} → ${(after as any).issues}`
   },
-  logStateBar(name: string, metrics: Record<string, string | number | boolean>): void {
-    console.log(`[${name}] issues=${metrics.issueCount}`)
+  formatStateBar(metrics: Record<string, string | number | boolean>): string {
+    return `issues=${metrics.issueCount}`
   },
 }
 
@@ -223,16 +223,17 @@ interface PromptBuilder {
 
 **`channelEvent(ctx)`** *(deprecated)* -- Fallback state update for ticks where the OODA chain doesn't produce a structured push. Only used for accumulate-disposition ticks as a lightweight state update.
 
-**OODA integration:** The tick loop now uses the OODA skill chain (observe → orient → decide → evaluate) to classify events, assess situations, and produce structured directives. Configure OODA behavior when calling `runChannelSession`:
+**Cortex integration:** The engine is the cortex loop (`runCortex`), which runs the OODA skill chain (observe → orient → decide → evaluate) across three model tiers to classify events, assess situations, and produce structured directives. See [CORTEX.md](CORTEX.md) for the full engine reference. Tune the loop via the optional `CortexLoopConfig` fields when calling `runCortex` (`loop.ts:53-66`):
 
 ```ts
-yield* runChannelSession({
+yield* runCortex({
   ...existingConfig,
-  cadence: "planned-action",         // or "real-time" — affects OODA skill thresholds
-  dream: { cycleInterval: 3, maxIntervalTicks: 120 },  // memory consolidation
-  orientInterval: 5,                 // max ticks before forcing orient
+  cadence: "planned-action",         // or "real-time" — selects the cadence profile
+  orientInterval: 5,                 // max ticks of piled-up events before forcing an orient
 })
 ```
+
+(Memory consolidation is *not* a `runCortex` field — it runs in the per-cycle reflection phase; see below.)
 
 See the GitHub implementation (`packages/domain-github/src/prompt-builder.ts`) for a full reference.
 
@@ -261,11 +262,12 @@ For file-based skills, see the GitHub domain's `index.ts` which loads `.md` file
 
 ### 8. `PhaseRegistry` -- Session Lifecycle
 
-Phases are the top-level session structure. A minimal registry needs startup (connects and returns a `ConnectionState`) and active (runs `runChannelSession`).
+Phases are the top-level session structure. A minimal registry needs startup (connects and returns a `ConnectionState`) and active (runs `runCortex`).
 
 ```ts
 import { Effect, Queue } from "effect"
-import { runChannelSession } from "@roci/core/core/orchestrator/channel-session.js"
+import { getModels } from "@roci/core/core/phase.js"
+import { runCortex } from "@roci/core/cortex/loop.js"
 
 const activePhase = {
   name: "active",
@@ -275,15 +277,15 @@ const activePhase = {
         return { _tag: "Shutdown" } as PhaseResult
       }
 
-      const result = yield* runChannelSession({
+      const result = yield* runCortex({
         char: context.char,
         containerId: context.containerId,
         containerEnv: context.containerEnv,
+        addDirs: context.containerAddDirs,
         events: context.connection.events as Queue.Queue<unknown>,
         initialState: context.connection.initialState,
-        sessionModel: "sonnet",
         cadence: "planned-action",  // or "real-time"
-        dream: { cycleInterval: 3, maxIntervalTicks: 120 },
+        workerModels: getModels(context),
         orientInterval: 5,
       }).pipe(Effect.provide(context.domainBundle))
 
@@ -298,7 +300,7 @@ const activePhase = {
 
 The key pattern: **`Effect.provide(context.domainBundle)`** injects your 6 service layers (EventProcessor, SituationClassifier, StateRenderer, InterruptRegistry, PromptBuilder, SkillRegistry) into the engine.
 
-Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is now integrated into the OODA loop and triggers automatically based on `dream` config.
+Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is *not* a `runCortex` config field: the diary rewrite and cull run in a per-cycle reflection phase via `runReflection` (`packages/core/src/core/orchestrator/planned-action.ts`), which domains invoke from their own `reflection` phase.
 
 ### 9. `DomainConfig` -- Assemble Everything
 
@@ -341,7 +343,7 @@ Things the type system doesn't enforce but your domain must respect:
 
 ### `SituationSummary` Structure
 
-`summarize()` returns all state context the agent needs. The `headline` is a short summary. The `sections` array provides structured detail for prompts. The `metrics` record feeds `logStateBar()`. Design sections so the agent gets enough context to make decisions without raw state.
+`summarize()` returns all state context the agent needs. The `headline` is a short summary. The `sections` array provides structured detail for prompts. The `metrics` record feeds `formatStateBar()`. Design sections so the agent gets enough context to make decisions without raw state.
 
 ### Alerts Come from `InterruptRegistry`, Not `summarize()`
 
@@ -411,11 +413,11 @@ New domain author checklist:
 - [ ] `types.ts` -- State, Situation, and Event types defined
 - [ ] `EventProcessor` -- translates events to `EventResult` with `EventCategory`
 - [ ] `SituationClassifier` -- `summarize()` returns `SituationSummary`
-- [ ] `StateRenderer` -- `snapshot()`, `richSnapshot()`, `stateDiff()`, `logStateBar()`
+- [ ] `StateRenderer` -- `snapshot()`, `richSnapshot()`, `stateDiff()`, `formatStateBar()`
 - [ ] `InterruptRegistry` -- rules array + `createInterruptRegistry()` factory
 - [ ] `PromptBuilder` -- `systemPrompt()` (required); `taskPrompt()`, `channelEvent()` (optional fallbacks)
 - [ ] `SkillRegistry` -- stub or real implementation
-- [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runChannelSession()` with `Effect.provide(context.domainBundle)`
+- [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runCortex()` with `Effect.provide(context.domainBundle)`
 - [ ] `DomainConfig` -- bundle, phaseRegistry, containerMounts, imageName
 - [ ] Domain bundle -- `Layer.mergeAll(...)` of all 6 service layers
 - [ ] Domain registered in `apps/roci/src/domains/registry.ts`

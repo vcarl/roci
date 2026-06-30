@@ -1,10 +1,63 @@
 # Model Configuration
 
-Roci uses a tier-based model configuration system that decouples agent roles from specific model names. This allows tuning model selection per-deployment without changing domain code.
+Roci runs **two distinct model systems**:
 
-## Tiers
+1. **The cortex MLX tier topology** — the live engine. Three local OpenAI-compatible
+   servers (hindbrain / forebrain / conscious) back the cortex loop. This is where the
+   bulk of model traffic goes. See [Cortex MLX Tiers](#cortex-mlx-tiers) below.
+2. **The legacy tier-based `resolveModel` system** — `fast`/`smart`/`reasoning` tiers
+   that a handful of role-based callers still resolve through. As of this writing only
+   **two** roles actually call `resolveModel` at runtime: `dreamCompression` and `dinner`
+   (both in the hippocampus). This system is documented here for those two roles.
 
-Three tiers map to capability levels:
+The `Role` type union in `model-config.ts` still lists other names
+(`brainPlan`/`brainInterrupt`/`brainEvaluate`, `diarySubagent`, `scaffold*`, `ooda*`), none
+of which have any `resolveModel` call site — they exist only in the type and its tests.
+`timeoutSummary` is a special case: it *does* have a real call site
+(`core/limbic/hypothalamus/timeout-summarizer.ts:50`), but the enclosing `summarizeTimeout`
+export has zero callers, so the call is unreachable dead code. None of these roles are live
+knobs; they are intentionally omitted here, so do not treat them as configurable.
+
+## Cortex MLX Tiers
+
+The cortex engine drives three cognition tiers, each served by a local MLX server on its
+own port. The single source of truth for which model answers each tier and where is
+`DEFAULT_CORTEX_MODELS` in `packages/core/src/model/handles.ts` (`:54-130`).
+`packages/core/src/services/model-tier-spec.ts` (`MODEL_TIER_SPECS`) **derives** each
+spec's model and base URL from that handle and adds spawn-only metadata (port, lifecycle,
+timeout); it cross-checks the port against the handle's base URL so the two can never
+drift.
+
+| Tier | Port | Default model | Provider | Lifecycle | Spawn timeout |
+|------|------|---------------|----------|-----------|---------------|
+| `hindbrain` | 8081 | `mlx-community/Qwen3.5-2B-4bit` | `mlx` | `per-phase` | 120s |
+| `forebrain` | 8082 | `mlx-community/Qwen3.5-9B-4bit` | `mlx` | `per-phase` | 180s |
+| `conscious` | 8083 | `mlx-community/gemma-4-31b-it-8bit` | `mlx` | `resident` | 600s |
+
+- **Lifecycle** — the `conscious` tier is `resident` (it can lose the cold-load race for
+  minutes), while the lighter `hindbrain`/`forebrain` tiers are `per-phase` (load in
+  seconds). Timeouts are generous headroom over observed cold-load times.
+- **Thinking-OFF on the structured tiers** — `hindbrain` and `forebrain` must emit
+  parseable JSON every tick, so both disable chain-of-thought via
+  `extraBody: { chat_template_kwargs: { enable_thinking: false } }` (the Qwen3.5 chat
+  templates gate reasoning on this kwarg; `mlx_lm.server` forwards it from the request
+  body). With thinking ON these models ran the monologue to the token cap and never closed
+  the JSON. The `conscious` tier omits the kwarg entirely — `gemma-4-31b-it` is an
+  instruction model with no `enable_thinking` gate.
+- **No constrained decoding** — `response_format` / JSON-schema enforcement is **not**
+  supported on the `mlx` provider (`mlx_lm` silently ignores the key). The loop relies on a
+  tolerant JSON extractor instead.
+
+Per-tier overlays (`CortexModelOverlay`) shallow-merge onto the base via
+`mergeCortexModels` (`handles.ts`); the serving topology (which ports, on-demand loading)
+is configured externally, not by these modules.
+
+## Legacy Tier-Based Resolution
+
+The two live `resolveModel` callers resolve a *role* to a concrete model string through a
+three-tier table.
+
+### Tiers
 
 | Tier | Default Model | Purpose |
 |------|--------------|---------|
@@ -12,32 +65,26 @@ Three tiers map to capability levels:
 | `smart` | `sonnet` | Tasks requiring judgment, ambiguity, complex reasoning |
 | `reasoning` | `opus` | Planning, evaluation, complex multi-step reasoning |
 
-## Roles
+### The two live roles
 
-Roles represent specific agent functions. Each role resolves to either a tier name or a raw model string:
+| Role | Resolution | Where it runs |
+|------|-----------|---------------|
+| `dreamCompression` | Defaults to the raw string `local/mlx-community/gemma-4-31b-it-8bit` (NOT a tier), set in `DEFAULT_MODEL_CONFIG.roles` (`model-config.ts:47`). Called with default tier `"smart"` as the fallback (`dream.ts:82`). | Memory compression in the hippocampus dream phase. Runs on the **opencode** runtime against the local conscious-tier mlx server (port 8083). The literal MUST equal `consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)`. On turn failure the dream phase degrades gracefully — it keeps the original diary/secrets and continues. |
+| `dinner` | No default override; resolves to the `"smart"` tier (`consolidate.ts:63`). | Social reflection / per-cycle diary consolidation in the hippocampus. |
 
-| Role | Default Tier | Description |
-|------|-------------|-------------|
-| `brainPlan` | `reasoning` | Plan generation (decide skill) |
-| `brainInterrupt` | `reasoning` | Interrupt-driven replanning |
-| `brainEvaluate` | `reasoning` | Step evaluation |
-| `diarySubagent` | `smart` | Diary writing and updates |
-| `dreamCompression` | `local/mlx-community/gemma-4-31b-it-8bit` | Memory compression (hippocampus). Defaults to a raw model string, not a tier: runs on the **opencode** runtime against the local conscious-tier mlx server (port 8083). The literal MUST match `consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)`. On turn failure the dream phase degrades gracefully — it keeps the original diary/secrets and continues. |
-| `dinner` | `smart` | Social reflection (SpaceMolt) |
-| `timeoutSummary` | `fast` | Summarize timed-out output |
-| `scaffoldIdentity` | `smart` | Character identity generation |
-| `scaffoldSummary` | `fast` | Summary generation during setup |
+### Resolution
 
-## Resolution
-
-`resolveModel(config, role, defaultTier)` resolves a role to a concrete model string:
+`resolveModel(config, role, defaultTier)` (`model-config.ts:62`) resolves a role to a
+concrete model string:
 
 1. If the role has an explicit override in `config.roles`, use it
-   - If the override is a tier name (`"fast"`, `"smart"`, `"reasoning"`), resolve to that tier's model
-   - Otherwise treat the override as a raw model string (e.g., `"claude-sonnet-4-5-20250514"`)
+   - If the override is a tier name (`"fast"`, `"smart"`, `"reasoning"`), resolve to that
+     tier's model
+   - Otherwise treat the override as a raw model string (e.g.
+     `"local/mlx-community/gemma-4-31b-it-8bit"`)
 2. Otherwise, look up `defaultTier` in `config.tiers`
 
-## Configuration
+### Configuration
 
 Model config is loaded from `.roci/models.json` at the project root:
 
@@ -49,8 +96,7 @@ Model config is loaded from `.roci/models.json` at the project root:
     "reasoning": "opus"
   },
   "roles": {
-    "dreamCompression": "smart",
-    "brainPlan": "claude-opus-4-6"
+    "dreamCompression": "local/mlx-community/gemma-4-31b-it-8bit"
   }
 }
 ```
@@ -63,9 +109,9 @@ CLI tier overrides take precedence over the file:
 
 Priority: CLI flags > `.roci/models.json` > built-in defaults.
 
-## Merging
+### Merging
 
-`mergeModelConfig(base, overlay)` merges two configs:
+`mergeModelConfig(base, overlay)` (`model-config.ts:81`) merges two configs:
 - Tiers are merged key-by-key (overlay wins per-key)
 - Roles are merged additively (overlay adds or overrides individual roles)
 
@@ -73,7 +119,11 @@ This allows partial overrides without specifying the full config.
 
 ## Non-Claude Models
 
-The `AnyModel` type accepts any string, not just Claude model names. When the model string doesn't match a known Claude model pattern, `runtimeBinary()` selects the `opencode` runtime instead of `claude`, enabling use of alternative LLM providers.
+The `AnyModel` type accepts any string, not just Claude model names. When the model string
+doesn't match a known Claude model pattern, `runtimeBinary()` selects the `opencode`
+runtime instead of `claude`, enabling use of alternative LLM providers. This is how
+`dreamCompression`'s `local/mlx-community/gemma-4-31b-it-8bit` string routes to the local
+mlx server.
 
 ```typescript
 type AnyModel = ClaudeModel | (string & {})  // "opus" | "sonnet" | "haiku" | any string
@@ -81,22 +131,18 @@ type AnyModel = ClaudeModel | (string & {})  // "opus" | "sonnet" | "haiku" | an
 function runtimeBinary(model: AnyModel): AgentRuntime  // "claude" | "opencode"
 ```
 
-Claude model shorthand (`"opus"`, `"sonnet"`, `"haiku"`) is resolved by the Claude CLI itself. Full model IDs (e.g., `"claude-opus-4-6"`) are also accepted and passed through.
-
-## Operating Skills and Model Tiers
-
-The operating skills system (`packages/core/src/skills/`) uses the tier concept in the decide skill's plan output. When creating a plan, the decide stage assigns each step a tier:
-
-- **`fast`** -- Routine tasks with well-defined scope and deterministic outcomes
-- **`smart`** -- Tasks requiring judgment, ambiguity, or complex reasoning
-
-This maps directly to the model config's tier system, allowing the orchestrator to resolve the appropriate model for each step.
+Claude model shorthand (`"opus"`, `"sonnet"`, `"haiku"`) is resolved by the Claude CLI
+itself. Full model IDs (e.g., `"claude-opus-4-6"`) are also accepted and passed through.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `packages/core/src/core/model-config.ts` | Types, resolution, and merging logic |
+| `packages/core/src/model/handles.ts` | `DEFAULT_CORTEX_MODELS` — the live cortex tier topology (model, provider, baseUrl, params per tier) and `mergeCortexModels` overlay logic |
+| `packages/core/src/services/model-tier-spec.ts` | `MODEL_TIER_SPECS` — per-tier port, lifecycle, and spawn timeout, derived from `handles.ts` |
+| `packages/core/src/core/model-config.ts` | Legacy tier types, `resolveModel`, and `mergeModelConfig` |
 | `packages/core/src/core/model-config.test.ts` | Unit tests for resolution and merging |
 | `packages/core/src/core/limbic/hypothalamus/runtime.ts` | `runtimeBinary()` and `runtimeBaseArgs()` |
-| `.roci/models.json` | Per-project model configuration (not checked in) |
+| `.roci/models.json` | Per-project legacy model configuration (not checked in) |
+</content>
+</invoke>
