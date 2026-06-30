@@ -1,12 +1,13 @@
 import * as path from "node:path"
 import { Effect } from "effect"
 import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs.js"
-import { CharacterLog } from "../../../logging/log-writer.js"
+import { CharacterLog, logError } from "../../../logging/log-writer.js"
 import { eventBase } from "../../../logging/events.js"
 import { loadTemplate, renderTemplate } from "../../template.js"
 import { runTurn } from "../hypothalamus/process-runner.js"
 import type { ModelConfig } from "../../model-config.js"
 import { resolveModel } from "../../model-config.js"
+import { REFLECTION_TURN_TIMEOUT_MS } from "./dream.js"
 
 /** Count lines, consistent with the line-based diary sizing used by the cull. */
 const lineCount = (s: string) => s.split("\n").length
@@ -61,12 +62,27 @@ export const consolidate = {
         systemPrompt: "",
         // Reuse the model role the former dinner pass used so behavior is preserved.
         model: resolveModel(input.models, "dinner", "smart"),
-        timeoutMs: 120_000,
+        timeoutMs: REFLECTION_TURN_TIMEOUT_MS,
         role: "brain",
         noTools: true,
         addDirs: input.addDirs,
         env: input.env,
       })
+
+      // A timeout or empty/whitespace output is a FAILED turn — runTurn does NOT
+      // throw on timeout, it resolves with `{ output: "", timedOut: true }`.
+      // Writing that blank output here would destroy the diary (the observed
+      // `consolidate_complete (76 -> 1 lines)` after a code=1 exit). Skip the write
+      // entirely and keep the existing diary exactly as it was.
+      if (result.timedOut || result.output.trim().length === 0) {
+        const reason = result.timedOut ? "turn timed out (no output)" : "turn returned empty output"
+        yield* logError(
+          input.char.name,
+          "hippocampus",
+          `consolidate_failed: ${reason} — keeping original diary (${lineCount(diary)} lines)`,
+        )
+        return { diaryConsolidated: false } as ConsolidateOutput
+      }
 
       yield* charFs.writeDiary(input.char, result.output)
 

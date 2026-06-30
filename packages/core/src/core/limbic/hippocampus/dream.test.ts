@@ -145,6 +145,93 @@ describe("dream cull — never-grows invariant", () => {
   })
 })
 
+describe("dream cull — failed/timed-out turn preserves originals", () => {
+  it("keeps the original diary EXACTLY when the diary cull turn times out (empty output)", async () => {
+    const fs = makeFs({ diary: lines(98, "orig"), secrets: lines(5, "sec") })
+    const log = makeLog()
+
+    let call = 0
+    runTurnMock.mockImplementation(() => {
+      call++
+      // call 1 = diary cull TIMES OUT (empty output, timedOut:true)
+      // call 2 = secrets cull succeeds (shorter)
+      if (call === 1) return Effect.succeed({ output: "", timedOut: true, durationMs: 1 })
+      return Effect.succeed({ output: lines(2, "sec"), timedOut: false, durationMs: 1 })
+    })
+
+    const program = dream
+      .execute({ char, containerId: "c1", playerName: "ada", models: DEFAULT_MODEL_CONFIG })
+      .pipe(Effect.provide(Layer.mergeAll(fs.layer, log.layer, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)))
+
+    const out = await run(program as Effect.Effect<unknown, unknown, never>)
+
+    // The empty/timed-out output must NEVER have been written to the diary.
+    expect(fs.diaryWrites).toHaveLength(0)
+    expect(fs.state.diary).toBe(lines(98, "orig"))
+    expect((out as { diaryCompressed: boolean }).diaryCompressed).toBe(false)
+    // The failure is surfaced as a structured error (not a successful X -> 0 compression).
+    const failed = log.events.some(
+      (e) => e.kind === "error" && /diar/i.test((e as { message?: string }).message ?? ""),
+    )
+    expect(failed).toBe(true)
+    // It was NOT reported as a successful diary compression.
+    const falselyCompressed = log.events.some(
+      (e) => e.kind === "text" && /dream_diary_compressed/.test((e as { text?: string }).text ?? ""),
+    )
+    expect(falselyCompressed).toBe(false)
+  })
+
+  it("keeps the original secrets EXACTLY when the secrets cull turn times out (empty output)", async () => {
+    const fs = makeFs({ diary: lines(30, "orig"), secrets: lines(40, "sec") })
+    const log = makeLog()
+
+    let call = 0
+    runTurnMock.mockImplementation(() => {
+      call++
+      // call 1 = diary cull succeeds (shorter), call 2 = secrets cull TIMES OUT (empty)
+      if (call === 1) return Effect.succeed({ output: lines(8, "culled"), timedOut: false, durationMs: 1 })
+      return Effect.succeed({ output: "", timedOut: true, durationMs: 1 })
+    })
+
+    const program = dream
+      .execute({ char, containerId: "c1", playerName: "ada", models: DEFAULT_MODEL_CONFIG })
+      .pipe(Effect.provide(Layer.mergeAll(fs.layer, log.layer, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)))
+
+    const out = await run(program as Effect.Effect<unknown, unknown, never>)
+
+    expect(fs.secretsWrites).toHaveLength(0)
+    expect(fs.state.secrets).toBe(lines(40, "sec"))
+    expect((out as { secretsCompressed: boolean }).secretsCompressed).toBe(false)
+    const failed = log.events.some(
+      (e) => e.kind === "error" && /secret/i.test((e as { message?: string }).message ?? ""),
+    )
+    expect(failed).toBe(true)
+  })
+
+  it("treats a whitespace-only diary turn output as a failure and keeps the original", async () => {
+    const fs = makeFs({ diary: lines(50, "orig"), secrets: lines(5, "sec") })
+    const log = makeLog()
+
+    let call = 0
+    runTurnMock.mockImplementation(() => {
+      call++
+      // call 1 = diary cull returns whitespace-only (process exited 0 but no real text)
+      if (call === 1) return Effect.succeed({ output: "   \n  \n\t", timedOut: false, durationMs: 1 })
+      return Effect.succeed({ output: lines(2, "sec"), timedOut: false, durationMs: 1 })
+    })
+
+    const program = dream
+      .execute({ char, containerId: "c1", playerName: "ada", models: DEFAULT_MODEL_CONFIG })
+      .pipe(Effect.provide(Layer.mergeAll(fs.layer, log.layer, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)))
+
+    const out = await run(program as Effect.Effect<unknown, unknown, never>)
+
+    expect(fs.diaryWrites).toHaveLength(0)
+    expect(fs.state.diary).toBe(lines(50, "orig"))
+    expect((out as { diaryCompressed: boolean }).diaryCompressed).toBe(false)
+  })
+})
+
 describe("dream cull — target compression", () => {
   it("writes the compressed diary when it is shorter than the input", async () => {
     const fs = makeFs({ diary: lines(40, "orig"), secrets: lines(6, "sec") })
