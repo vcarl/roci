@@ -18,15 +18,16 @@ const run = (events: UnifiedEvent[]) => {
 
 describe("reduce", () => {
   it("emits SESSION_START on the very first event", () => {
-    const { records } = run([ev({ kind: "system", message: "hindbrain: discard 😐" })])
+    const { records } = run([ev({ kind: "system", message: "init" })])
     expect(records[0].type).toBe("SESSION_START")
   })
 
-  it("counts a tick per hindbrain pass and stamps transitions with it", () => {
+  it("counts a tick per appraisal behavior and stamps transitions with it", () => {
+    const beh = (b: import("@roci/core").Behavior): UnifiedEvent => ({ timestamp: "2026-06-21T00:00:00.000Z", character: "ada", system: "cortex", subsystem: "cortex", kind: "behavior", behavior: b })
     const { state, records } = run([
-      ev({ kind: "system", message: "hindbrain: escalate 😰" }),
-      ev({ kind: "system", message: "forebrain: regroup" }),
-      ev({ kind: "system", message: "hindbrain: continue 🙂" }),
+      beh({ type: "appraisal", disposition: "escalate", weight: 4, escalated: true }),
+      beh({ type: "orient", headline: "regroup" }),
+      beh({ type: "appraisal", disposition: "accumulate", weight: 1, escalated: false }),
     ])
     expect(state.tick).toBe(2)
     const escalate = records.find((r) => r.type === "ESCALATE")
@@ -37,7 +38,7 @@ describe("reduce", () => {
 
   it("emits an ERROR anomaly for kind:error events", () => {
     const { records } = run([
-      ev({ kind: "system", message: "hindbrain: discard 😐" }),
+      ev({ kind: "system", message: "init" }),
       ev({ kind: "error", message: "event error: boom" } as Partial<UnifiedEvent> & { kind: "error" }),
     ])
     const err = records.find((r) => r.kind === "anomaly")
@@ -65,7 +66,7 @@ describe("reduce", () => {
   })
 
   it("does not emit a FATAL_ERROR anomaly for a normal system event", () => {
-    const { records } = run([ev({ kind: "system", message: "hindbrain: discard 😐" })])
+    const { records } = run([ev({ kind: "system", message: "init" })])
     const anomaly = records.find((r) => r.kind === "anomaly" && r.type === "FATAL_ERROR")
     expect(anomaly).toBeUndefined()
   })

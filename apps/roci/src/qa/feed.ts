@@ -37,7 +37,7 @@ export function reduce(
     started = true
   }
 
-  if (ev.kind === "system" && /^hindbrain: /.test(ev.message)) {
+  if (ev.kind === "behavior" && ev.behavior.type === "appraisal") {
     tick += 1
   }
 

@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest"
-import type { BehaviorDigest } from "@roci/core"
+import type { Behavior, BehaviorDigest } from "@roci/core"
 import { ingestChunk, initialIngestState } from "./ingest.js"
 
-const line = (message: string) =>
-  JSON.stringify({ timestamp: "2026-06-21T00:00:00.000Z", character: "ada", system: "cortex", subsystem: "cortex", kind: "system", message })
+const behLine = (behavior: Behavior) =>
+  JSON.stringify({ timestamp: "2026-06-21T00:00:00.000Z", character: "ada", system: "cortex", subsystem: "cortex", kind: "behavior", behavior })
 
 const sessionEndLine = (digest: BehaviorDigest) =>
   JSON.stringify({
@@ -17,7 +17,10 @@ const sessionEndLine = (digest: BehaviorDigest) =>
 
 describe("ingestChunk", () => {
   it("parses whole lines and ignores blanks", () => {
-    const { records } = ingestChunk(initialIngestState, line("hindbrain: escalate 😰") + "\n\n")
+    const { records } = ingestChunk(
+      initialIngestState,
+      behLine({ type: "appraisal", disposition: "escalate", weight: 4, escalated: true }) + "\n\n",
+    )
     expect(records.map((r) => r.type)).toEqual(["SESSION_START", "ESCALATE"])
   })
 
@@ -35,7 +38,7 @@ describe("ingestChunk", () => {
   })
 
   it("buffers a partial line across two chunks", () => {
-    const full = line("forebrain: hold")
+    const full = behLine({ type: "orient", headline: "hold" })
     const a = ingestChunk(initialIngestState, full.slice(0, 10))
     expect(a.records).toEqual([])
     const b = ingestChunk(a.state, full.slice(10) + "\n")
@@ -43,7 +46,10 @@ describe("ingestChunk", () => {
   })
 
   it("skips malformed JSON lines without throwing", () => {
-    const { records } = ingestChunk(initialIngestState, "not json\n" + line("conscious: plan") + "\n")
+    const { records } = ingestChunk(
+      initialIngestState,
+      "not json\n" + behLine({ type: "decision", disposition: "plan" }) + "\n",
+    )
     expect(records.some((r) => r.type === "DECISION")).toBe(true)
   })
 })
