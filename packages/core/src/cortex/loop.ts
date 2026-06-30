@@ -4,7 +4,7 @@ import type { CharacterConfig } from "../services/CharacterFs.js"
 import { CharacterFs } from "../services/CharacterFs.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
-import { CharacterLog, logToConsole, logError } from "../logging/log-writer.js"
+import { CharacterLog, logToConsole, logError, logBehavior } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
 import { EventProcessorTag } from "../core/limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "../core/limbic/thalamus/situation-classifier.js"
@@ -245,11 +245,12 @@ export const runCortex = (config: CortexLoopConfig) =>
       if (bar) yield* logToConsole(config.char.name, "state", bar)
       const criticals = interrupts.criticals(state as never, summary.situation)
       if (criticals.length > 0) {
-        yield* logToConsole(
-          config.char.name,
-          "orchestrator",
-          `Critical: ${criticals.map((a) => a.message).join("; ")}`,
-        )
+        yield* logBehavior(config.char.name, "cortex", "amygdala", {
+          type: "note",
+          label: "critical",
+          severity: "warn",
+          data: { messages: criticals.map((a) => a.message) },
+        })
         if (consciousFiber) yield* Fiber.interrupt(consciousFiber)
         return { _tag: "Interrupted" as const, finalState: state, criticals }
       }
@@ -297,11 +298,12 @@ export const runCortex = (config: CortexLoopConfig) =>
       cortex.escalation = esc
       const nonDiscard = esc.accumulated.length > 0
       if (tickEvents.length > 0) {
-        yield* logToConsole(
-          config.char.name,
-          "cortex",
-          `hindbrain: rung=${esc.rung} w=${esc.maxWeight} ${esc.dominant?.emotionalWeight ?? ""}`.trim(),
-        )
+        yield* logBehavior(config.char.name, "cortex", "hindbrain", {
+          type: "appraisal",
+          disposition: esc.rung,
+          weight: esc.maxWeight,
+          escalated: esc.escalate,
+        })
         // Tick mood = the dominant (highest-weight) event's mood (§4.4).
         if (esc.dominant) cortex.emotionalWeight = esc.dominant.emotionalWeight
         if (esc.accumulated.length > 0) cortex.accumulatedEvents.push(...esc.accumulated)
@@ -323,9 +325,11 @@ export const runCortex = (config: CortexLoopConfig) =>
             { background, values, diary },
             cortex.emotionalWeight,
           )
-          yield* logToConsole(config.char.name, "cortex", `forebrain: ${orient.headline}`)
+          yield* logBehavior(config.char.name, "cortex", "forebrain", { type: "orient", headline: orient.headline })
           const decide = yield* runConsciousDecide(runnerConfig, orient, "No active plan.", AVAILABLE_ACTIONS)
-          yield* logToConsole(config.char.name, "cortex", `conscious: ${decide.decision}`)
+          yield* (decide.decision === "plan" || decide.decision === "wait" || decide.decision === "terminate"
+            ? logBehavior(config.char.name, "cortex", "conscious", { type: "decision", disposition: decide.decision })
+            : logBehavior(config.char.name, "cortex", "conscious", { type: "note", label: `decision:${decide.decision}` }))
           cortex.accumulatedEvents = []
           cortex.lastOrientTick = tick
 
@@ -417,7 +421,7 @@ export const runCortex = (config: CortexLoopConfig) =>
             { background, values, diary },
             cortex.emotionalWeight,
           )
-          yield* logToConsole(config.char.name, "cortex", `forebrain (in-session): ${orient.headline}`)
+          yield* logBehavior(config.char.name, "cortex", "forebrain", { type: "orient", headline: orient.headline })
           // Laundered directive: formatSteerDirective formats model-generated forebrain output.
           pendingDirective = formatSteerDirective(orient)
           if (esc.rung === "steer") bypassSteerCadence = true
@@ -454,9 +458,9 @@ export const runCortex = (config: CortexLoopConfig) =>
           // 6a. Evaluate now if the agent signaled done OR the tick-budget expired.
           if (stepDoneSignaled || budgetElapsed) {
             if (stepDoneSignaled) {
-              yield* logToConsole(config.char.name, "orchestrator", `step done-marker detected; evaluating`)
+              yield* logBehavior(config.char.name, "cortex", "step", { type: "step", phase: "done", task: step.task })
             } else {
-              yield* logToConsole(config.char.name, "orchestrator", `step tick-budget elapsed (${ticksConsumed}/${step.timeoutTicks}); salvage evaluate`)
+              yield* logBehavior(config.char.name, "cortex", "step", { type: "step", phase: "salvage", task: step.task })
             }
             const after = renderer.richSnapshot(state as never)
             const stepIdx = cortex.currentStepIndex
@@ -479,11 +483,11 @@ export const runCortex = (config: CortexLoopConfig) =>
                   .map((s) => `${s.task}: ${s.goal}`)
                   .join("\n") || "None.",
             })
-            yield* logToConsole(
-              config.char.name,
-              "cortex",
-              `evaluate: ${evalResult.judgment} → ${evalResult.transition.transition}`,
-            )
+            yield* logBehavior(config.char.name, "cortex", "conscious", {
+              type: "note",
+              label: "evaluate",
+              data: { judgment: evalResult.judgment, transition: evalResult.transition.transition },
+            })
             // Dedicated diary turn — a separate model turn that always produces a
             // short first-person reflection on the step just completed (replaces the
             // old optional `diaryEntry` field the small conscious model omitted). The
@@ -565,7 +569,7 @@ export const runCortex = (config: CortexLoopConfig) =>
               // Turn 1: open the session.
               stepStartTick = tick
               stepStartSnapshot = renderer.richSnapshot(state as never)
-              yield* logToConsole(config.char.name, "orchestrator", `conscious turn 1: ${step.task}`)
+              yield* logBehavior(config.char.name, "cortex", "step", { type: "step", phase: "start", turn: 1, task: step.task })
               consciousFiber = yield* Effect.fork(
                 consciousThought.turn(
                   {
@@ -589,7 +593,7 @@ export const runCortex = (config: CortexLoopConfig) =>
               pendingDirective = null
               lastSteerTick = tick
               bypassSteerCadence = false
-              yield* logToConsole(config.char.name, "orchestrator", `conscious steer turn (session ${sessionId})`)
+              yield* logBehavior(config.char.name, "cortex", "conscious", { type: "note", label: "steer_turn", data: { sessionId } })
               consciousFiber = yield* Effect.fork(
                 consciousThought.turn(
                   {
