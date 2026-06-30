@@ -11,10 +11,12 @@ import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "@roci/core/se
 import { CharacterLogLive } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { ModelClientLive, ConsciousThoughtLive } from "@roci/core"
+import { LongtermStoreLive } from "@roci/core/conscious/longterm-store.js"
 import { ModelServiceLive, ModelBackendTag } from "@roci/core/services/ModelService.js"
 import { makeMlxBackend } from "@roci/core/services/mlx-backend.js"
 import { runOrchestrator } from "./orchestrator.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
+import { launchEmbedServer } from "./embed-server.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, autoAcceptReview } from "@roci/core/core/character-scaffold.js"
@@ -124,6 +126,10 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
         }
       }
     }
+
+    // Bring up the host long-term-memory embed server alongside the mlx tiers
+    // (best-effort; a missing python env must not block start — memory degrades).
+    yield* launchEmbedServer(PROJECT_ROOT)
 
     yield* runOrchestrator(resolved, args.tickInterval, models, Option.getOrElse(args.manualApproval, () => false))
   }),
@@ -702,6 +708,9 @@ const serviceLayer = Layer.mergeAll(
   characterLogLayer,
   ModelClientLive,
   ConsciousThoughtLive,
+  // Long-term memory store seam for the pre-cull promotion hook (runReflection).
+  // Shells the in-container `memory` CLI, so it depends on Docker.
+  LongtermStoreLive.pipe(Layer.provide(DockerLive)),
 )
 
 export { rociCommand, serviceLayer }

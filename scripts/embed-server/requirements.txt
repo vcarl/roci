@@ -1,0 +1,5 @@
+mlx-embeddings
+fastapi
+uvicorn
+pydantic
+numpy
