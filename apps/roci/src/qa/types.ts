@@ -11,6 +11,7 @@ export type TransitionType =
   | "DELEGATION"
   | "CRITICAL"
   | "SESSION_END"
+  | "NOTE"
 
 export type AnomalyType = "PROCESS_DIED" | "STALL" | "ERROR" | "FATAL_ERROR" | "DEGRADED_TIER"
 
