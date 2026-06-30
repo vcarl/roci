@@ -7,7 +7,7 @@ import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
 import { consolidate } from "../limbic/hippocampus/consolidate.js"
 import { dream } from "../limbic/hippocampus/dream.js"
 import type { Alert } from "../types.js"
-import { logToConsole, logError } from "../../logging/log-writer.js"
+import { logToConsole, logError, logBehavior } from "../../logging/log-writer.js"
 import type { ModelConfig } from "../model-config.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { LongtermStore, newSinceMark, diaryMark } from "../../conscious/longterm-store.js"
@@ -62,13 +62,15 @@ export const runReflection = (
       const diary = yield* charFs.readDiary(char)
       const mark = yield* store.readMark(containerId, char)
       const fresh = newSinceMark(diary, mark)
-      if (fresh.length === 0) return
-      const n = yield* store.promote(containerId, char, fresh)
-      yield* logToConsole(
-        char.name,
-        "orchestrator",
-        `Reflecting — promoted ${n} raw diary entr${n === 1 ? "y" : "ies"} to long-term memory before cull`,
-      )
+      const n = fresh.length === 0 ? 0 : yield* store.promote(containerId, char, fresh)
+      if (n > 0) {
+        yield* logToConsole(
+          char.name,
+          "orchestrator",
+          `Reflecting — promoted ${n} raw diary entr${n === 1 ? "y" : "ies"} to long-term memory before cull`,
+        )
+      }
+      yield* logBehavior(char.name, "hippocampus", "reflection", { type: "reflection", stage: "promote", status: "done", counts: { promoted: n } })
     }).pipe(
       Effect.catchAll((e) =>
         logError(char.name, "hippocampus", `Long-term promotion failed: ${e}`).pipe(
@@ -83,6 +85,7 @@ export const runReflection = (
     // kind:"error" event instead — and do NOT halt: a one-cycle reflection skip
     // is recoverable, but the next cycle proceeds with stale, unbounded memory,
     // so the failure has to be loud and diagnosable.
+    yield* logBehavior(char.name, "hippocampus", "reflection", { type: "reflection", stage: "consolidate", status: "start" })
     yield* logToConsole(char.name, "orchestrator", "Reflecting — consolidating diary...")
     yield* consolidate.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
       Effect.catchAll((e) =>
@@ -92,6 +95,7 @@ export const runReflection = (
       ),
     )
 
+    yield* logBehavior(char.name, "hippocampus", "reflection", { type: "reflection", stage: "dream", status: "start" })
     yield* logToConsole(char.name, "orchestrator", "Reflecting — dreaming (cull)...")
     yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
       Effect.catchAll((e) =>

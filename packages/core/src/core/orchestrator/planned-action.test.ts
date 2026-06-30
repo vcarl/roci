@@ -282,6 +282,40 @@ describe("runReflection — pre-consolidate raw promotion (Unit 7)", () => {
   })
 })
 
+describe("runReflection — reflection behaviors", () => {
+  it("emits reflection promote with promoted:0 even when nothing is fresh, plus consolidate + dream start", async () => {
+    const fs = makeFs({ diary: "", secrets: lines(4, "sec") })
+    const store = makeStore()
+    const behaviors: Array<{ type: string; [k: string]: unknown }> = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_c, e) => Effect.sync(() => { if (e.kind === "behavior") behaviors.push(e.behavior as never) }),
+      }),
+    )
+    let call = 0
+    runTurnMock.mockImplementation(() => {
+      call++
+      return Effect.succeed({ output: `out-${call}`, timedOut: false, durationMs: 1 })
+    })
+
+    const program = runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
+      Effect.provide(Layer.mergeAll(fs.layer, store.layer, recordingLog, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)),
+    )
+    await run(program as Effect.Effect<unknown, unknown, never>)
+
+    const reflections = behaviors.filter((b) => b.type === "reflection")
+    const promote = reflections.find((b) => b.stage === "promote")
+    expect(promote).toBeDefined()
+    expect(promote!.status).toBe("done")
+    expect((promote!.counts as Record<string, number>).promoted).toBe(0)
+    expect(reflections.some((b) => b.stage === "consolidate" && b.status === "start")).toBe(true)
+    expect(reflections.some((b) => b.stage === "dream" && b.status === "start")).toBe(true)
+    // Empty diary → no fresh entries → store.promote is never called (n is forced to 0).
+    expect(store.promotedCalls).toEqual([])
+  })
+})
+
 describe("runBreak — event-processing error path", () => {
   it("logs a STRUCTURED error (kind:error) on a throwing processEvent and keeps draining", async () => {
     const errorMessages: string[] = []
