@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import type { PhaseContext, PhaseRegistry } from "./phase.js"
-import { logToConsole } from "../logging/log-writer.js"
+import { logToConsole, logBehavior } from "../logging/log-writer.js"
 
 /**
  * Run phases in sequence according to the given registry.
@@ -27,6 +27,7 @@ export const runPhases = <S, Evt, R>(
       }
 
       yield* logToConsole(context.char.name, "orchestrator", `Entering phase: ${phase.name}`)
+      yield* logBehavior(context.char.name, "orchestrator", "phase", { type: "phase", phase: phase.name, transition: "enter" })
 
       const result = yield* phase.run(context)
 
@@ -37,6 +38,7 @@ export const runPhases = <S, Evt, R>(
             "orchestrator",
             `Phase "${phase.name}" complete → next: "${result.next}"`,
           )
+          yield* logBehavior(context.char.name, "orchestrator", "phase", { type: "phase", phase: phase.name, transition: "exit" })
           // Thread connection and data forward (merge phaseData, don't replace)
           context = {
             ...context,
@@ -54,12 +56,14 @@ export const runPhases = <S, Evt, R>(
             "orchestrator",
             `Phase "${phase.name}" requested restart → "${registry.initialPhase}"`,
           )
+          yield* logBehavior(context.char.name, "orchestrator", "phase", { type: "phase", phase: phase.name, transition: "exit" })
           currentPhaseName = registry.initialPhase
           context = { ...context, connection: undefined, phaseData: undefined }
           break
         }
         case "Shutdown": {
           yield* logToConsole(context.char.name, "orchestrator", `Phase "${phase.name}" requested shutdown`)
+          yield* logBehavior(context.char.name, "orchestrator", "phase", { type: "phase", phase: phase.name, transition: "exit" })
           return
         }
       }
