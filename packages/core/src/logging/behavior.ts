@@ -1,0 +1,42 @@
+import type { LogLevel } from "./events.js"
+
+/**
+ * The inline run digest carried by a terminal `session_end` behavior. Mirrors
+ * the analytic fields of the QA `RunDigest` (minus `env`, which the monitor adds
+ * from CLI args), so the monitor can adopt it directly as the authoritative
+ * digest. `sequence` holds behavior-type strings.
+ */
+export interface BehaviorDigest {
+  counts: Record<string, number>
+  sequence: string[]
+  timings: { firstForebrainMs: number | null; firstPlanMs: number | null }
+  startTs: string | null
+  terminalCause: string | null
+}
+
+/**
+ * A structured behavior — the source of truth for "what the bot did". Machinery
+ * types ship in Wave 1; cognition types are emitted in Wave 2; `note` is the
+ * no-drop escape hatch for anything that resists taxonomy.
+ */
+export type Behavior =
+  // ── Machinery (Wave 1) ──────────────────────────────────────
+  | { type: "session_start"; domain: string; character: string; gitSha: string; tickIntervalMs: number }
+  | { type: "session_end"; reason: "clean" | "signal" | "error"; signal?: string; digest: BehaviorDigest }
+  | {
+      type: "provision"
+      component: "container" | "embed_server" | "memory_cli" | "conscious_provider"
+      status: "ready" | "failed"
+      detail?: string
+    }
+  | { type: "phase"; phase: string; transition: "enter" | "exit" }
+  | { type: "reflection"; stage: "consolidate" | "dream" | "promote"; status: "start" | "done"; counts?: Record<string, number> }
+  // ── Cognition (Wave 2) ──────────────────────────────────────
+  | { type: "tier_call"; tier: "hindbrain" | "forebrain" | "conscious"; latencyMs: number; outcome: "ok" | "error" | "timeout"; attempt?: number }
+  | { type: "appraisal"; disposition: string; weight?: number; escalated: boolean }
+  | { type: "orient"; headline: string }
+  | { type: "decision"; disposition: "plan" | "wait" | "terminate" }
+  | { type: "step"; phase: "start" | "done" | "salvage"; turn?: number; task?: string }
+  | { type: "action"; domain: string; name: string; input?: unknown; result?: unknown }
+  // ── Escape hatch ────────────────────────────────────────────
+  | { type: "note"; label: string; data?: unknown; severity?: Exclude<LogLevel, "debug"> }

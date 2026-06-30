@@ -56,6 +56,35 @@ function levelMarker(event: UnifiedEvent): string {
   return ""
 }
 
+function renderBehavior(b: import("./behavior.js").Behavior): string {
+  switch (b.type) {
+    case "session_start":
+      return `session_start ${b.domain} (${b.character}) sha=${b.gitSha} tick=${b.tickIntervalMs}ms`
+    case "session_end":
+      return `session_end ${b.reason}${b.signal ? ` (${b.signal})` : ""}`
+    case "provision":
+      return `provision ${b.component} ${b.status}${b.detail ? ` — ${b.detail}` : ""}`
+    case "phase":
+      return `phase ${b.phase} ${b.transition}`
+    case "reflection":
+      return `reflection ${b.stage} ${b.status}${b.counts ? ` ${Object.entries(b.counts).map(([k, v]) => `${k}=${v}`).join(" ")}` : ""}`
+    case "tier_call":
+      return `tier_call ${b.tier} ${b.latencyMs}ms ${b.outcome}`
+    case "appraisal":
+      return `appraisal ${b.disposition}${b.weight !== undefined ? ` w=${b.weight}` : ""}${b.escalated ? " (escalated)" : ""}`
+    case "orient":
+      return `orient ${b.headline}`
+    case "decision":
+      return `decision ${b.disposition}`
+    case "step":
+      return `step ${b.phase}${b.turn !== undefined ? ` turn=${b.turn}` : ""}${b.task ? `: ${b.task}` : ""}`
+    case "action":
+      return `action ${b.domain}/${b.name}`
+    case "note":
+      return `note ${b.label}`
+  }
+}
+
 export function renderEvent(event: UnifiedEvent): string[] {
   const t = tag(event.character, event.subsystem)
 
@@ -110,6 +139,9 @@ export function renderEvent(event: UnifiedEvent): string[] {
 
     case "exchange":
       return [`${t} ${levelMarker(event)}⟳ ${event.step} prompt=${event.prompt.length}c resp=${event.response.length}c`]
+
+    case "behavior":
+      return [`${t} ${levelMarker(event)}${truncateLine(renderBehavior(event.behavior))}`]
 
     case "error":
       return [`${t} ${levelMarker(event)}${truncateLine(`error: ${event.message}`)}`]

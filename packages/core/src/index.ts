@@ -1,5 +1,6 @@
 // Re-export core types and utilities
 export type { UnifiedEvent } from "./logging/events.js"
+export type { Behavior, BehaviorDigest } from "./logging/behavior.js"
 
 export { scaffoldCharacter, autoAcceptReview } from "./core/character-scaffold.js";
 export type { ReviewFn, ReviewDecision } from "./core/character-scaffold.js";

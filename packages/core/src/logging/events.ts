@@ -1,4 +1,5 @@
 import type { InternalEvent } from "./stream-normalizer.js"
+import type { Behavior } from "./behavior.js"
 
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
@@ -21,6 +22,7 @@ export type UnifiedEvent = EventBase & (
   | { kind: "subagent_stop"; data: unknown }
   | { kind: "error"; message: string }
   | { kind: "exchange"; channel: string; step: string; prompt: string; response: string; meta?: Record<string, unknown> }
+  | { kind: "behavior"; behavior: Behavior }
 )
 
 export function eventBase(character: string, system: string, subsystem: string): EventBase {

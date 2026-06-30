@@ -16,6 +16,13 @@ export function classifyLevel(event: UnifiedEvent): LogLevel {
     case "thinking":
     case "exchange":
       return "debug"
+    case "behavior": {
+      const b = event.behavior
+      if (b.type === "note") return b.severity ?? "info"
+      if (b.type === "provision" && b.status === "failed") return "warn"
+      if (b.type === "session_end" && b.reason === "error") return "warn"
+      return "info"
+    }
     case "system":
     case "text":
     case "tool_use":
