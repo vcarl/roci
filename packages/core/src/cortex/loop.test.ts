@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { Effect, Layer, Queue } from "effect"
+import { Effect, Layer, Queue, Fiber, Option } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import { runCortex } from "./loop.js"
 import { ModelClient } from "../model/client.js"
@@ -844,5 +844,221 @@ describe("runCortex (conscious-session executor)", () => {
       expect(d).not.toContain("raw-event-should-not-appear")
       expect(d).toContain("LAUNDERED_HEADLINE")
     }
+  }, 20_000)
+
+  it("a plan assigned after a long idle forks its conscious turn (not instant salvage-evaluate)", async () => {
+    // Repro for the stale-stepStartTick salvage bug. Tick 1 decides `wait` → no plan
+    // is formed and the loop idles with stepStartTick frozen at its init value (0).
+    // Several ticks later an escalating event forms a REAL plan whose step has a small
+    // timeoutTicks. With the stale stepStartTick the loop computes a huge ticksConsumed
+    // and (in the buggy version) salvage-evaluates the step on the SAME tick it is
+    // assigned — its conscious turn never forks. The fix gates budget-elapsed on an
+    // open session, so a never-started step forks turn 1 instead.
+    let decideCount = 0
+    let turnCallCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              // Either a salvage evaluate (buggy path) or a real evaluate (fixed path) →
+              // terminate, so both versions reach Completed and the assertion is on turns.
+              return {
+                text: '{"judgment":"failed","reasoning":"salvage","transition":{"transition":"terminate","summary":"done"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment)
+              return {
+                text: '{"headline":"go","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            // decide: first call waits (idle, no plan); second call forms a real plan.
+            decideCount++
+            if (decideCount === 1)
+              return {
+                text: '{"decision":"wait","reasoning":"hold","wait":{"waitingFor":"signal","resolutionSignal":"sig","disposition":"hold"}}',
+                raw: {},
+              }
+            return {
+              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":2}]}',
+              raw: {},
+            }
+          }),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => {
+      turnCallCount++
+      return {
+        result: { output: `did it ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+        sessionId: "ses_idle_plan",
+      }
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "boot" }) // tick 1 → escalate → decide #1 = wait
+      // After the loop has idled several ticks (stepStartTick still 0), deliver an
+      // escalating event so decide #2 forms a fresh plan.
+      yield* Effect.forkDaemon(
+        Effect.sleep("12 millis").pipe(Effect.andThen(Queue.offer(events, { type: "wakeup" }))),
+      )
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The freshly-assigned step's conscious turn MUST have forked at least once.
+    // Buggy: 0 (instant salvage-evaluate on the assignment tick); fixed: >= 1.
+    expect(turnCallCount).toBeGreaterThanOrEqual(1)
+  }, 20_000)
+
+  it("self-drives a re-orient after a replan transition even with no inbound events", async () => {
+    // Repro for the idle-stall-after-replan bug. A plan runs, evaluate returns `replan`,
+    // currentPlan is nulled and the loop drops to idle. With NO further world events the
+    // only orient trigger (shouldForceOrient) can never fire, so the buggy loop idles
+    // forever. The fix sets forceOrientNext on replan, forcing exactly one re-orient on
+    // the next tick → a second decide runs → terminate → Completed.
+    let decideCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              // evaluate → replan (drops to idle; without self-drive the loop stalls).
+              return {
+                text: '{"judgment":"failed","reasoning":"redo","transition":{"transition":"replan"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment)
+              return {
+                text: '{"headline":"go","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            // decide: #1 forms a plan; #2 (the self-driven re-orient) terminates.
+            decideCount++
+            if (decideCount === 1)
+              return {
+                text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+                raw: {},
+              }
+            return { text: '{"decision":"terminate","reasoning":"done","summary":"all done"}', raw: {} }
+          }),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+      sessionId: "ses_replan",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" }) // the ONLY event ever queued
+      // Fork + bounded wait so the buggy version fails fast (decideCount stays 1)
+      // rather than hanging until the test timeout.
+      const fiber = yield* Effect.fork(
+        runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService))),
+      )
+      yield* Effect.sleep("150 millis")
+      const exit = yield* Fiber.poll(fiber)
+      yield* Fiber.interrupt(fiber)
+      return { count: decideCount, completed: Option.isSome(exit) }
+    })
+    const { count, completed } = await Effect.runPromise(program)
+    // Self-drive: a SECOND decide ran after the replan despite no new events.
+    expect(count).toBeGreaterThanOrEqual(2)
+    expect(completed).toBe(true)
+  }, 20_000)
+
+  it("a wait transition does NOT force a re-orient (deliberate idling)", async () => {
+    // Guard for the replan self-drive: a `wait` transition is deliberate idling and must
+    // NOT set forceOrientNext. After the wait the loop idles indefinitely (no new events),
+    // so only the initial plan's decide ever runs — decideCount stays 1.
+    let decideCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              // evaluate → wait (deliberate idle; must NOT self-drive a re-orient).
+              return {
+                text: '{"judgment":"succeeded","reasoning":"hold","transition":{"transition":"wait","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment)
+              return {
+                text: '{"headline":"go","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            // decide: always a plan — if a spurious re-orient fired, decideCount would climb.
+            decideCount++
+            return {
+              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+              raw: {},
+            }
+          }),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+      sessionId: "ses_wait",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" }) // the ONLY event ever queued
+      const fiber = yield* Effect.fork(
+        runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService))),
+      )
+      yield* Effect.sleep("150 millis")
+      yield* Fiber.interrupt(fiber)
+      return decideCount
+    })
+    const count = await Effect.runPromise(program)
+    // Only the initial plan's decide ran; the wait transition did not self-drive an orient.
+    expect(count).toBe(1)
   }, 20_000)
 })

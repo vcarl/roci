@@ -107,6 +107,10 @@ export const runCortex = (config: CortexLoopConfig) =>
     const cortex = freshCortexState()
     let tick = 0
     let stepStartTick = 0
+    // Self-drive: set when the loop drops to idle after a replan / plan-completion so the
+    // next tick re-orients even with no inbound events (a quiet world would otherwise
+    // never re-trigger the forebrain). Consumed (cleared) after forcing one orient.
+    let forceOrientNext = false
     let stepStartSnapshot = renderer.richSnapshot(state as never)
     // Orient headline of the in-progress plan — context for every step.
     let planHeadline = ""
@@ -195,6 +199,10 @@ export const runCortex = (config: CortexLoopConfig) =>
 
       // 4. HINDBRAIN triage — ungated: runs whenever there are events, even mid-session.
       let escalate = tick === 1
+      if (forceOrientNext) {
+        escalate = true
+        forceOrientNext = false
+      }
       let nonDiscard = false
       if (tickEvents.length > 0) {
         const observe = yield* runHindbrain(runnerConfig, tickEvents, cortex.waitState)
@@ -300,7 +308,11 @@ export const runCortex = (config: CortexLoopConfig) =>
         const step = steps[cortex.currentStepIndex]
         if (step) {
           const ticksConsumed = tick - stepStartTick
-          const budgetElapsed = ticksConsumed >= step.timeoutTicks
+          // A step cannot be "over budget" before it has opened a session (forked its
+          // first turn). Without this guard, a stale stepStartTick (e.g. a plan assigned
+          // after a long idle) makes a brand-new step appear instantly elapsed and get
+          // salvage-evaluated on the same tick it is assigned — its turn never forks.
+          const budgetElapsed = sessionId !== null && ticksConsumed >= step.timeoutTicks
 
           // 6a. Evaluate now if the agent signaled done OR the tick-budget expired.
           if (stepDoneSignaled || budgetElapsed) {
@@ -358,11 +370,15 @@ export const runCortex = (config: CortexLoopConfig) =>
             } else if (t.transition === "replan") {
               cortex.currentPlan = null
               cortex.lastOrientTick = 0
+              // Self-drive a re-orient next tick — a quiet world has no event to retrigger.
+              forceOrientNext = true
             } else {
               // next_step: advance and reset session state for the new step.
               cortex.currentStepIndex++
               if (cortex.currentStepIndex >= steps.length) {
                 cortex.currentPlan = null
+                // Plan complete → self-drive a re-orient next tick (same stall as replan).
+                forceOrientNext = true
               }
             }
             // Reset per-step session state for the next step (or next plan).
