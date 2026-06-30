@@ -60,3 +60,11 @@ RUN mkdir -p /work/bin
 COPY --chown=node:node channel-package.json /work/bin/package.json
 RUN cd /work/bin && bun install
 COPY --chown=node:node roci-channel.ts /work/bin/roci-channel.ts
+
+# Bake the sqlite-vec loadable extension (linux-arm64 0.1.9) used by the
+# long-term memory `memory` CLI (bun:sqlite db.loadExtension with the explicit
+# sqlite3_vec_init entrypoint). World-readable so USER node can load it.
+USER root
+COPY vec0.so /usr/local/lib/vec0.so
+RUN chmod 0644 /usr/local/lib/vec0.so
+USER node

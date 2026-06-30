@@ -129,7 +129,10 @@ echo "Host network detected as: $HOST_NETWORK"
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 
-# Allow Docker Desktop host gateway (host.docker.internal IPv4)
+# Allow Docker Desktop host gateway (host.docker.internal IPv4). This wholesale
+# host-gateway ACCEPT is how the container reaches every host model server,
+# including the conscious server (8083) AND the long-term-memory embed server
+# (8084) the `memory` CLI POSTs to — no per-port rule is needed.
 DOCKER_HOST_IP=$(getent ahostsv4 host.docker.internal 2>/dev/null | head -1 | awk '{print $1}')
 if [ -n "$DOCKER_HOST_IP" ] && [ "$DOCKER_HOST_IP" != "$HOST_IP" ]; then
   echo "Docker host gateway detected as: $DOCKER_HOST_IP"
