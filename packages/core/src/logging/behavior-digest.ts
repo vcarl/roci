@@ -41,7 +41,8 @@ export function recordBehavior(character: string, behavior: Behavior, ts: string
   s.sequence.push(behavior.type)
 
   if (s.startTs === null && behavior.type === "session_start") s.startTs = ts
-  const sinceStart = s.startTs ? Date.parse(ts) - Date.parse(s.startTs) : null
+  const rawSinceStart = s.startTs ? Date.parse(ts) - Date.parse(s.startTs) : null
+  const sinceStart = rawSinceStart === null || Number.isNaN(rawSinceStart) ? null : rawSinceStart
 
   if (s.timings.firstForebrainMs === null && behavior.type === "tier_call" && behavior.tier === "forebrain") {
     s.timings.firstForebrainMs = sinceStart

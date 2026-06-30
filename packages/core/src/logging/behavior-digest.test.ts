@@ -35,6 +35,12 @@ describe("behavior digest accumulator", () => {
     expect(snapshotDigest("ada").timings.firstPlanMs).toBe(5000)
   })
 
+  it("guards firstForebrainMs against NaN from an unparseable tier_call timestamp", () => {
+    recordBehavior("ada", { type: "session_start", domain: "d", character: "ada", gitSha: "x", tickIntervalMs: 30000 }, "2026-06-30T00:00:00.000Z")
+    recordBehavior("ada", { type: "tier_call", tier: "forebrain", latencyMs: 1800, outcome: "ok" }, "not-a-date")
+    expect(snapshotDigest("ada").timings.firstForebrainMs).toBeNull()
+  })
+
   it("sets terminalCause from a session_end reason and signal", () => {
     recordBehavior("ada", { type: "session_start", domain: "d", character: "ada", gitSha: "x", tickIntervalMs: 30000 }, "2026-06-30T00:00:00.000Z")
     recordBehavior("ada", { type: "session_end", reason: "signal", signal: "SIGTERM", digest: emptyBehaviorDigest() }, "2026-06-30T00:00:09.000Z")
