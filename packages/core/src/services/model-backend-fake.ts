@@ -12,6 +12,15 @@ export interface FakeScript {
   // SUCCEEDS. Models the real mlx cold-start where the gate must poll, not
   // single-shot. Takes precedence over `probe` for the listed tier.
   readonly probeFailFirst?: Partial<Record<string, number>>
+  // Simulate a server that SPAWNS but NEVER becomes ready within its budget for
+  // the first N spawn generations: the first N readiness probes for the tier
+  // hang "forever" (so the gate's per-attempt timeoutMs elapses → a timed-out
+  // ReadinessError), then every subsequent probe SUCCEEDS. Unlike
+  // `probeFailFirst` (a fast failure consumed by the in-attempt cold-load poll),
+  // a hanging probe forces the WHOLE attempt to time out — the condition that
+  // drives a server RESTART. Set it large (e.g. 1_000_000) to model a server
+  // that never recovers. Takes precedence over `probe` for the listed tier.
+  readonly probeTimeoutFirst?: Partial<Record<string, number>>
   readonly healthy?: ReadonlyArray<string>
 }
 export interface FakeBackendLog {
@@ -52,6 +61,19 @@ export function makeFakeBackend(script: FakeScript = {}): Effect.Effect<FakeBack
         // Cold-load simulation: fail the first N probes, then succeed. The
         // count is incremented per probe call so a polling gate eventually
         // sees a success; a single-shot gate fails on the very first probe.
+        const timeoutFirst = script.probeTimeoutFirst?.[spec.tier]
+        if (timeoutFirst != null) {
+          const seen = yield* Ref.modify(probeCountRef, (m) => {
+            const n = (m[spec.tier] ?? 0) + 1
+            return [n, { ...m, [spec.tier]: n }]
+          })
+          if (seen <= timeoutFirst) {
+            // Hang past any sane timeoutMs; the gate's per-attempt timeoutFail
+            // interrupts this sleep and yields a timed-out ReadinessError.
+            yield* Effect.sleep("10000000 millis")
+          }
+          return
+        }
         const failFirst = script.probeFailFirst?.[spec.tier]
         if (failFirst != null) {
           const seen = yield* Ref.modify(probeCountRef, (m) => {

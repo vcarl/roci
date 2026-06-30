@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schedule, Scope } from "effect"
+import { Context, Effect, Exit, ExecutionStrategy, Layer, Schedule, Scope } from "effect"
 import type { CortexTier } from "../model/handles.js"
 import type { ModelBackend, RunningServer } from "./model-backend.js"
 import { SpawnError, ReadinessError } from "./model-backend.js"
@@ -15,11 +15,23 @@ export class ModelService extends Context.Tag("ModelService")<
   }
 >() {}
 
-// Acquire one server (adopt if healthy, else spawn) into the AMBIENT scope, then
-// probe it ready under the tier timeout. The acquireRelease registers a
+// Readiness-restart policy. When a single acquire+probe attempt fails (spawn
+// error, or the per-tier readiness budget elapses), we TEAR DOWN that attempt's
+// stale/half-spawned server and try again with a fresh process, backing off
+// exponentially. RESTART_MAX_RETRIES is the number of RESTARTS after the initial
+// attempt, so the gate makes up to (1 + RESTART_MAX_RETRIES) readiness attempts
+// before surfacing the failure. Delay before restart N (1-based) is
+// RESTART_BASE_DELAY_MS * 2^(N-1) → 1s, 2s, 4s, 8s, … (no cap; see the cumulative
+// caveat in the restart loop).
+export const RESTART_MAX_RETRIES = 10
+export const RESTART_BASE_DELAY_MS = 1_000
+
+// ONE acquire+probe attempt: adopt-if-healthy, else spawn into the AMBIENT scope,
+// then probe ready under the tier timeout. The acquireRelease registers a
 // spawned-only kill finalizer on that scope, so closing the scope tears down
-// exactly what we spawned and leaves adopted servers running.
-export const acquireReady = (
+// exactly what we spawned and leaves adopted servers running. `acquireReady`
+// drives this once per restart against a fresh per-attempt scope.
+const attemptReady = (
   backend: ModelBackend,
   spec: TierSpec,
 ): Effect.Effect<RunningServer, SpawnError | ReadinessError, Scope.Scope> =>
@@ -56,6 +68,61 @@ export const acquireReady = (
         }),
       )
     return server
+  })
+
+// Acquire a ready server for `spec`, RESTARTING on failure with exponential
+// backoff. Each attempt runs `attemptReady` in its OWN child scope forked from
+// the ambient scope:
+//   • success → the child scope is left open, so it (and its spawned-only kill
+//     finalizer) is owned by the ambient scope exactly like before — resident
+//     tiers stay held for the session; per-phase tiers are killed when their
+//     transient scope closes.
+//   • failure → we CLOSE that child scope immediately, running the kill
+//     finalizer NOW. This tears down the stale/half-spawned process for THIS
+//     tier (targeted by spec → tier+port+model) before the next attempt, so a
+//     wedged or zombie server is reaped and never accumulates or holds the port.
+//     Adopted (healthy, externally-started) servers register no kill finalizer,
+//     so closing the child is a no-op for them — we never kill a server we
+//     didn't spawn; a later attempt simply re-checks health and may spawn fresh.
+// After RESTART_MAX_RETRIES restarts are exhausted we re-raise the LAST failure's
+// cause, preserving the existing terminal behavior (e.g. ReadinessError with
+// timedOut=true and the server's stderr tail).
+//
+// Caveat: delays are uncapped exponential (1s…512s on the 10th restart), so a
+// server that never recovers blocks for ~2300s of timeouts+backoff before the
+// terminal failure. That is the explicit "10 doubling retries" policy; tune the
+// constants above if a ceiling is wanted.
+export const acquireReady = (
+  backend: ModelBackend,
+  spec: TierSpec,
+): Effect.Effect<RunningServer, SpawnError | ReadinessError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const parent = yield* Effect.scope
+    for (let attempt = 0; ; attempt++) {
+      // Fork a child of the ambient scope: closing the parent closes this child,
+      // so a SUCCESSFUL attempt's server is torn down with the parent (unchanged
+      // resident/per-phase lifetime). A FAILED attempt we close ourselves below.
+      const child = yield* Scope.fork(parent, ExecutionStrategy.sequential)
+      const result = yield* attemptReady(backend, spec).pipe(Scope.extend(child), Effect.exit)
+      if (Exit.isSuccess(result)) {
+        return result.value
+      }
+      // Tear down this attempt's spawned process before retrying (no port/proc
+      // leak across restarts). Closing with the failure exit runs the kill
+      // finalizer; for an adopted server there is no finalizer → harmless no-op.
+      yield* Scope.close(child, result)
+      if (attempt >= RESTART_MAX_RETRIES) {
+        // Exhausted: re-raise the last failure exactly (preserves ReadinessError
+        // timedOut + stderr tail). Yielding a failed Exit re-fails the effect.
+        return yield* result
+      }
+      const delayMs = RESTART_BASE_DELAY_MS * 2 ** attempt
+      yield* Effect.logWarning(
+        `model readiness failed; restarting server [tier=${spec.tier} model=${spec.model} ` +
+          `port=${spec.port}] restart ${attempt + 1}/${RESTART_MAX_RETRIES} in ${delayMs}ms`,
+      )
+      yield* Effect.sleep(`${delayMs} millis`)
+    }
   })
 
 export function makeModelService(

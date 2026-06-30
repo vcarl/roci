@@ -64,10 +64,12 @@ describe("ModelService — resident-first gating", () => {
 })
 
 describe("ModelService — required-tier readiness timeout fails the layer", () => {
-  it("a resident probe that never returns fails makeModelService via timeout", async () => {
+  it("a resident probe that never returns fails makeModelService after exhausting restarts", async () => {
     // Deterministic: drive the conscious readiness timeout (600_000ms) with
-    // TestClock so no wall-clock time elapses. Build the service inside a forked
-    // scope, advance past the timeout, then await the fiber's Exit.
+    // TestClock so no wall-clock time elapses. A never-ready server now RESTARTS
+    // up to 10 times (1 + 10 attempts × 600s timeout + ~1023s exponential
+    // backoff ≈ 7623s) before the layer build finally fails. Advance past the
+    // whole restart budget, then await the fiber's Exit.
     const program = Effect.gen(function* () {
       const be = yield* makeFakeBackend({ probe: { conscious: "timeout" } })
       return yield* makeModelService(be)
@@ -75,7 +77,7 @@ describe("ModelService — required-tier readiness timeout fails the layer", () 
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const fiber = yield* Effect.fork(program)
-        yield* TestClock.adjust("700000 millis")
+        yield* TestClock.adjust("7700000 millis")
         return yield* Fiber.join(fiber)
       }).pipe(Effect.provide(TestContext.TestContext)),
     )
@@ -111,16 +113,17 @@ describe("ModelService — readiness gate POLLS across a cold load", () => {
 
   it("fails with ReadinessError(timedOut=true) when the backend never becomes ready before the budget elapses", async () => {
     // hindbrain (per-phase, 120_000ms budget) is scripted to fail an effectively
-    // unbounded number of probes. Once the budget elapses the gate must give up
-    // with a timed-out ReadinessError that fails the layer build.
+    // unbounded number of probes. Each budget that elapses triggers a RESTART;
+    // once all 10 restarts are exhausted (≈ 11 × 120s + ~1023s backoff ≈ 2343s)
+    // the gate gives up with a timed-out ReadinessError that fails the layer.
     const program = Effect.gen(function* () {
-      const be = yield* makeFakeBackend({ probeFailFirst: { hindbrain: 1_000_000 } })
+      const be = yield* makeFakeBackend({ probeTimeoutFirst: { hindbrain: 1_000_000 } })
       return yield* makeModelService(be)
     }).pipe(Effect.scoped)
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const fiber = yield* Effect.fork(program)
-        yield* TestClock.adjust("130000 millis")
+        yield* TestClock.adjust("2400000 millis")
         return yield* Fiber.join(fiber)
       }).pipe(Effect.provide(TestContext.TestContext)),
     )
@@ -137,17 +140,18 @@ describe("ModelService — all three tiers required at startup", () => {
   it("fails the layer build when a per-phase tier (hindbrain) never passes its startup probe", async () => {
     // The startup gate probes every per-phase tier. A hindbrain that NEVER
     // becomes ready must fail makeModelService (the layer build), even though
-    // the resident conscious is healthy. With the polling gate this is a
-    // timeout: the probe keeps failing until the 120_000ms budget elapses, so
-    // we drive it with TestClock (probeFailFirst far exceeds any retry count).
+    // the resident conscious is healthy. With the polling+restart gate this is a
+    // timeout repeated across 10 restarts: each 120_000ms budget elapses, the
+    // server is restarted, and only after the budget is exhausted (≈ 2343s) does
+    // the layer build fail. Drive past the whole restart budget with TestClock.
     const program = Effect.gen(function* () {
-      const be = yield* makeFakeBackend({ probeFailFirst: { hindbrain: 1_000_000 } })
+      const be = yield* makeFakeBackend({ probeTimeoutFirst: { hindbrain: 1_000_000 } })
       return yield* makeModelService(be)
     }).pipe(Effect.scoped)
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const fiber = yield* Effect.fork(program)
-        yield* TestClock.adjust("130000 millis")
+        yield* TestClock.adjust("2400000 millis")
         return yield* Fiber.join(fiber)
       }).pipe(Effect.provide(TestContext.TestContext)),
     )
@@ -202,6 +206,69 @@ describe("ModelService — withTier per-phase lifecycle", () => {
     // conscious spawned exactly once (resident acquire at startup); withTier on
     // a resident tier is a no-op and adds no second conscious spawn.
     expect(out.spawns.filter((t) => t === "conscious").length).toBe(1)
+  })
+})
+
+describe("ModelService — readiness restart with exponential backoff", () => {
+  it("recovers by restarting a server that times out its first 3 readiness budgets, without failing the build", async () => {
+    // hindbrain (per-phase, 120_000ms budget) hangs its readiness probe for its
+    // first 3 spawn generations → each attempt times out → RESTART. The 4th
+    // spawn becomes ready. The layer build must SUCCEED (no fatal surfaced).
+    const out = await Effect.runPromise(
+      Effect.gen(function* () {
+        const be = yield* makeFakeBackend({ probeTimeoutFirst: { hindbrain: 3 } })
+        const fiber = yield* Effect.fork(Effect.scoped(makeModelService(be)).pipe(Effect.exit))
+        // 3 × 120s timeouts + 1s+2s+4s backoff ≈ 367s of virtual time.
+        yield* TestClock.adjust("400000 millis")
+        const built = yield* Fiber.join(fiber)
+        const log = yield* be.log()
+        return { built, log }
+      }).pipe(Effect.provide(TestContext.TestContext)),
+    )
+    expect(Exit.isSuccess(out.built)).toBe(true)
+    // hindbrain was spawned 4 times: 3 failed-then-restarted + the ready 4th.
+    expect(out.log.spawns.filter((t) => t === "hindbrain").length).toBe(4)
+    // Each of the 3 stale servers was torn down before the next restart (no leak).
+    // The 4th (held) is also killed when the transient startup-gate scope closes.
+    expect(out.log.kills.filter((t) => t === "hindbrain").length).toBe(4)
+  })
+
+  it("restarts up to 10 times then surfaces the ReadinessError(timedOut) after exhaustion", async () => {
+    // hindbrain never becomes ready. Each attempt times out at 120s; restarts are
+    // spaced 1s,2s,4s,…,512s. The fiber must NOT be done after the 11 timeouts
+    // alone (1320s) — the ~1023s of cumulative backoff must still be pending —
+    // proving the delays are real and exponential. Only after the full budget
+    // (~2343s) does it surface a timed-out ReadinessError.
+    const out = await Effect.runPromise(
+      Effect.gen(function* () {
+        const be = yield* makeFakeBackend({ probeTimeoutFirst: { hindbrain: 1_000_000 } })
+        const fiber = yield* Effect.fork(Effect.scoped(makeModelService(be)).pipe(Effect.exit))
+        // Past all 11 timeouts (1320s) but inside the pending exponential backoff.
+        yield* TestClock.adjust("1400000 millis")
+        const mid = yield* Fiber.poll(fiber)
+        // Past the remaining backoff (total 2.5M ms > ~2343s).
+        yield* TestClock.adjust("1100000 millis")
+        const joined = yield* Fiber.join(fiber)
+        const log = yield* be.log()
+        return { mid, joined, log }
+      }).pipe(Effect.provide(TestContext.TestContext)),
+    )
+    // Still running mid-backoff after the timeouts: backoff delays are real.
+    expect(Option.isNone(out.mid)).toBe(true)
+    // Terminal failure preserves the ReadinessError(timedOut=true).
+    expect(Exit.isFailure(out.joined)).toBe(true)
+    const err =
+      out.joined._tag === "Failure" ? Cause.failureOption(out.joined.cause) : Option.none()
+    expect(Option.isSome(err)).toBe(true)
+    const e = (err as Extract<typeof err, { _tag: "Some" }>).value
+    expect(e).toBeInstanceOf(ReadinessError)
+    expect((e as ReadinessError).timedOut).toBe(true)
+    // 11 total attempts (initial + 10 restarts), each spawned + torn down → no leak.
+    expect(out.log.spawns.filter((t) => t === "hindbrain").length).toBe(11)
+    expect(out.log.kills.filter((t) => t === "hindbrain").length).toBe(11)
+    // Restarts targeted ONLY hindbrain: the other tiers were each spawned once.
+    expect(out.log.spawns.filter((t) => t === "conscious").length).toBe(1)
+    expect(out.log.spawns.filter((t) => t === "forebrain").length).toBe(1)
   })
 })
 
