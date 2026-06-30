@@ -108,8 +108,14 @@ const makeMultiStepClient = (evalCountRef: { n: number }) =>
     }),
   )
 
+// Default domain: events are STATE-CHANGING (processEvent returns a stateUpdate),
+// so they pass the loop's !stateUpdate fast-path and reach the (scripted)
+// hindbrain. An identity stateUpdate is enough to mark the event non-inert.
 const fakeDomain = Layer.mergeAll(
-  Layer.succeed(EventProcessorTag, EventProcessorTag.of({ processEvent: () => ({}) })),
+  Layer.succeed(
+    EventProcessorTag,
+    EventProcessorTag.of({ processEvent: () => ({ stateUpdate: (s: unknown) => s }) }),
+  ),
   Layer.succeed(
     SituationClassifierTag,
     SituationClassifierTag.of({
@@ -151,6 +157,7 @@ const fakeFs = Layer.succeed(
     readBackground: () => Effect.succeed(""),
     readValues: () => Effect.succeed(""),
     readPalette: () => Effect.succeed(""),
+    readDrives: () => Effect.succeed(""),
     characterExists: () => Effect.succeed(true),
   }),
 )
@@ -525,6 +532,7 @@ describe("runCortex (conscious-session executor)", () => {
         readBackground: () => Effect.succeed(""),
         readValues: () => Effect.succeed(""),
         readPalette: () => Effect.succeed(""),
+        readDrives: () => Effect.succeed(""),
         characterExists: () => Effect.succeed(true),
       }),
     )
@@ -740,6 +748,7 @@ describe("runCortex (conscious-session executor)", () => {
         readBackground: () => Effect.fail(new CharacterFsError("background read boom")),
         readValues: () => Effect.fail(new CharacterFsError("values read boom")),
         readPalette: () => Effect.succeed(""),
+        readDrives: () => Effect.succeed(""),
         characterExists: () => Effect.succeed(true),
       }),
     )
@@ -1403,5 +1412,353 @@ describe("runCortex (conscious-session executor)", () => {
     const count = await Effect.runPromise(program)
     // Only the initial plan's decide ran; the wait transition did not self-drive an orient.
     expect(count).toBe(1)
+  }, 20_000)
+})
+
+// ── Subteam A — limbic drives: per-event triage, fast-path, graded ladder ──────
+describe("runCortex — limbic drives (per-event triage + escalation ladder)", () => {
+  // Build a domain whose processEvent marks an event inert (no stateUpdate) when
+  // its `type` is in `inertTypes`, state-changing otherwise. Optional criticals.
+  const domainWith = (
+    inertTypes: string[],
+    criticals: () => { priority: "critical"; message: string }[] = () => [],
+  ) =>
+    Layer.mergeAll(
+      Layer.succeed(
+        EventProcessorTag,
+        EventProcessorTag.of({
+          processEvent: ((e: unknown) => {
+            const t = (e as { type?: string }).type ?? ""
+            return inertTypes.includes(t) ? {} : { stateUpdate: (s: unknown) => s }
+          }) as never,
+        }),
+      ),
+      Layer.succeed(
+        SituationClassifierTag,
+        SituationClassifierTag.of({
+          summarize: () => ({ situation: {} as never, headline: "h", sections: [], metrics: {} }),
+        }),
+      ),
+      Layer.succeed(
+        InterruptRegistryTag,
+        InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals }),
+      ),
+      Layer.succeed(
+        StateRendererTag,
+        StateRendererTag.of({ snapshot: () => ({}), richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
+      ),
+      Layer.succeed(PromptBuilderTag, PromptBuilderTag.of({ systemPrompt: () => "x" })),
+    )
+
+  // A ModelClient with injectable per-event observe output + decide output, and
+  // hooks to count observe/decide calls. Branches by skill marker like scriptedClient.
+  const limbicClient = (opts: {
+    observe: (promptLower: string) => string
+    decide: () => string
+    onObserve?: () => void
+    onDecide?: () => void
+    headline?: string
+  }) =>
+    Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision) {
+              opts.onObserve?.()
+              return { text: opts.observe(p), raw: {} }
+            }
+            if (hasJudgment && !hasHeadline)
+              return {
+                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment)
+              return {
+                text: `{"headline":"${opts.headline ?? "act now"}","sections":[{"id":"s1","heading":"H","body":"B"}],"whatChanged":"x","emotionalState":"😰","metrics":{}}`,
+                raw: {},
+              }
+            opts.onDecide?.()
+            return { text: opts.decide(), raw: {} }
+          }),
+      }),
+    )
+
+  const DISCARD = '{"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"noise"}'
+
+  it("fast-path: inert (no stateUpdate) events make ZERO model calls; only state-changing events are appraised (Unit 5/6)", async () => {
+    let observeCount = 0
+    const client = limbicClient({
+      observe: () => DISCARD,
+      decide: () => '{"decision":"terminate","reasoning":"stop"}',
+      onObserve: () => observeCount++,
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      // 2 state-changing + 1 inert, all in tick 1.
+      yield* Queue.offer(events, { type: "change-a" })
+      yield* Queue.offer(events, { type: "change-b" })
+      yield* Queue.offer(events, { type: "noise" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith(["noise"]), fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // Exactly the 2 state-changing events reached the 2B; the inert one was fast-pathed.
+    expect(observeCount).toBe(2)
+  }, 20_000)
+
+  it("hard-interrupt rung: a physical-attack event with interrupt:true kills the in-flight conscious fiber and reorients (Unit 7/9)", async () => {
+    const interrupted = { value: false }
+    let decideCount = 0
+    const client = limbicClient({
+      observe: (p) =>
+        p.includes("attack-now")
+          ? '{"disposition":"escalate","emotionalWeight":"😱","drive":"safety","weight":5,"interrupt":true,"reason":"under fire right now"}'
+          : DISCARD,
+      decide: () => {
+        decideCount++
+        return decideCount === 1
+          ? '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}'
+          : '{"decision":"terminate","reasoning":"post-interrupt stop"}'
+      },
+    })
+    const blockingCt = Layer.succeed(
+      ConsciousThought,
+      ConsciousThought.of({
+        provision: () => Effect.void as Effect.Effect<void, never, Docker>,
+        turn: () =>
+          Effect.never.pipe(
+            Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true })),
+          ) as Effect.Effect<{ result: TurnResult; sessionId: string }, never, never>,
+      }),
+    )
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "plan-seed" }) // tick 1 → plan → turn 1 (blocks)
+      yield* Effect.forkDaemon(
+        Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "attack-now" }))),
+      )
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, blockingCt, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The in-flight conscious turn was hard-interrupted by the hindbrain interrupt rung.
+    expect(interrupted.value).toBe(true)
+    // …and it reorients (a fresh decide cycle ran after the interrupt).
+    expect(decideCount).toBeGreaterThanOrEqual(2)
+  }, 20_000)
+
+  it("reorient rung: an abstract drop-everything emergency (weight 5, interrupt:false) drops the plan and reorients via the GRADED layer, NOT a hard interrupt (Unit 9)", async () => {
+    let decideCount = 0
+    const client = limbicClient({
+      observe: (p) =>
+        p.includes("termination-60s")
+          ? // Abstract emergency: high weight but interrupt:false — the 2B-owned graded layer.
+            '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"account termination in 60s"}'
+          : DISCARD,
+      decide: () => {
+        decideCount++
+        return decideCount === 1
+          ? '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}'
+          : '{"decision":"terminate","reasoning":"reoriented"}'
+      },
+    })
+    // Non-blocking turn: turn 1 completes with no done-marker, leaving the plan
+    // active and idle — so the reorient is observable as a fresh decide cycle.
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "working...", timedOut: false, durationMs: 1 }, sessionId: "ses_re" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "plan-seed" }) // tick 1 → plan
+      yield* Effect.forkDaemon(
+        Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
+      )
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The reorient dropped the active plan → a second decide (replan) ran.
+    // (It was NOT routed through the amygdala/critical-exit, and NOT a hard interrupt.)
+    expect(decideCount).toBeGreaterThanOrEqual(2)
+  }, 20_000)
+
+  it("steer rung: a weight-4 in-session event (no escalate disposition) drives a priority steer directive (Unit 7)", async () => {
+    const capturedDirectives: string[] = []
+    let turnCount = 0
+    const client = limbicClient({
+      headline: "PRIORITY_STEER_HEADLINE",
+      observe: (p) =>
+        p.includes("steer-evt")
+          ? // weight 4 ≥ STEER, disposition accumulate (NOT escalate) — weight alone steers.
+            '{"disposition":"accumulate","emotionalWeight":"😟","drive":"sustenance","weight":4,"interrupt":false,"reason":"resource pressure"}'
+          : DISCARD,
+      decide: () =>
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+    })
+    const ctLayer = ConsciousThoughtTest(
+      (_c, _r) => {
+        turnCount++
+        if (turnCount >= 2)
+          return { result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 1 }, sessionId: "ses_steer" }
+        return { result: { output: "working", timedOut: false, durationMs: 1 }, sessionId: "ses_steer" }
+      },
+      (d) => capturedDirectives.push(d),
+    )
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "plan-seed" }) // tick 1 → plan, opens turn 1
+      yield* Effect.forkDaemon(
+        Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "steer-evt" }))),
+      )
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // A steer directive fired in-session, driven purely by the weight-4 salience.
+    expect(capturedDirectives.length).toBeGreaterThanOrEqual(1)
+    expect(capturedDirectives.join(" ")).toContain("PRIORITY_STEER_HEADLINE")
+  }, 20_000)
+
+  // Nit 1: the in-session steer gate is rung-aware, not just nonDiscard. An event
+  // with weight ≥ STEER but disposition:"discard" computes esc.rung === "steer"
+  // (escalate:true) yet is NOT pushed to accumulatedEvents (so nonDiscard is
+  // false). Under the old `nonDiscard`-only gate the in-session path did nothing —
+  // an asymmetry with the seam the loop advertises. It must now steer on it.
+  // Deterministic delivery: turn 1 enqueues the mid-session event (drained the
+  // NEXT tick); a tick-gated critical bounds the run.
+  it("Nit 1: a steer-rung event with disposition 'discard' (nonDiscard false) still drives the in-session steer", async () => {
+    const captured: string[] = []
+    const tickRef = { n: 0 }
+    const STEER_DISCARD =
+      '{"disposition":"discard","emotionalWeight":"😟","drive":"sustenance","weight":4,"interrupt":false,"reason":"high-salience but technically discardable"}'
+    const client = limbicClient({
+      headline: "STEER_FROM_DISCARD",
+      observe: (p) => (p.includes("steer-evt") ? STEER_DISCARD : DISCARD),
+      decide: () =>
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      const ctLayer = ConsciousThoughtTest(
+        (_c, resume) => {
+          // turn 1 (no resume) enqueues the mid-session steer event for the next tick.
+          if (!resume) Queue.unsafeOffer(events, { type: "steer-evt" })
+          return { result: { output: "working", timedOut: false, durationMs: 1 }, sessionId: "ses_n1" }
+        },
+        (d) => captured.push(d),
+      )
+      yield* Queue.offer(events, { type: "plan-seed" })
+      // Bound the loop: exit via a critical once the steer has had its chance.
+      const domain = domainWith([], () => {
+        tickRef.n++
+        return tickRef.n >= 4 ? [{ priority: "critical" as const, message: "bound" }] : []
+      })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    await Effect.runPromise(program)
+    // Under the old nonDiscard-only gate this is empty (the steer never fired).
+    expect(captured.length).toBeGreaterThanOrEqual(1)
+    expect(captured.join(" ")).toContain("STEER_FROM_DISCARD")
+  }, 20_000)
+
+  // Nit 2: ISOLATE bypassSteerCadence. Two steer-rung events are delivered one per
+  // tick (turn-offers-next-event, deterministic). The first steer fires at tick 2
+  // and sets lastSteerTick=2; the second arrives at tick 3 — INSIDE the throttle
+  // window (3 - 2 = 1 < DEFAULT_STEER_CADENCE_TICKS=3). A tick-gated critical exits
+  // at tick 4. WITH bypass both steers fire (2 directives); WITHOUT bypass the
+  // first steer is itself throttled to tick 3, so only one fires before the bound —
+  // the assertion of ≥2 fails. This pins the throttle short-circuit, not just
+  // "a weight-4 steers".
+  it("Nit 2: bypassSteerCadence fires a steer-rung event within DEFAULT_STEER_CADENCE_TICKS of the prior steer", async () => {
+    const captured: string[] = []
+    const tickRef = { n: 0 }
+    const STEER =
+      '{"disposition":"accumulate","emotionalWeight":"😟","drive":"sustenance","weight":4,"interrupt":false,"reason":"salient"}'
+    const client = limbicClient({
+      headline: "BYPASS_STEER",
+      observe: (p) => (p.includes("steer-evt") ? STEER : DISCARD),
+      decide: () =>
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      let resumeCount = 0
+      const ctLayer = ConsciousThoughtTest(
+        (_c, resume) => {
+          // turn 1 enqueues steer-evt #1; the FIRST steer turn enqueues steer-evt #2.
+          if (!resume) Queue.unsafeOffer(events, { type: "steer-evt" })
+          else {
+            resumeCount++
+            if (resumeCount === 1) Queue.unsafeOffer(events, { type: "steer-evt" })
+          }
+          return { result: { output: "working", timedOut: false, durationMs: 1 }, sessionId: "ses_n2" }
+        },
+        (d) => captured.push(d),
+      )
+      yield* Queue.offer(events, { type: "plan-seed" })
+      const domain = domainWith([], () => {
+        tickRef.n++
+        return tickRef.n >= 4 ? [{ priority: "critical" as const, message: "bound" }] : []
+      })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    await Effect.runPromise(program)
+    // Both steers fired within the 4-tick bound: the second short-circuited the
+    // throttle. Without the bypass, only one fires before the critical exits.
+    expect(captured.length).toBeGreaterThanOrEqual(2)
   }, 20_000)
 })

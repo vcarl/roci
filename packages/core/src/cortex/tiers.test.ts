@@ -69,29 +69,54 @@ describe("extractJson / parseOr", () => {
   })
 })
 
-describe("runHindbrain", () => {
-  it("parses an escalate disposition from the model", async () => {
+describe("runHindbrain — per-event appraisal", () => {
+  it("parses + validates a full single-event result (drive/weight/interrupt)", async () => {
     const out = await Effect.runPromise(
       Effect.provide(
-        runHindbrain(config, ["type: combat\n{}"], null),
+        runHindbrain(config, "type: combat\n{}", null),
         Layer.mergeAll(
-          fixedClient('{"disposition":"escalate","emotionalWeight":"😰","reason":"under fire"}'),
+          fixedClient(
+            '{"disposition":"escalate","emotionalWeight":"😰","drive":"safety","weight":5,"interrupt":true,"reason":"under fire"}',
+          ),
           recordingService([]),
           silentLog,
         ),
       ),
     )
     expect(out.disposition).toBe("escalate")
+    expect(out.drive).toBe("safety")
+    expect(out.weight).toBe(5)
+    expect(out.interrupt).toBe(true)
   })
 
-  it("falls back to accumulate on unparseable output (never silently discards)", async () => {
+  it("clamps an out-of-range weight and validates an unknown drive to null", async () => {
     const out = await Effect.runPromise(
       Effect.provide(
-        runHindbrain(config, ["x"], null),
+        runHindbrain(config, "type: weird\n{}", null),
+        Layer.mergeAll(
+          fixedClient(
+            '{"disposition":"accumulate","emotionalWeight":"😐","drive":"telepathy","weight":9,"reason":"x"}',
+          ),
+          recordingService([]),
+          silentLog,
+        ),
+      ),
+    )
+    expect(out.weight).toBe(5) // clamped from 9
+    expect(out.drive).toBeNull() // "telepathy" not in the core drive vocabulary
+  })
+
+  it("falls back to a safe accumulate object on unparseable output (never silently discards)", async () => {
+    const out = await Effect.runPromise(
+      Effect.provide(
+        runHindbrain(config, "x", null),
         Layer.mergeAll(fixedClient("the model rambled"), recordingService([]), silentLog),
       ),
     )
     expect(out.disposition).toBe("accumulate")
+    expect(out.weight).toBe(0)
+    expect(out.drive).toBeNull()
+    expect(out.interrupt).toBe(false)
     expect(out.reason).toMatch(/parse/i)
   })
 })
@@ -139,7 +164,7 @@ describe("runHindbrain — reasoning-only response (Bug B regression)", () => {
     }
     const out = await Effect.runPromise(
       Effect.provide(
-        runHindbrain(reasoningConfig, ["type: tick\n{}"], null),
+        runHindbrain(reasoningConfig, "type: tick\n{}", null),
         Layer.mergeAll(layer, recordingService([]), silentLog),
       ),
     )
@@ -383,7 +408,7 @@ describe("callTier routes through ModelService.withTier", () => {
     const wrapped: string[] = []
     await Effect.runPromise(
       Effect.provide(
-        runHindbrain(config, ["type: tick\n{}"], null),
+        runHindbrain(config, "type: tick\n{}", null),
         Layer.mergeAll(
           fixedClient('{"disposition":"discard","emotionalWeight":"😐","reason":"x"}'),
           recordingService(wrapped),
@@ -401,7 +426,7 @@ describe("callTier emits a full prompt+response exchange", () => {
     const body = '{"disposition":"discard","emotionalWeight":"😐","reason":"noise"}'
     await Effect.runPromise(
       Effect.provide(
-        runHindbrain(config, ["type: tick\n{}"], null),
+        runHindbrain(config, "type: tick\n{}", null),
         Layer.mergeAll(fixedClient(body), recordingService([]), recordingLog(logs)),
       ),
     )

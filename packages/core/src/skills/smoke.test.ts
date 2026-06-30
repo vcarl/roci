@@ -106,36 +106,44 @@ const REMAINING_STEPS = `2. Respond to jdoe's naming feedback (rename tkn → to
 
 describe("skill smoke tests — render with realistic GitHub data", () => {
   describe("observe", () => {
-    it("renders completely with planned-action cadence and batch events", () => {
+    // Per-event (Subteam A): observe renders ONE event against the drives + palette
+    // reference frames. No cadence/batch — each call appraises a single event.
+    const PALETTE = "🌊 💧 😶 🌤️ ☁️   # sinking → soaring"
+    const DRIVES =
+      "- safety — your physical integrity\n- sustenance — resources\n- agency — your freedom to act"
+
+    it("renders completely for a single event with drives + palette reference frames", () => {
       const skill = loadSkillSync(path.join(SKILLS_DIR, "observe.md"))
-      const rendered = skill.render(
-        withCadence("observe", "planned-action", {
-          events: `[Event 1] type: pull_request.review_submitted\n${GITHUB_EVENT_PAYLOAD}\n\n[Event 2] type: ci.status_change\n{"branch": "auth-token-refresh", "status": "failing"}`,
-          waitState: "None — not currently waiting.",
-        }),
-      )
+      const rendered = skill.render({
+        event: `type: pull_request.review_submitted\n${GITHUB_EVENT_PAYLOAD}`,
+        waitState: "None — not currently waiting.",
+        palette: PALETTE,
+        drives: DRIVES,
+      })
 
       expect(rendered).not.toMatch(/\{\{\w+\}\}/)
-      expect(rendered).toContain("planned-action")
-      expect(rendered).toContain("HIGH")
       expect(rendered).toContain("pull_request")
       expect(rendered).toContain("race condition")
       expect(rendered).toContain("None — not currently waiting.")
+      // The two reference frames are injected.
+      expect(rendered).toContain("sinking → soaring")
+      expect(rendered).toContain("- safety —")
+      // The interrupt criterion is separated from the weight scale (v3.2 tuning).
+      expect(rendered).toContain("interrupt")
     })
 
-    it("renders with real-time cadence and active wait state", () => {
+    it("renders a single event with an active wait state", () => {
       const skill = loadSkillSync(path.join(SKILLS_DIR, "observe.md"))
-      const rendered = skill.render(
-        withCadence("observe", "real-time", {
-          events: `[Event 1] type: ci.status_change\n{"branch": "auth-token-refresh", "status": "passing", "suite": "auth/refresh.test.ts"}`,
-          waitState: `Waiting for: CI to pass on auth-token-refresh\nResolution signal: ci.status_change with status=passing\nDisposition: hold`,
-        }),
-      )
+      const rendered = skill.render({
+        event: `type: ci.status_change\n{"branch": "auth-token-refresh", "status": "passing", "suite": "auth/refresh.test.ts"}`,
+        waitState: `Waiting for: CI to pass on auth-token-refresh\nResolution signal: ci.status_change with status=passing\nDisposition: hold`,
+        palette: PALETTE,
+        drives: DRIVES,
+      })
 
       expect(rendered).not.toMatch(/\{\{\w+\}\}/)
-      expect(rendered).toContain("real-time")
-      expect(rendered).toContain("LOW")
       expect(rendered).toContain("Resolution signal")
+      expect(rendered).toContain("auth-token-refresh")
     })
   })
 

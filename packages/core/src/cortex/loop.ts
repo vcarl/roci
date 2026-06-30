@@ -19,8 +19,10 @@ import type { ModelError } from "../model/errors.js"
 import { DEFAULT_CORTEX_MODELS, resolveHandle, type CortexModelConfig } from "../model/handles.js"
 import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "../core/model-config.js"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
+import { TEMPLATE_DRIVES } from "../core/drives.js"
 import type { Cadence } from "../skills/cadence.js"
 import type { Alert } from "../core/types.js"
+import type { ObserveResult } from "../skills/types.js"
 import { Docker } from "../services/Docker.js"
 import {
   runHindbrain,
@@ -42,6 +44,9 @@ import {
   formatExecutionReport,
   formatSteerDirective,
   detectCompletion,
+  appraiseTick,
+  emptyEscalation,
+  DEFAULT_APPRAISAL_THRESHOLDS,
   STEP_DONE_MARKER,
 } from "./state.js"
 
@@ -78,6 +83,21 @@ const DEFAULT_WORKER_TIMEOUT_MS = 60 * 60 * 1000
  */
 export const DEFAULT_STEER_CADENCE_TICKS = 3
 
+/**
+ * The deterministic appraisal for an INERT event — one that produced no
+ * `stateUpdate` (§3.2a fast-path). Tagged `discard`/weight-0 WITHOUT a model
+ * call (habituation to non-salient stimuli), so noise costs nothing and never
+ * escalates. Only state-changing events reach the 2B per-event observe.
+ */
+const INERT_APPRAISAL: ObserveResult = {
+  disposition: "discard",
+  emotionalWeight: "😐",
+  drive: null,
+  weight: 0,
+  interrupt: false,
+  reason: "inert event — no state change (fast-path discard)",
+}
+
 const AVAILABLE_ACTIONS =
   "Each plan step is executed by the conscious agent (local LLM in an OpenCode session with full tool access). Plan concrete steps; each step.task names the action and step.goal describes the outcome."
 
@@ -98,11 +118,15 @@ export const runCortex = (config: CortexLoopConfig) =>
     const palette = yield* charFs
       .readPalette(config.char)
       .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_PALETTE)))
+    const drives = yield* charFs
+      .readDrives(config.char)
+      .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_DRIVES)))
     const runnerConfig: CortexRunnerConfig = {
       char: config.char,
       cadence,
       models: config.cortexModels ?? DEFAULT_CORTEX_MODELS,
       palette,
+      drives,
     }
 
     // Issue 1 (fail loud): read an identity/memory file, but never silently
@@ -139,6 +163,25 @@ export const runCortex = (config: CortexLoopConfig) =>
     // Steering state: capacity-1 coalescing (overwrite = newest wins).
     let pendingDirective: string | null = null
     let lastSteerTick = 0
+    // Priority-steer flag: a `steer`-rung in-session escalation bypasses the
+    // DEFAULT_STEER_CADENCE_TICKS throttle so the directive is pushed immediately (§3.2).
+    let bypassSteerCadence = false
+
+    // Drop the active plan and clear all per-session steering state, so the loop
+    // re-orients from a clean slate. Shared by the in-session `reorient` and
+    // `interrupt` rungs (§3.2); a closure so it can reset the loop-local lets, not
+    // just `cortex`. (The `interrupt` rung additionally kills the in-flight fiber
+    // before calling this; `reorient` lets the current turn finish naturally.)
+    const resetPlanState = () => {
+      cortex.currentPlan = null
+      cortex.lastOrientTick = 0
+      sessionId = null
+      stepReport = ""
+      stepDoneSignaled = false
+      pendingDirective = null
+      lastSteerTick = 0
+      bypassSteerCadence = false
+    }
 
     // Provision the conscious agent once before the first tick.
     const handle = resolveHandle(runnerConfig.models, "conscious")
@@ -158,8 +201,12 @@ export const runCortex = (config: CortexLoopConfig) =>
     while (true) {
       tick++
 
-      // 1. Drain world events into state.
-      const tickEvents: string[] = []
+      // 1. Drain world events into state. Track per-event whether it produced a
+      // `stateUpdate` — an event that changed nothing is INERT and gets the
+      // deterministic fast-path (no model call), bounding N_model to
+      // state-changing events (§3.2a). An event whose processing threw produced
+      // no state update either, so it is treated as inert (and logged loudly).
+      const tickEvents: Array<{ text: string; inert: boolean }> = []
       let draining = true
       while (draining) {
         const maybe = yield* Queue.poll(config.events)
@@ -167,9 +214,13 @@ export const runCortex = (config: CortexLoopConfig) =>
           draining = false
         } else {
           const event = maybe.value
+          let inert = true
           yield* Effect.try(() => {
             const r = eventProcessor.processEvent(event as never, state as never)
-            if (r.stateUpdate) state = r.stateUpdate(state as never)
+            if (r.stateUpdate) {
+              state = r.stateUpdate(state as never)
+              inert = false
+            }
             if (r.log) r.log()
           }).pipe(
             Effect.catchAll((e) =>
@@ -178,11 +229,13 @@ export const runCortex = (config: CortexLoopConfig) =>
               ),
             ),
           )
-          tickEvents.push(
-            typeof event === "object" && event !== null
-              ? `type: ${(event as Record<string, unknown>).type ?? "unknown"}\n${JSON.stringify(event)}`
-              : String(event),
-          )
+          tickEvents.push({
+            text:
+              typeof event === "object" && event !== null
+                ? `type: ${(event as Record<string, unknown>).type ?? "unknown"}\n${JSON.stringify(event)}`
+                : String(event),
+            inert,
+          })
         }
       }
 
@@ -219,26 +272,40 @@ export const runCortex = (config: CortexLoopConfig) =>
         // While a turn runs, fall through to triage the world, then sleep.
       }
 
-      // 4. HINDBRAIN triage — ungated: runs whenever there are events, even mid-session.
+      // 4. HINDBRAIN per-event triage — ungated: runs whenever there are events,
+      // even mid-session. Each state-changing event is appraised once by the 2B;
+      // inert events are fast-pathed deterministically (no model call). The
+      // per-event results are aggregated into one HindbrainEscalation (§4.4).
       let escalate = tick === 1
       if (forceOrientNext) {
         escalate = true
         forceOrientNext = false
       }
-      let nonDiscard = false
+      const appraisals: Array<{ event: string; observe: ObserveResult }> = []
+      for (const ev of tickEvents) {
+        if (ev.inert) {
+          appraisals.push({ event: ev.text, observe: INERT_APPRAISAL })
+        } else {
+          const observe = yield* runHindbrain(runnerConfig, ev.text, cortex.waitState)
+          appraisals.push({ event: ev.text, observe })
+        }
+      }
+      const esc =
+        tickEvents.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
+      // The seam: surface the well-formed escalation every tick (never undefined;
+      // rung:"none"/escalate:false when there were no events or nothing salient).
+      cortex.escalation = esc
+      const nonDiscard = esc.accumulated.length > 0
       if (tickEvents.length > 0) {
-        const observe = yield* runHindbrain(runnerConfig, tickEvents, cortex.waitState)
         yield* logToConsole(
           config.char.name,
           "cortex",
-          `hindbrain: ${observe.disposition} ${observe.emotionalWeight}`,
+          `hindbrain: rung=${esc.rung} w=${esc.maxWeight} ${esc.dominant?.emotionalWeight ?? ""}`.trim(),
         )
-        cortex.emotionalWeight = observe.emotionalWeight
-        if (observe.disposition !== "discard") {
-          cortex.accumulatedEvents.push(...tickEvents)
-          nonDiscard = true
-        }
-        if (observe.disposition === "escalate") escalate = true
+        // Tick mood = the dominant (highest-weight) event's mood (§4.4).
+        if (esc.dominant) cortex.emotionalWeight = esc.dominant.emotionalWeight
+        if (esc.accumulated.length > 0) cortex.accumulatedEvents.push(...esc.accumulated)
+        if (esc.escalate) escalate = true
       }
       if (!escalate && shouldForceOrient(cortex, tick, orientInterval)) escalate = true
 
@@ -301,11 +368,45 @@ export const runCortex = (config: CortexLoopConfig) =>
           }
         }
       } else {
-        // 5b. In-session path: on a NON-DISCARD hindbrain disposition,
-        // run forebrain → formatSteerDirective → store as pendingDirective (overwrite = coalesce).
-        // Runs on EVERY non-discard tick (spec §3-5b / §4); the cadence throttle
-        // (DEFAULT_STEER_CADENCE_TICKS) + capacity-1 coalescing bound the actual steer turns.
-        if (nonDiscard) {
+        // 5b. In-session path: apply the graded escalation ladder (§3.2, §4.4).
+        // This is the in-session escalation consumption the pre-A loop lacked
+        // (§1.2/§8.1). The amygdala critical path (section 2) is unchanged and
+        // still owns hard-interrupt-to-EXIT; this is the in-LOOP graded route.
+        if (esc.rung === "interrupt") {
+          // Hard-interrupt rung — gated behind an explicit per-event interrupt:true
+          // (the 2B caps at reorient; this fires for a genuine physical attack the
+          // amygdala would also catch, or a future stronger tier). Kill the
+          // in-flight turn, drop the plan, reorient now. Distinct from the
+          // amygdala critical, which EXITS the loop to the break phase.
+          yield* logToConsole(
+            config.char.name,
+            "cortex",
+            `hindbrain interrupt (in-session): ${esc.dominant?.reason ?? "drop-everything"}`,
+            "warn",
+          )
+          if (consciousFiber) {
+            yield* Fiber.interrupt(consciousFiber)
+            consciousFiber = null
+          }
+          resetPlanState()
+        } else if (esc.rung === "reorient") {
+          // Force reorient — drop the plan so the idle path re-orients next tick;
+          // the current conscious turn finishes naturally (not interrupted).
+          yield* logToConsole(
+            config.char.name,
+            "cortex",
+            `hindbrain reorient (in-session): ${esc.dominant?.reason ?? "high salience"}`,
+          )
+          resetPlanState()
+        } else if (esc.rung === "steer" || nonDiscard) {
+          // steer / accumulate → run forebrain → formatSteerDirective → store as
+          // pendingDirective (overwrite = coalesce). A `steer`-rung event bypasses
+          // the cadence throttle (priority steer); an `accumulate`-rung event
+          // steers on the normal throttle. The `esc.rung === "steer"` arm of the
+          // gate (Nit 1) closes an asymmetry: an event with weight ≥ STEER but a
+          // `discard` disposition computes rung "steer"/escalate:true (and the idle
+          // path would orient), so the in-session path must steer on it too — even
+          // though it never joined `accumulatedEvents` (so `nonDiscard` is false).
           const background = yield* readOrEmpty("background", charFs.readBackground(config.char))
           const values = yield* readOrEmpty("values", charFs.readValues(config.char))
           const diary = yield* readOrEmpty("diary", charFs.readDiary(config.char))
@@ -319,6 +420,7 @@ export const runCortex = (config: CortexLoopConfig) =>
           yield* logToConsole(config.char.name, "cortex", `forebrain (in-session): ${orient.headline}`)
           // Laundered directive: formatSteerDirective formats model-generated forebrain output.
           pendingDirective = formatSteerDirective(orient)
+          if (esc.rung === "steer") bypassSteerCadence = true
           cortex.accumulatedEvents = []
           cortex.lastOrientTick = tick
         }
@@ -454,6 +556,7 @@ export const runCortex = (config: CortexLoopConfig) =>
             stepDoneSignaled = false
             pendingDirective = null
             lastSteerTick = 0
+            bypassSteerCadence = false
             stepStartTick = tick
             stepStartSnapshot = renderer.richSnapshot(state as never)
           } else {
@@ -478,12 +581,14 @@ export const runCortex = (config: CortexLoopConfig) =>
               )
             } else if (
               pendingDirective !== null &&
-              tick - lastSteerTick >= DEFAULT_STEER_CADENCE_TICKS
+              (bypassSteerCadence || tick - lastSteerTick >= DEFAULT_STEER_CADENCE_TICKS)
             ) {
               // Steer turn: send the latest coalesced directive to the existing session.
+              // A priority steer (steer rung) bypasses the cadence throttle.
               const directive = pendingDirective
               pendingDirective = null
               lastSteerTick = tick
+              bypassSteerCadence = false
               yield* logToConsole(config.char.name, "orchestrator", `conscious steer turn (session ${sessionId})`)
               consciousFiber = yield* Effect.fork(
                 consciousThought.turn(

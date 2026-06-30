@@ -11,8 +11,24 @@ import {
   STEP_DONE_MARKER,
   detectCompletion,
   formatSteerDirective,
+  appraise,
+  appraiseTick,
+  emptyEscalation,
+  DEFAULT_APPRAISAL_THRESHOLDS,
 } from "./state.js"
-import type { DecideResult, OrientResult } from "../skills/types.js"
+import type { DecideResult, ObserveResult, OrientResult } from "../skills/types.js"
+
+const T = DEFAULT_APPRAISAL_THRESHOLDS
+
+// Build a fully-formed ObserveResult with sensible defaults for the under-test field.
+const obs = (o: Partial<ObserveResult>): ObserveResult => ({
+  disposition: "accumulate",
+  emotionalWeight: "😐",
+  drive: null,
+  weight: 0,
+  reason: "",
+  ...o,
+})
 
 describe("freshCortexState", () => {
   it("starts empty", () => {
@@ -20,6 +36,228 @@ describe("freshCortexState", () => {
     expect(s.accumulatedEvents).toEqual([])
     expect(s.currentPlan).toBeNull()
     expect(s.lastOrientTick).toBe(0)
+  })
+
+  it("carries a well-formed (non-escalating) HindbrainEscalation seam from tick 0", () => {
+    const s = freshCortexState()
+    expect(s.escalation).toEqual(emptyEscalation())
+    expect(s.escalation.rung).toBe("none")
+    expect(s.escalation.escalate).toBe(false)
+  })
+})
+
+// Unit 1 — appraise(): validate/clamp a single per-event ObserveResult.
+describe("appraise — single per-event validation/clamping", () => {
+  it("passes a well-formed result through unchanged", () => {
+    const r = appraise(
+      { disposition: "escalate", emotionalWeight: "😰", drive: "safety", weight: 4, interrupt: false, reason: "ok" },
+      ["safety", "sustenance", "agency"],
+    )
+    expect(r).toEqual({
+      disposition: "escalate",
+      emotionalWeight: "😰",
+      drive: "safety",
+      weight: 4,
+      interrupt: false,
+      reason: "ok",
+    })
+  })
+
+  it("clamps an out-of-range weight into 0–5 (high and low) and rounds non-integers", () => {
+    expect(appraise({ weight: 9 }).weight).toBe(5)
+    expect(appraise({ weight: -3 }).weight).toBe(0)
+    expect(appraise({ weight: 3.7 }).weight).toBe(4)
+    expect(appraise({ weight: "2" as unknown as number }).weight).toBe(2)
+    expect(appraise({ weight: "x" as unknown as number }).weight).toBe(0)
+    expect(appraise({}).weight).toBe(0)
+  })
+
+  it("normalizes null-ish drive labels to null", () => {
+    expect(appraise({ drive: "null" }).drive).toBeNull()
+    expect(appraise({ drive: "none" }).drive).toBeNull()
+    expect(appraise({ drive: "" }).drive).toBeNull()
+    expect(appraise({ drive: null }).drive).toBeNull()
+    expect(appraise({}).drive).toBeNull()
+  })
+
+  it("validates drive against the known vocabulary (unknown → null)", () => {
+    expect(appraise({ drive: "safety" }, ["safety", "sustenance"]).drive).toBe("safety")
+    expect(appraise({ drive: "voyage" }, ["safety", "sustenance"]).drive).toBeNull()
+    // Without a known set, any non-null-ish string is kept (normalized lowercase).
+    expect(appraise({ drive: "Voyage" }).drive).toBe("voyage")
+  })
+
+  it("defaults a missing/invalid disposition to accumulate (never silently discards)", () => {
+    expect(appraise({}).disposition).toBe("accumulate")
+    expect(appraise({ disposition: "bogus" as unknown as ObserveResult["disposition"] }).disposition).toBe("accumulate")
+    expect(appraise({ disposition: "discard" }).disposition).toBe("discard")
+  })
+
+  it("coerces interrupt to a strict boolean (default false)", () => {
+    expect(appraise({}).interrupt).toBe(false)
+    expect(appraise({ interrupt: true }).interrupt).toBe(true)
+    expect(appraise({ interrupt: "true" as unknown as boolean }).interrupt).toBe(true)
+    expect(appraise({ interrupt: 1 as unknown as boolean }).interrupt).toBe(false)
+  })
+})
+
+// Unit 1 — appraiseTick(): reduce N per-event results to one HindbrainEscalation.
+describe("appraiseTick — per-tick escalation aggregation", () => {
+  it("empty input → a non-escalating 'none' escalation (matches emptyEscalation)", () => {
+    const esc = appraiseTick([], T)
+    expect(esc).toEqual(emptyEscalation())
+  })
+
+  it("all-discard input → rung 'none', escalate false, nothing accumulated", () => {
+    const esc = appraiseTick(
+      [
+        { event: "tick1", observe: obs({ disposition: "discard", weight: 0 }) },
+        { event: "tick2", observe: obs({ disposition: "discard", weight: 0 }) },
+      ],
+      T,
+    )
+    expect(esc.rung).toBe("none")
+    expect(esc.escalate).toBe(false)
+    expect(esc.accumulated).toEqual([])
+  })
+
+  it("picks the MAX rung across events (a threat in a sea of heartbeats)", () => {
+    const esc = appraiseTick(
+      [
+        { event: "noise1", observe: obs({ disposition: "discard", weight: 0 }) },
+        { event: "threat", observe: obs({ disposition: "escalate", drive: "safety", weight: 5, reason: "hull critical" }) },
+        { event: "noise2", observe: obs({ disposition: "discard", weight: 0 }) },
+      ],
+      T,
+    )
+    expect(esc.rung).toBe("reorient") // weight 5 ≥ reorient
+    expect(esc.escalate).toBe(true)
+    expect(esc.maxWeight).toBe(5)
+    expect(esc.dominant?.reason).toBe("hull critical")
+    expect(esc.accumulated).toEqual(["threat"]) // only the non-discard event
+    expect(esc.reasons).toEqual(["safety: hull critical"])
+  })
+
+  it("dominant = the highest-weight event; maxWeight tracks it", () => {
+    const esc = appraiseTick(
+      [
+        { event: "a", observe: obs({ disposition: "accumulate", drive: "agency", weight: 3, reason: "mild" }) },
+        { event: "b", observe: obs({ disposition: "accumulate", drive: "sustenance", weight: 4, reason: "stronger" }) },
+      ],
+      T,
+    )
+    expect(esc.maxWeight).toBe(4)
+    expect(esc.dominant?.reason).toBe("stronger")
+  })
+
+  it("an 'escalate' disposition floors the event to the steer rung even at low weight", () => {
+    const esc = appraiseTick(
+      [{ event: "e", observe: obs({ disposition: "escalate", weight: 1, drive: "agency", reason: "waited-on resolved" }) }],
+      T,
+    )
+    expect(esc.rung).toBe("steer")
+    expect(esc.escalate).toBe(true)
+    expect(esc.reasons).toEqual(["agency: waited-on resolved"])
+  })
+
+  it("weight ≥ steer (4) but < reorient (5) → steer; non-discard low weight → accumulate", () => {
+    expect(appraiseTick([{ event: "x", observe: obs({ disposition: "accumulate", weight: 4 }) }], T).rung).toBe("steer")
+    const acc = appraiseTick([{ event: "x", observe: obs({ disposition: "accumulate", weight: 2 }) }], T)
+    expect(acc.rung).toBe("accumulate")
+    expect(acc.escalate).toBe(false)
+    expect(acc.accumulated).toEqual(["x"])
+  })
+
+  it("interrupt gating: rung 'interrupt' ONLY when a result carries interrupt:true", () => {
+    // High weight alone never reaches interrupt — caps at reorient.
+    const noFlag = appraiseTick(
+      [{ event: "abstract-emergency", observe: obs({ disposition: "escalate", weight: 5, drive: "agency", interrupt: false, reason: "termination in 60s" }) }],
+      T,
+    )
+    expect(noFlag.rung).toBe("reorient")
+    // Explicit interrupt:true (a genuine physical attack) is honored.
+    const flagged = appraiseTick(
+      [{ event: "weapons-lock", observe: obs({ disposition: "escalate", weight: 5, drive: "safety", interrupt: true, reason: "under fire" }) }],
+      T,
+    )
+    expect(flagged.rung).toBe("interrupt")
+    expect(flagged.escalate).toBe(true)
+  })
+
+  it("interrupt rung wins as the max even amid lower-rung events", () => {
+    const esc = appraiseTick(
+      [
+        { event: "noise", observe: obs({ disposition: "discard", weight: 0 }) },
+        { event: "attack", observe: obs({ disposition: "escalate", weight: 4, interrupt: true, drive: "safety", reason: "boarded" }) },
+        { event: "mild", observe: obs({ disposition: "accumulate", weight: 3 }) },
+      ],
+      T,
+    )
+    expect(esc.rung).toBe("interrupt")
+  })
+
+  it("clamps out-of-range weights inside aggregation (defends against an un-appraised input)", () => {
+    const esc = appraiseTick([{ event: "x", observe: obs({ disposition: "accumulate", weight: 99 }) }], T)
+    expect(esc.maxWeight).toBe(5)
+    expect(esc.rung).toBe("reorient")
+  })
+})
+
+// Unit 9 — interrupt scope (REV3 §6.6 / binding decision). The 2B caps at
+// REORIENT: abstract drop-everything emergencies escalate via the GRADED layer
+// (weight → steer/reorient), NOT via a hard interrupt — the 2B empirically does
+// not (and should not be relied on to) set interrupt:true for them (Finding 2).
+// Hard-interrupt for abstract emergencies is amygdala / deterministic-rule
+// territory (a future follow-up), out of scope here. A genuine PHYSICAL attack
+// that does carry interrupt:true is honored (redundant with the amygdala but
+// harmless); benign events NEVER interrupt.
+describe("appraiseTick — interrupt scope (graded vs hard-interrupt)", () => {
+  // Two abstract drop-everything emergencies the 2B would weight high but NOT flag
+  // for interrupt — they must escalate via the graded reorient rung.
+  const abstractEmergencies: Array<{ event: string; observe: ObserveResult }> = [
+    { event: "account-termination-60s", observe: obs({ disposition: "escalate", drive: "agency", weight: 5, interrupt: false, reason: "account deletes in 60s" }) },
+    { event: "credentials-revoked", observe: obs({ disposition: "escalate", drive: "agency", weight: 5, interrupt: false, reason: "all actions failing, creds revoked" }) },
+  ]
+
+  it("abstract emergencies escalate via the GRADED layer (reorient), never via interrupt", () => {
+    for (const e of abstractEmergencies) {
+      const esc = appraiseTick([e], T)
+      expect(esc.rung).toBe("reorient") // graded, not interrupt
+      expect(esc.escalate).toBe(true)
+      expect(esc.rung).not.toBe("interrupt")
+    }
+  })
+
+  it("benign events NEVER reach the interrupt rung", () => {
+    const benign = appraiseTick(
+      [
+        { event: "chat", observe: obs({ disposition: "discard", weight: 0, interrupt: false }) },
+        { event: "trade", observe: obs({ disposition: "accumulate", drive: "sustenance", weight: 1, interrupt: false }) },
+      ],
+      T,
+    )
+    expect(benign.rung).not.toBe("interrupt")
+    expect(["none", "accumulate"]).toContain(benign.rung)
+  })
+
+  it("a genuine PHYSICAL attack carrying interrupt:true IS honored as the interrupt rung", () => {
+    const esc = appraiseTick(
+      [{ event: "weapons-lock", observe: obs({ disposition: "escalate", drive: "safety", weight: 5, interrupt: true, reason: "weapons locked, under fire" }) }],
+      T,
+    )
+    expect(esc.rung).toBe("interrupt")
+  })
+
+  it("an abstract emergency in a noisy batch still tops out at reorient (no spurious interrupt)", () => {
+    const esc = appraiseTick(
+      [
+        { event: "noise", observe: obs({ disposition: "discard", weight: 0 }) },
+        ...abstractEmergencies,
+        { event: "mild", observe: obs({ disposition: "accumulate", weight: 2 }) },
+      ],
+      T,
+    )
+    expect(esc.rung).toBe("reorient")
   })
 })
 

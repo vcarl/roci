@@ -6,7 +6,11 @@ import type { PlanStep } from "../core/types.js"
 export type Disposition = "discard" | "accumulate" | "escalate"
 
 /**
- * Result of the observe skill — event triage with emotional response.
+ * Result of the observe skill — the per-event appraisal of ONE incoming event
+ * (Subteam A / limbic drives). The hindbrain is invoked once per state-changing
+ * event and returns a single object tagging that event against the character's
+ * innate drives. (Inert events are tagged deterministically by the fast-path,
+ * never the model.)
  */
 export interface ObserveResult {
   readonly disposition: Disposition
@@ -14,6 +18,17 @@ export interface ObserveResult {
    *  5-emoji gradient between two poles — position = where you sit, repeats =
    *  intensity, mixed rows = a chord. */
   readonly emotionalWeight: string
+  /** Which innate drive (core safety/sustenance/agency or a domain drive) this
+   *  event bears on, or `null` for none. Validated against the closed drive
+   *  vocabulary; an unknown label degrades to `null`. */
+  readonly drive: string | null
+  /** 0–5 salience/threat weight for THIS event. Clamped to the band. */
+  readonly weight: number
+  /** Drop-everything signal. Default false. Gates the hard-interrupt rung
+   *  (§3.2). The 2B hindbrain caps at `reorient`; this flag exists so the
+   *  amygdala / a future stronger tier can drive an in-loop interrupt, and so a
+   *  genuine physical-attack appraisal (redundant with the amygdala) is honored. */
+  readonly interrupt?: boolean
   /** Brief note on why this disposition was chosen. */
   readonly reason: string
 }

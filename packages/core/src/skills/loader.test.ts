@@ -15,9 +15,9 @@ describe("loadSkillSync", () => {
 
   it("renders template variables", () => {
     const skill = loadSkillSync(path.join(SKILLS_DIR, "observe.md"))
-    const rendered = skill.render({ cadence: "real-time", eventPayload: "test data" })
-    expect(rendered).not.toContain("{{cadence}}")
-    expect(rendered).toContain("real-time")
+    const rendered = skill.render({ event: "EVENT-MARKER", drives: "d", palette: "p", waitState: "w" })
+    expect(rendered).not.toContain("{{event}}")
+    expect(rendered).toContain("EVENT-MARKER")
   })
 
   it("throws on missing file", () => {

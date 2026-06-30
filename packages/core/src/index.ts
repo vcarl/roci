@@ -81,8 +81,11 @@ export * from "./model/client.js"
 // Cortex — local-model escalation ladder
 export { runCortex } from "./cortex/loop.js"
 export type { CortexLoopConfig, CortexResult } from "./cortex/loop.js"
-export { freshCortexState } from "./cortex/state.js"
-export type { CortexState } from "./cortex/state.js"
+export { freshCortexState, appraise, appraiseTick, emptyEscalation, DEFAULT_APPRAISAL_THRESHOLDS } from "./cortex/state.js"
+export type { CortexState, HindbrainEscalation, EscalationRung, AppraisalThresholds } from "./cortex/state.js"
+// Limbic drives — innate motivators carried in the character template (Subteam A)
+export { TEMPLATE_DRIVES, CORE_DRIVE_NAMES, drivesFile, renderDriveLines, parseDriveNames } from "./core/drives.js"
+export type { DomainDrive } from "./core/drives.js"
 export { runHindbrain, runForebrain, runConsciousDecide, runConsciousEvaluate } from "./cortex/tiers.js"
 export type { CortexRunnerConfig } from "./cortex/tiers.js"
 

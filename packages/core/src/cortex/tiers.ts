@@ -6,6 +6,8 @@ import { resolveHandle, type CortexModelConfig } from "../model/handles.js"
 import { loadSkillSync } from "../skills/loader.js"
 import { getCadenceGuidance, type Cadence } from "../skills/cadence.js"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
+import { TEMPLATE_DRIVES, parseDriveNames } from "../core/drives.js"
+import { appraise } from "./state.js"
 import type {
   ObserveResult,
   OrientResult,
@@ -37,6 +39,9 @@ export interface CortexRunnerConfig {
   models: CortexModelConfig
   /** The character's emotional palette (emoji pole-pairs). Defaults to TEMPLATE_PALETTE. */
   palette?: string
+  /** The character's innate drives block (core + domain). Defaults to TEMPLATE_DRIVES.
+   *  Threaded into the per-event observe prompt as the appraisal reference frame. */
+  drives?: string
 }
 
 export interface EvaluateInput {
@@ -99,27 +104,44 @@ const callTier = (
   })
 
 // ── Hindbrain (observe) ──────────────────────────────────────
+/**
+ * Appraise ONE state-changing event (per-event processing, §3.1). Renders the
+ * single-event observe prompt (the validated v3.2 prompt: drives + palette as
+ * the two reference frames, both-pole few-shot, interrupt criterion separated
+ * from the weight scale), calls the 2B hindbrain at temp 0.05, and returns a
+ * validated/clamped `ObserveResult` for that event. The parse-miss fallback is a
+ * single object (the parser's happy path); `appraise` then clamps `weight` to
+ * 0–5 and validates `drive` against the closed vocabulary parsed from the drive
+ * block. Inert (no-`stateUpdate`) events are tagged deterministically by the
+ * loop's fast-path and never reach this function.
+ */
 export function runHindbrain(
   config: CortexRunnerConfig,
-  events: string[],
+  event: string,
   waitState: WaitState | null,
 ): Effect.Effect<ObserveResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
+  const drives = config.drives ?? TEMPLATE_DRIVES
   const prompt = skills.observe.render({
-    cadence: config.cadence,
-    cadenceGuidance: getCadenceGuidance("observe", config.cadence),
-    events: events.map((e, i) => `[Event ${i + 1}] ${e}`).join("\n\n"),
+    event,
     waitState: waitState
       ? `Waiting for: ${waitState.waitingFor}\nResolution signal: ${waitState.resolutionSignal}\nDisposition: ${waitState.disposition}`
       : "None — not currently waiting.",
     palette: config.palette ?? TEMPLATE_PALETTE,
+    drives,
   })
+  const knownDrives = parseDriveNames(drives)
   return callTier(config, "hindbrain", "observe", prompt).pipe(
     Effect.map((text) =>
-      parseOr<ObserveResult>(text, {
-        disposition: "accumulate",
-        emotionalWeight: "😐",
-        reason: "parse failure — defaulting to accumulate",
-      }),
+      appraise(
+        parseOr<Partial<ObserveResult>>(text, {
+          disposition: "accumulate",
+          emotionalWeight: "😐",
+          drive: null,
+          weight: 0,
+          reason: "parse failure — defaulting to accumulate",
+        }),
+        knownDrives,
+      ),
     ),
   )
 }

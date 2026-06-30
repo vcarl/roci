@@ -1,4 +1,4 @@
-import type { DecideResult, WaitState, OrientResult } from "../skills/types.js"
+import type { DecideResult, Disposition, ObserveResult, WaitState, OrientResult } from "../skills/types.js"
 import type { PlanStep } from "../core/types.js"
 
 export interface CortexState {
@@ -8,6 +8,14 @@ export interface CortexState {
   currentStepIndex: number
   waitState: WaitState | null
   lastOrientTick: number
+  /**
+   * The hindbrain-escalation seam (Subteam A). Recomputed every tick by
+   * `appraiseTick` over the tick's per-event appraisals, and surfaced here for
+   * the (out-of-scope) forebrain-wake session to read. Guaranteed well-formed
+   * every tick — never undefined; `rung:"none"/escalate:false` when there were
+   * no events or nothing salient.
+   */
+  escalation: HindbrainEscalation
 }
 
 export function freshCortexState(): CortexState {
@@ -18,6 +26,158 @@ export function freshCortexState(): CortexState {
     currentStepIndex: 0,
     waitState: null,
     lastOrientTick: 0,
+    escalation: emptyEscalation(),
+  }
+}
+
+// ── Limbic drives: per-event appraisal + per-tick escalation ───────────────
+
+/** The escalation ladder (§3.2). Ordered least→most disruptive. */
+export type EscalationRung = "none" | "accumulate" | "steer" | "reorient" | "interrupt"
+
+const RUNG_RANK: Record<EscalationRung, number> = {
+  none: 0,
+  accumulate: 1,
+  steer: 2,
+  reorient: 3,
+  interrupt: 4,
+}
+
+/** Weight thresholds for the graded ladder. STEER ≈ 4, REORIENT ≈ 5 (§3.2). */
+export interface AppraisalThresholds {
+  readonly steer: number
+  readonly reorient: number
+}
+
+/** Default thresholds, tunable per cadence profile (alongside DEFAULT_STEER_CADENCE_TICKS). */
+export const DEFAULT_APPRAISAL_THRESHOLDS: AppraisalThresholds = { steer: 4, reorient: 5 }
+
+/**
+ * The aggregated per-tick escalation signal (§4.4) — the seam Subteam A emits on
+ * `CortexState`. Reduced from the tick's per-event `ObserveResult`s.
+ */
+export interface HindbrainEscalation {
+  /** The MAX rung across the tick's events (§3.2 ladder). */
+  readonly rung: EscalationRung
+  /** The highest per-event weight seen this tick (clamped 0–5). */
+  readonly maxWeight: number
+  /** True when `rung` is `steer` or higher — the only signal the forebrain-wake session needs. */
+  readonly escalate: boolean
+  /** The highest-weight event's appraisal — drives the tick mood + reasons. null when no events. */
+  readonly dominant: ObserveResult | null
+  /** Raw text of every non-discard event, for `accumulatedEvents`. */
+  readonly accumulated: ReadonlyArray<string>
+  /** "drive: reason" for each event at the steer rung or higher — context for the forebrain. */
+  readonly reasons: ReadonlyArray<string>
+}
+
+/** A well-formed, non-escalating escalation — the every-tick default and the empty result. */
+export function emptyEscalation(): HindbrainEscalation {
+  return { rung: "none", maxWeight: 0, escalate: false, dominant: null, accumulated: [], reasons: [] }
+}
+
+const DISPOSITIONS: ReadonlySet<Disposition> = new Set(["discard", "accumulate", "escalate"])
+
+/** Clamp any value to an integer in [0, 5]; non-numeric → 0. */
+function clampWeight(w: unknown): number {
+  const n = typeof w === "number" ? w : Number(w)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.min(5, Math.round(n)))
+}
+
+/** Normalize a raw drive label: null-ish → null; otherwise lowercased+trimmed. */
+function normalizeDrive(raw: unknown, knownDrives?: ReadonlyArray<string>): string | null {
+  if (raw === null || raw === undefined) return null
+  const s = String(raw).trim().toLowerCase()
+  if (s === "" || s === "null" || s === "none") return null
+  if (knownDrives && knownDrives.length > 0) {
+    const known = knownDrives.map((d) => d.toLowerCase())
+    return known.includes(s) ? s : null
+  }
+  return s
+}
+
+/**
+ * Validate + clamp a single (possibly-malformed) per-event appraisal into a
+ * well-formed `ObserveResult`. Pure; never throws. `weight` is clamped to 0–5,
+ * `drive` validated against the closed vocabulary (`knownDrives`) → null on
+ * miss, `disposition` defaulted to the safe `accumulate`, `interrupt` coerced to
+ * a strict boolean (default false). The model's structured output passes through
+ * here before it can drive control flow.
+ */
+export function appraise(
+  raw: Partial<ObserveResult> | Record<string, unknown>,
+  knownDrives?: ReadonlyArray<string>,
+): ObserveResult {
+  const r = raw as Record<string, unknown>
+  const disposition = DISPOSITIONS.has(r.disposition as Disposition)
+    ? (r.disposition as Disposition)
+    : "accumulate"
+  const emotionalWeight = typeof r.emotionalWeight === "string" && r.emotionalWeight.length > 0
+    ? r.emotionalWeight
+    : "😐"
+  const interrupt = r.interrupt === true || r.interrupt === "true"
+  return {
+    disposition,
+    emotionalWeight,
+    drive: normalizeDrive(r.drive, knownDrives),
+    weight: clampWeight(r.weight),
+    interrupt,
+    reason: typeof r.reason === "string" ? r.reason : "",
+  }
+}
+
+/** The escalation rung a single appraised event earns (§3.2). */
+function eventRung(o: ObserveResult, thresholds: AppraisalThresholds): EscalationRung {
+  // Hard-interrupt is gated behind an explicit `interrupt:true` — never weight
+  // alone (the 2B caps at reorient; this rung exists for the amygdala / a future
+  // stronger tier / a genuine redundant physical-attack appraisal — §3.2 REV3).
+  if (o.interrupt === true) return "interrupt"
+  const w = clampWeight(o.weight)
+  if (w >= thresholds.reorient) return "reorient"
+  // An `escalate` disposition floors the event at steer even when weight is low.
+  if (w >= thresholds.steer || o.disposition === "escalate") return "steer"
+  if (o.disposition !== "discard") return "accumulate"
+  return "none"
+}
+
+/**
+ * Reduce the tick's per-event appraisals into one `HindbrainEscalation` (§4.4).
+ * Pure. The tick rung is the MAX rung across events; `dominant` is the
+ * highest-weight event (ties → first); `accumulated` is the raw text of every
+ * non-discard event; `reasons` are "drive: reason" for steer+ events.
+ */
+export function appraiseTick(
+  results: ReadonlyArray<{ event: string; observe: ObserveResult }>,
+  thresholds: AppraisalThresholds,
+): HindbrainEscalation {
+  if (results.length === 0) return emptyEscalation()
+
+  let rung: EscalationRung = "none"
+  let maxWeight = 0
+  let dominant: ObserveResult | null = null
+  const accumulated: string[] = []
+  const reasons: string[] = []
+
+  for (const { event, observe } of results) {
+    const w = clampWeight(observe.weight)
+    const r = eventRung(observe, thresholds)
+    if (RUNG_RANK[r] > RUNG_RANK[rung]) rung = r
+    if (dominant === null || w > maxWeight) {
+      maxWeight = w
+      dominant = observe
+    }
+    if (observe.disposition !== "discard") accumulated.push(event)
+    if (RUNG_RANK[r] >= RUNG_RANK.steer) reasons.push(`${observe.drive ?? "—"}: ${observe.reason}`)
+  }
+
+  return {
+    rung,
+    maxWeight,
+    escalate: RUNG_RANK[rung] >= RUNG_RANK.steer,
+    dominant,
+    accumulated,
+    reasons,
   }
 }
 

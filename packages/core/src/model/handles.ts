@@ -78,14 +78,23 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   // The conscious tier (decide/evaluate) omits chat_template_kwargs entirely —
   // gemma-4-31b-it is an instruction model with no Qwen3.5-style enable_thinking
   // gate, so no kwarg is needed or meaningful.
+  // hindbrain (observe) runs the per-event limbic appraisal (Subteam A). The
+  // empirical spike tuned it to temperature 0.05 (the human's "some variation"
+  // choice): temp 0.0 eliminated run-to-run noise but the human accepted mild ±1
+  // variation; at 0.05 the safety-critical bar still held (zero false
+  // interrupt:true on benign across 3 seeds). The validated v3.2 prompt
+  // (skills/observe.md) pairs with this temperature — both-pole few-shot, the
+  // interrupt criterion separated from the weight scale, anti-collapse drive
+  // routing. maxTokens 1024 is far more than the single-object output needs (the
+  // model stops at the closing brace) while keeping the explicit-budget floor.
   hindbrain: {
     tier: "hindbrain",
     provider: "mlx",
     baseUrl: "http://127.0.0.1:8081/v1",
     model: "mlx-community/Qwen3.5-2B-4bit",
     params: {
-      temperature: 0.3,
-      maxTokens: 4096,
+      temperature: 0.05,
+      maxTokens: 1024,
       extraBody: { chat_template_kwargs: { enable_thinking: false } },
     },
   },
