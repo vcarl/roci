@@ -11,6 +11,7 @@ import {
   runForebrain,
   runConsciousDecide,
   runConsciousEvaluate,
+  stripThinking,
   type CortexRunnerConfig,
 } from "./tiers.js"
 import type { OrientResult } from "../skills/types.js"
@@ -430,5 +431,27 @@ describe("runForebrain — full (untruncated) raw output on parse failure", () =
     expect(msg).toBeDefined()
     expect(msg!).toContain(raw) // FULL raw present
     expect(msg!).not.toMatch(/truncated/i)
+  })
+})
+
+describe("stripThinking", () => {
+  it("returns only the trailing prose after a single <think> preamble", () => {
+    expect(stripThinking("<think>weighing options</think>Today went well.")).toBe(
+      "Today went well.",
+    )
+  })
+
+  it("returns the full trimmed text when there is no closing tag", () => {
+    expect(stripThinking("  Just a plain reflection.  ")).toBe("Just a plain reflection.")
+  })
+
+  it("returns everything after the LAST </think> when multiple blocks exist", () => {
+    expect(
+      stripThinking("<think>first</think>noise<think>second</think>The final entry."),
+    ).toBe("The final entry.")
+  })
+
+  it("trims leading/trailing whitespace around the extracted prose", () => {
+    expect(stripThinking("<think>hmm</think>\n  spaced out  \n")).toBe("spaced out")
   })
 })

@@ -92,6 +92,4 @@ export interface EvaluateResult {
   readonly judgment: Judgment
   readonly reasoning: string
   readonly transition: EvaluateTransition
-  /** Optional diary entry — evaluate is where the agent learns within a session. */
-  readonly diaryEntry?: string
 }

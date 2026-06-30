@@ -6,16 +6,12 @@ import type { GameEvent } from "./ws-types.js"
 import { getModels, type Phase, type PhaseContext, type PhaseResult, type PhaseRegistry, type ConnectionState } from "@roci/core/core/phase.js"
 import { GameSocket } from "./game-socket.js"
 import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
-import { dinner } from "./dinner.js"
 import { runCortex } from "@roci/core/cortex/loop.js"
 import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
 import { sessionFilePath, validateSessionFile } from "./session.js"
 import { askUser } from "@roci/core/util/prompt.js"
-
-/** Diary lines above this threshold trigger dream compression. */
-const DIARY_COMPRESSION_THRESHOLD = 200
 
 /** Internal connection type for SpaceMolt phases. */
 type SMConnection = ConnectionState<GameState, GameEvent>
@@ -116,7 +112,7 @@ const startupPhase = {
           `Connected via WebSocket as ${initialState.player.username}`,
         )
 
-        yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
+        yield* runReflection(context.char, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
 
         const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
         return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -132,8 +128,7 @@ const startupPhase = {
         `Connected via WebSocket as ${initialState.player.username}`,
       )
 
-      // Dream if diary is long
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
+      yield* runReflection(context.char, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
 
       const connection: SMConnection = { events, initialState, tickIntervalSec, initialTick }
       return { _tag: "Continue", next: "active", connection } as PhaseResult
@@ -192,40 +187,27 @@ const activePhase = {
 }
 
 /**
- * Social/dinner phase: reflect on the session over dinner.
+ * Social phase: a quiet boundary at the end of a session before reflection.
+ * The diary rewrite that used to live here (dinner) is now the domain-agnostic
+ * consolidate pass run inside runReflection.
  */
 const socialPhase = {
   name: "social",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* logToConsole(context.char.name, "orchestrator", "Dinner time — reflecting on the session...")
-
-      const socialModels = getModels(context)
-      yield* dinner.execute({
-        char: context.char,
-        containerId: context.containerId,
-        playerName: context.char.name,
-        addDirs: context.containerAddDirs,
-        env: context.containerEnv,
-        models: socialModels,
-      }).pipe(
-        Effect.catchAll((e) =>
-          logToConsole(context.char.name, "orchestrator", `Dinner failed: ${e}`),
-        ),
-      )
-
+      yield* logToConsole(context.char.name, "orchestrator", "Session complete — winding down before reflection...")
       return { _tag: "Continue", next: "reflection", connection: context.connection } as PhaseResult
     }),
 }
 
 /**
- * Reflection phase: dream to compress diary, then loop back to active.
+ * Reflection phase: consolidate then cull the diary, then loop back to active.
  */
 const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, DIARY_COMPRESSION_THRESHOLD, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
+      yield* runReflection(context.char, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }

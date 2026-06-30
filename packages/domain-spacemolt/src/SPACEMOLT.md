@@ -16,16 +16,16 @@ The agent has access to the `spacemolt` CLI tool inside the Docker container, wh
 ## Phase Lifecycle
 
 ```
-startup --> active (channel session) --> social (dinner) --> reflection (dream) --> active
+startup --> active (channel session) --> social (wind-down) --> reflection (consolidate + cull) --> active
 ```
 
-- **startup** -- Reads `credentials.txt` from the character's `me/` directory. Connects to the game server via WebSocket (`GameSocket.connect`). Runs diary compression if the diary exceeds 200 lines. Transitions to `active`.
+- **startup** -- Reads `credentials.txt` from the character's `me/` directory. Connects to the game server via WebSocket (`GameSocket.connect`). Runs the per-cycle reflection pass (consolidate + cull). Transitions to `active`.
 
 - **active** -- Runs `runChannelSession` with the domain bundle. When the session completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
 
-- **social** -- The "dinner" phase. Runs `dinner.execute()`, which provides a social reflection opportunity for the character. Transitions to `reflection`.
+- **social** -- A quiet wind-down boundary at the end of a session. The diary rewrite that used to live here (the "dinner" phase) is now the domain-agnostic consolidate pass run inside `runReflection`. Transitions to `reflection`.
 
-- **reflection** -- Runs `runReflection` to compress the diary if it exceeds 200 lines. Always transitions back to `active`, creating an indefinite gameplay loop.
+- **reflection** -- Runs `runReflection`, an unconditional per-cycle pass that runs every cycle: **consolidate** rewrites the diary (prior entries plus the session's raw per-step appends) into coherent narrative, then **cull** (the dream) compresses it toward `DIARY_TARGET_LINES` (150). The cull never grows the file. Always transitions back to `active`, creating an indefinite gameplay loop.
 
 ## Service Implementations
 
@@ -96,7 +96,7 @@ Stub implementation. All step completion evaluation falls through to the LLM.
 **`.spacemolt-session.json`** -- Per-character session file (the `spacemolt` CLI's native multi-account format) holding the game server credentials. Created automatically during first in-game registration from `registration-code.txt`. The container CLI is pointed at it via `SPACEMOLT_SESSION` (see `session.ts`).
 
 **Tempo constants** (in `phases.ts`):
-- Diary compression threshold: 200 lines
+- Diary target size: `DIARY_TARGET_LINES` = 150 lines (defined in core's `dream.ts`); the per-cycle cull compresses toward it and never grows the file
 - Tick interval: 30 seconds (set by server)
 
 ## Key Files
@@ -113,4 +113,3 @@ Stub implementation. All step completion evaluation falls through to the LLM.
 | `interrupts.ts` | Interrupt rules |
 | `prompt-builder.ts` | Prompt generation |
 | `session-system-prompt.md` | System prompt for the persistent session |
-| `dinner.ts` | Social/dinner phase |

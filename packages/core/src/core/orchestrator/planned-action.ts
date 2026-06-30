@@ -1,11 +1,10 @@
 import { Effect, Queue, Option } from "effect"
 import type { CharacterConfig } from "../../services/CharacterFs.js"
-import { CharacterFs } from "../../services/CharacterFs.js"
-import { CommandExecutor } from "@effect/platform"
 import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
 import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
 import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
+import { consolidate } from "../limbic/hippocampus/consolidate.js"
 import { dream } from "../limbic/hippocampus/dream.js"
 import type { Alert } from "../types.js"
 import { logToConsole } from "../../logging/log-writer.js"
@@ -26,27 +25,33 @@ export type BreakResult =
 
 // ── runReflection ────────────────────────────────────────────
 
+/**
+ * Per-cycle reflection boundary (every cycle, all domains): first CONSOLIDATE the
+ * diary (rewrite prior diary + this session's raw per-step appends into coherent
+ * entries; may grow), then CULL via the dream (compress toward the target size,
+ * clamped to never grow the file). The cull is unconditional — no size gate.
+ */
 export const runReflection = (
   char: CharacterConfig,
-  dreamThreshold: number,
   containerId: string,
   models: ModelConfig,
   addDirs?: string[],
   env?: Record<string, string>,
 ) =>
   Effect.gen(function* () {
-    const charFs = yield* CharacterFs
-    const diary = yield* charFs.readDiary(char)
-    const diaryLines = diary.split("\n").length
+    yield* logToConsole(char.name, "orchestrator", "Reflecting — consolidating diary...")
+    yield* consolidate.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
+      Effect.catchAll((e) =>
+        logToConsole(char.name, "error", `Consolidate failed: ${e}`),
+      ),
+    )
 
-    if (diaryLines > dreamThreshold) {
-      yield* logToConsole(char.name, "orchestrator", `Diary is ${diaryLines} lines — dreaming...`)
-      yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
-        Effect.catchAll((e) =>
-          logToConsole(char.name, "error", `Dream failed: ${e}`),
-        ),
-      )
-    }
+    yield* logToConsole(char.name, "orchestrator", "Reflecting — dreaming (cull)...")
+    yield* dream.execute({ char, containerId, playerName: char.name, addDirs, env, models }).pipe(
+      Effect.catchAll((e) =>
+        logToConsole(char.name, "error", `Dream failed: ${e}`),
+      ),
+    )
   })
 
 // ── runBreak ─────────────────────────────────────────────────

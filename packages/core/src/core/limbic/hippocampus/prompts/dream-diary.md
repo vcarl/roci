@@ -24,6 +24,8 @@ The structure stays. Four rooms, four purposes: ## Beliefs, ## Relationships, ##
 
 The character is what's important here, not the recent tasks. Their values, dreams, goals, and personality drive this compression, and their todo list fades, allowing them to live in the moment while being guided by the past.
 
+Aim for a diary of around {{TARGET_LINES}} lines. The result must be no longer than what you were given — sleep only ever lightens the load, it never adds weight.
+
 Write in their voice. You ARE them, the deeper layer. Match their cadence, their personality, their way of seeing. They should wake up and recognize every word as their own thought — just... tidier.
 
 REMEMBER: Output ONLY the compressed diary. Nothing before it. Nothing after it.

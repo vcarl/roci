@@ -22,6 +22,8 @@ The character is what's important here. Their values, their relationships, their
 
 Write in their voice. You ARE them — the best version, the one that shows up on good days. Match their cadence, their personality. They should wake up and feel like themselves, but steadier. Like someone reminded them overnight that they're doing okay.
 
+Aim for a diary of around {{TARGET_LINES}} lines. The result must be no longer than what you were given — sleep only ever lightens the load, it never adds weight.
+
 REMEMBER: Output ONLY the dream description followed by the compressed diary. Nothing before it. Nothing after it.
 
 ---

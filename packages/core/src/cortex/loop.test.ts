@@ -34,6 +34,9 @@ const scriptedClient = Layer.succeed(
     complete: (_h: ModelHandle, messages) =>
       Effect.sync(() => {
         const p = messages.map((m) => m.content).join(" ").toLowerCase()
+        // Diary turn carries the "judgment" label — branch on its unique
+        // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
+        if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
         const hasDisposition = p.includes("disposition")
         const hasDecision = p.includes("decision")
         const hasHeadline = p.includes("headline")
@@ -70,6 +73,9 @@ const makeMultiStepClient = (evalCountRef: { n: number }) =>
       complete: (_h: ModelHandle, messages) =>
         Effect.sync(() => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          // Diary turn carries the "judgment" label too — branch on its unique
+          // "plain prose" phrase FIRST so it isn't counted as an evaluate call.
+          if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
           const hasDisposition = p.includes("disposition")
           const hasDecision = p.includes("decision")
           const hasHeadline = p.includes("headline")
@@ -216,6 +222,10 @@ describe("runCortex (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            // The dedicated diary turn's prompt also carries the "judgment" label;
+            // branch on its unique "plain prose" phrase FIRST so it isn't miscounted
+            // as an evaluate call below.
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
             const hasDisposition = p.includes("disposition")
             const hasDecision = p.includes("decision")
             const hasHeadline = p.includes("headline")
@@ -273,6 +283,9 @@ describe("runCortex (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            // Diary turn carries the "judgment" label — branch on its unique
+            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
             const hasDisposition = p.includes("disposition")
             const hasDecision = p.includes("decision")
             const hasHeadline = p.includes("headline")
@@ -333,6 +346,9 @@ describe("runCortex (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            // Diary turn carries the "judgment" label — branch on its unique
+            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
             const hasDisposition = p.includes("disposition")
             const hasDecision = p.includes("decision")
             const hasHeadline = p.includes("headline")
@@ -417,6 +433,9 @@ describe("runCortex (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            // Diary turn carries the "judgment" label — branch on its unique
+            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
             const hasDisposition = p.includes("disposition")
             const hasDecision = p.includes("decision")
             const hasHeadline = p.includes("headline")
@@ -483,6 +502,85 @@ describe("runCortex (conscious-session executor)", () => {
     // overwrite semantics; this loop-level test verifies a steer turn fires with the latest directive.)
     expect(capturedDirectives.length).toBeGreaterThanOrEqual(1)
     expect(capturedDirectives[capturedDirectives.length - 1]).toContain("second orient (newest)")
+  }, 20_000)
+
+  it("runs a dedicated diary turn after evaluate and appends the reflection to the diary", async () => {
+    // After a step completes and evaluate runs, a dedicated diary model turn must fire
+    // and its prose must be appended via charFs.writeDiary. The diary skill prompt is the
+    // only one containing the phrase "plain prose" — branch on it (ordered FIRST so the
+    // "judgment" label it also carries doesn't fall through to the evaluate branch).
+    const diaryWrites: string[] = []
+    const capturingFs = Layer.succeed(
+      CharacterFs,
+      CharacterFs.of({
+        readDiary: () => Effect.succeed(""),
+        writeDiary: (_char, content) =>
+          Effect.sync(() => {
+            diaryWrites.push(content)
+          }),
+        readSecrets: () => Effect.succeed(""),
+        writeSecrets: () => Effect.void,
+        readCredentials: () => Effect.succeed({ username: "", password: "" }),
+        readBackground: () => Effect.succeed(""),
+        readValues: () => Effect.succeed(""),
+        readPalette: () => Effect.succeed(""),
+        characterExists: () => Effect.succeed(true),
+      }),
+    )
+    const diaryIo = Layer.mergeAll(capturingFs, fakeLog)
+    const diaryClient = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            // Diary discriminator FIRST — its prompt also contains the "judgment" label.
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return {
+                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment)
+              return {
+                text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            return {
+              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}`,
+              raw: {},
+            }
+          }),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: `task done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+      sessionId: "ses_diary",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(diaryClient, ctLayer, fakeDomain, diaryIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The dedicated diary turn ran and appended its prose.
+    expect(diaryWrites.length).toBeGreaterThanOrEqual(1)
+    expect(diaryWrites.join("\n")).toContain("Fixture diary text.")
   }, 20_000)
 
   it("returns Interrupted when a critical interrupt fires", async () => {
@@ -780,6 +878,9 @@ describe("runCortex (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            // Diary turn carries the "judgment" label — branch on its unique
+            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
             const hasDisposition = p.includes("disposition")
             const hasDecision = p.includes("decision")
             const hasHeadline = p.includes("headline")

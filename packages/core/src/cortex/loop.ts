@@ -27,6 +27,7 @@ import {
   runForebrain,
   runConsciousDecide,
   runConsciousEvaluate,
+  runDiaryTurn,
   type CortexRunnerConfig,
 } from "./tiers.js"
 import {
@@ -347,20 +348,39 @@ export const runCortex = (config: CortexLoopConfig) =>
               "cortex",
               `evaluate: ${evalResult.judgment} → ${evalResult.transition.transition}`,
             )
-            if (evalResult.diaryEntry) {
-              const diary = yield* charFs
+            // Dedicated diary turn — a separate model turn that always produces a
+            // short first-person reflection on the step just completed (replaces the
+            // old optional `diaryEntry` field the small conscious model omitted). The
+            // turn is bounded and best-effort: a timeout or model error degrades to an
+            // empty entry rather than stalling or crashing the loop.
+            const diaryEntry = yield* runDiaryTurn(runnerConfig, {
+              charName: config.char.name,
+              task: step.task,
+              goal: step.goal,
+              judgment: evalResult.judgment,
+              reasoning: evalResult.reasoning,
+              executionReport: formatExecutionReport(stepReport),
+              emotionalState: cortex.emotionalWeight,
+            }).pipe(
+              Effect.timeout("30 seconds"),
+              Effect.catchAll(() => Effect.succeed("")),
+            )
+            if (diaryEntry) {
+              const existing = yield* charFs
                 .readDiary(config.char)
                 .pipe(Effect.catchAll(() => Effect.succeed("")))
               yield* charFs
-                .writeDiary(
-                  config.char,
-                  diary ? `${diary}\n\n${evalResult.diaryEntry}` : evalResult.diaryEntry,
-                )
+                .writeDiary(config.char, existing ? `${existing}\n\n${diaryEntry}` : diaryEntry)
                 .pipe(
                   Effect.catchAll((e) =>
                     logToConsole(config.char.name, "error", `diary write failed: ${e}`),
                   ),
                 )
+              yield* logToConsole(
+                config.char.name,
+                "cortex",
+                `diary_entry_appended: (${diaryEntry.length} chars)`,
+              )
             }
             const t = evalResult.transition
             if (t.transition === "terminate") return { _tag: "Completed" as const, finalState: state }

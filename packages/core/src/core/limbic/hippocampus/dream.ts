@@ -1,15 +1,22 @@
 import * as path from "node:path"
 import { Effect } from "effect"
 import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs.js"
-import { CharacterLog } from "../../../logging/log-writer.js"
+import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
 import { eventBase } from "../../../logging/events.js"
-import { ClaudeError } from "../../../services/Claude.js"
-import { OAuthToken } from "../../../services/OAuthToken.js"
-import { CommandExecutor } from "@effect/platform"
-import { loadTemplate } from "../../template.js"
+import { loadTemplate, renderTemplate } from "../../template.js"
 import { runTurn } from "../hypothalamus/process-runner.js"
 import type { ModelConfig } from "../../model-config.js"
 import { resolveModel } from "../../model-config.js"
+
+/**
+ * Stable target the cull compresses the diary toward (lines). The cull prompt is
+ * instructed to aim at this size; the hard never-grows invariant below guarantees
+ * the file can never end up larger than its input regardless of model behavior.
+ */
+export const DIARY_TARGET_LINES = 150
+
+/** Count lines the same way the diary/secrets sizing is measured elsewhere. */
+const lineCount = (s: string) => s.split("\n").length
 
 export type DreamType = "normal" | "good" | "nightmare"
 
@@ -90,8 +97,9 @@ export const dream = {
         text: `dream_start: ${dreamType}`,
       })
 
-      // 1. Compress diary
-      const diaryPrompt = yield* loadTemplate(path.join(PROMPTS_DIR, diaryTemplateFile[dreamType]))
+      // 1. Compress diary (cull) — aim at DIARY_TARGET_LINES.
+      const diaryPromptRaw = yield* loadTemplate(path.join(PROMPTS_DIR, diaryTemplateFile[dreamType]))
+      const diaryPrompt = renderTemplate(diaryPromptRaw, { TARGET_LINES: String(DIARY_TARGET_LINES) })
       const diaryInput = `${diaryPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="secrets">\n${secrets}\n</context>\n\n${diary}`
 
       const compressedDiary = yield* runTurn({
@@ -108,17 +116,31 @@ export const dream = {
         env: input.env,
       }).pipe(Effect.map((r) => r.output))
 
-      yield* charFs.writeDiary(input.char, compressedDiary)
-
-      yield* log.emit(input.char, {
-        ...eventBase(input.char.name, "orchestrator", "dream"),
-        kind: "text",
-        text: `dream_diary_compressed: ${dreamType} (${diary.length} -> ${compressedDiary.length})`,
-      })
+      // Hard invariant: the cull must never produce a larger file than its input.
+      // If the model returned more lines than it was given, discard and keep the original.
+      let finalDiary = compressedDiary
+      let diaryCompressed = true
+      if (lineCount(compressedDiary) > lineCount(diary)) {
+        finalDiary = diary
+        diaryCompressed = false
+        yield* logToConsole(
+          input.char.name,
+          "orchestrator",
+          `dream_diary_compression_discarded: cull produced ${lineCount(compressedDiary)} lines > ${lineCount(diary)} input lines — keeping original diary`,
+          "warn",
+        )
+      } else {
+        yield* charFs.writeDiary(input.char, compressedDiary)
+        yield* log.emit(input.char, {
+          ...eventBase(input.char.name, "orchestrator", "dream"),
+          kind: "text",
+          text: `dream_diary_compressed: ${dreamType} (${diary.length} -> ${compressedDiary.length})`,
+        })
+      }
 
       // 2. Compress secrets
       const secretsPrompt = yield* loadTemplate(path.join(PROMPTS_DIR, secretsTemplateFile[dreamType]))
-      const secretsInput = `${secretsPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="diary">\n${compressedDiary}\n</context>\n\n${secrets}`
+      const secretsInput = `${secretsPrompt}\n\n<context name="background">\n${background}\n</context>\n\n<context name="diary">\n${finalDiary}\n</context>\n\n${secrets}`
 
       const compressedSecrets = yield* runTurn({
         containerId: input.containerId,
@@ -134,13 +156,24 @@ export const dream = {
         env: input.env,
       }).pipe(Effect.map((r) => r.output))
 
-      yield* charFs.writeSecrets(input.char, compressedSecrets)
-
-      yield* log.emit(input.char, {
-        ...eventBase(input.char.name, "orchestrator", "dream"),
-        kind: "text",
-        text: `dream_secrets_compressed: ${dreamType} (${secrets.length} -> ${compressedSecrets.length})`,
-      })
+      // Same never-grows invariant for SECRETS.md.
+      let secretsCompressed = true
+      if (lineCount(compressedSecrets) > lineCount(secrets)) {
+        secretsCompressed = false
+        yield* logToConsole(
+          input.char.name,
+          "orchestrator",
+          `dream_secrets_compression_discarded: cull produced ${lineCount(compressedSecrets)} lines > ${lineCount(secrets)} input lines — keeping original secrets`,
+          "warn",
+        )
+      } else {
+        yield* charFs.writeSecrets(input.char, compressedSecrets)
+        yield* log.emit(input.char, {
+          ...eventBase(input.char.name, "orchestrator", "dream"),
+          kind: "text",
+          text: `dream_secrets_compressed: ${dreamType} (${secrets.length} -> ${compressedSecrets.length})`,
+        })
+      }
 
       yield* log.emit(input.char, {
         ...eventBase(input.char.name, "orchestrator", "dream"),
@@ -148,6 +181,6 @@ export const dream = {
         text: `dream_complete: ${dreamType}`,
       })
 
-      return { dreamType, diaryCompressed: true, secretsCompressed: true } as DreamOutput
+      return { dreamType, diaryCompressed, secretsCompressed } as DreamOutput
     }),
 }

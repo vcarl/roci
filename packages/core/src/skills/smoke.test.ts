@@ -333,13 +333,10 @@ describe("skill output type validation", () => {
       judgment: "succeeded",
       reasoning: "Mutex added, concurrent test passes, CI triggered",
       transition: { transition: "next_step" },
-      diaryEntry:
-        "AsyncMutex pattern from shared utils works well for token refresh. Remember this for other concurrent operations.",
     })
     const parsed: EvaluateResult = JSON.parse(raw)
     expect(parsed.judgment).toBe("succeeded")
     expect(parsed.transition.transition).toBe("next_step")
-    expect(parsed.diaryEntry).toBeTruthy()
   })
 
   it("EvaluateResult with replan transition is parseable", () => {
@@ -369,7 +366,6 @@ describe("skill output type validation", () => {
         wait: null,
         summary: "",
       },
-      diaryEntry: null,
     })
     const parsed = JSON.parse(raw)
     // Should still be usable — the transition type is what matters

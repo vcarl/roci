@@ -24,6 +24,8 @@ The structure stays. Four rooms, four purposes: ## Beliefs, ## Relationships, ##
 
 Write in their voice — but the 3 AM version. The one that's a little too honest.
 
+Aim for a diary of around {{TARGET_LINES}} lines. The result must be no longer than what you were given — sleep only ever lightens the load, it never adds weight.
+
 REMEMBER: Output ONLY the nightmare description followed by the compressed diary. Nothing before it. Nothing after it.
 
 ---

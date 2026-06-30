@@ -28,6 +28,7 @@ const skills = {
   orient: loadSkillSync(path.join(SKILLS_DIR, "orient.md")),
   decide: loadSkillSync(path.join(SKILLS_DIR, "decide.md")),
   evaluate: loadSkillSync(path.join(SKILLS_DIR, "evaluate.md")),
+  diary: loadSkillSync(path.join(SKILLS_DIR, "diary.md")),
 }
 
 export interface CortexRunnerConfig {
@@ -51,11 +52,34 @@ export interface EvaluateInput {
   remainingSteps: string
 }
 
+export interface DiaryTurnInput {
+  charName: string
+  task: string
+  goal: string
+  judgment: string
+  reasoning: string
+  executionReport: string
+  emotionalState: string
+}
+
+/**
+ * Strip a forebrain model's `<think>…</think>` reasoning preamble. The Qwen
+ * forebrain emits its chain-of-thought wrapped in <think> tags; the journal
+ * text is whatever follows the final closing tag. If there's no closing tag,
+ * the whole (trimmed) text is the journal entry.
+ */
+export function stripThinking(text: string): string {
+  if (text.includes("</think>")) {
+    return text.slice(text.lastIndexOf("</think>") + "</think>".length).trim()
+  }
+  return text.trim()
+}
+
 /** Run one prompt against the model backing `tier`, log the full exchange, return the raw text. */
 const callTier = (
   config: CortexRunnerConfig,
   tier: "hindbrain" | "forebrain" | "conscious",
-  step: "observe" | "orient" | "decide" | "evaluate",
+  step: "observe" | "orient" | "decide" | "evaluate" | "diary",
   prompt: string,
 ) =>
   Effect.gen(function* () {
@@ -268,4 +292,27 @@ export function runConsciousEvaluate(
       return { ...result, transition: normalizeTransition(result.transition) }
     }),
   )
+}
+
+// ── Forebrain (diary) ────────────────────────────────────────
+/**
+ * Dedicated journal turn — runs after evaluate and always produces a short
+ * first-person reflection on the step just completed. Replaces the old optional
+ * `diaryEntry` field the small conscious model reliably omitted. Returns plain
+ * prose (any `<think>` preamble stripped); the caller appends it to the diary.
+ */
+export function runDiaryTurn(
+  config: CortexRunnerConfig,
+  input: DiaryTurnInput,
+): Effect.Effect<string, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
+  const prompt = skills.diary.render({
+    charName: input.charName,
+    task: input.task,
+    goal: input.goal,
+    judgment: input.judgment,
+    reasoning: input.reasoning,
+    executionReport: input.executionReport,
+    emotionalState: input.emotionalState,
+  })
+  return callTier(config, "forebrain", "diary", prompt).pipe(Effect.map(stripThinking))
 }

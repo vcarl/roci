@@ -18,7 +18,6 @@ const tempo: PlannedActionTempo = {
   maxCycles: 3,
   breakDurationMs: 90 * 60 * 1000,
   breakPollIntervalSec: 5,
-  dreamThreshold: 200,
 }
 
 /** Shared clone path inside the container. */
@@ -290,13 +289,13 @@ const breakPhase = {
 }
 
 /**
- * Reflection phase: dream to compress diary, then loop back to active.
+ * Reflection phase: consolidate then cull the diary, then loop back to active.
  */
 const reflectionPhase = {
   name: "reflection",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      yield* runReflection(context.char, tempo.dreamThreshold, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
+      yield* runReflection(context.char, context.containerId, getModels(context), context.containerAddDirs, context.containerEnv)
       return { _tag: "Continue", next: "active", connection: context.connection } as PhaseResult
     }),
 }

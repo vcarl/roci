@@ -4,7 +4,6 @@
  */
 export interface TempoBase {
   readonly tickIntervalSec: number
-  readonly dreamThreshold: number
 }
 
 export interface StateMachineTempo extends TempoBase {

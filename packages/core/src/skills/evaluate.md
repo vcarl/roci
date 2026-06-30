@@ -55,8 +55,6 @@ Be pragmatic. If reasonable progress was made toward the goal, lean toward `succ
    - `wait` — the step produced something that needs an external response (opened a PR, triggered CI, asked a question). Specify what you're waiting for and how you'll know it resolved.
    - `terminate` — the plan is complete (this was the last step and it succeeded), or no further progress is possible
 
-3. **Optionally write a diary entry** — if you learned something meaningful during this step that's worth preserving across sessions, include it. Not every step warrants a diary entry. Use your judgment.
-
 Respond with ONLY this JSON:
 ```json
 {
@@ -71,7 +69,6 @@ Respond with ONLY this JSON:
       "disposition": "hold | terminate"
     },
     "summary": "<if terminate: what was accomplished overall>"
-  },
-  "diaryEntry": "<optional — only if something meaningful was learned>"
+  }
 }
 ```
