@@ -7,6 +7,8 @@ import type { LogLevel, UnifiedEvent } from "./events.js"
 import { eventBase } from "./events.js"
 import { renderEvent } from "./console-renderer.js"
 import { effectiveLevel, passesThreshold, resolveThreshold } from "./levels.js"
+import type { Behavior } from "./behavior.js"
+import { recordBehavior, snapshotDigest, tryMarkEnded, emptyBehaviorDigest } from "./behavior-digest.js"
 
 export class LogWriterError {
   readonly _tag = "LogWriterError"
@@ -123,4 +125,51 @@ export const logExchange = (
         ...(meta ? { meta } : {}),
       },
     )
+  })
+
+/**
+ * Emit a structured behavior event — the source of truth for "what the bot did".
+ * Folds the behavior into the per-character digest accumulator, and for the
+ * terminal `session_end` snapshots that accumulator inline so the emitted event
+ * is the authoritative run digest. Best-effort: a log-write failure can never
+ * crash the loop or orchestrator (mirrors logExchange's resilience).
+ */
+export const logBehavior = (
+  character: string,
+  system: string,
+  subsystem: string,
+  behavior: Behavior,
+): Effect.Effect<void, never, CharacterLog> =>
+  Effect.gen(function* () {
+    const base = eventBase(character, system, subsystem)
+    recordBehavior(character, behavior, base.timestamp)
+    const finalBehavior: Behavior =
+      behavior.type === "session_end"
+        ? { ...behavior, digest: snapshotDigest(character) }
+        : behavior
+    const log = yield* CharacterLog
+    yield* log.emit(
+      { name: character, dir: "" } as CharacterConfig,
+      { ...base, kind: "behavior", behavior: finalBehavior },
+    )
+  }).pipe(Effect.catchAll(() => Effect.void))
+
+/**
+ * Idempotent terminal emit. The first call per character emits a `session_end`
+ * carrying the inline digest snapshot; subsequent calls (e.g. the onExit path
+ * AND a signal handler racing) are no-ops via the `tryMarkEnded` guard.
+ */
+export const logSessionEnd = (
+  character: string,
+  reason: "clean" | "signal" | "error",
+  signal?: string,
+): Effect.Effect<void, never, CharacterLog> =>
+  Effect.gen(function* () {
+    if (!tryMarkEnded(character)) return
+    yield* logBehavior(character, "orchestrator", "main", {
+      type: "session_end",
+      reason,
+      ...(signal ? { signal } : {}),
+      digest: emptyBehaviorDigest(),
+    })
   })

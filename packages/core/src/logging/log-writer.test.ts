@@ -4,7 +4,8 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { FileSystem } from "@effect/platform"
 import * as os from "node:os"
 import * as path from "node:path"
-import { CharacterLog, CharacterLogLive, logToConsole, logExchange, logError } from "./log-writer.js"
+import { CharacterLog, CharacterLogLive, logToConsole, logExchange, logError, logBehavior, logSessionEnd } from "./log-writer.js"
+import { resetBehaviorDigest } from "./behavior-digest.js"
 import { ProjectRoot } from "../services/ProjectRoot.js"
 
 let tmp: string
@@ -88,5 +89,52 @@ describe("CharacterLog emit", () => {
     expect(line.prompt.length).toBe(50)
     expect(line.response.length).toBe(5000) // full, untruncated
     expect(line.meta).toEqual({ tier: "forebrain" })
+  })
+
+  it("logBehavior writes a kind:behavior line carrying the structured behavior", async () => {
+    resetBehaviorDigest("c")
+    const contents = await readJsonl(
+      logBehavior("c", "orchestrator", "main", { type: "phase", phase: "active", transition: "enter" }),
+    )
+    const line = JSON.parse(contents.trim().split("\n").pop() as string)
+    expect(line.kind).toBe("behavior")
+    expect(line.behavior.type).toBe("phase")
+    expect(line.behavior.phase).toBe("active")
+    expect(line.level).toBe("info")
+  })
+
+  it("logSessionEnd embeds a live digest snapshot inline", async () => {
+    resetBehaviorDigest("c")
+    const contents = await readJsonl(
+      Effect.gen(function* () {
+        yield* logBehavior("c", "orchestrator", "main", {
+          type: "session_start",
+          domain: "spacemolt",
+          character: "c",
+          gitSha: "abc1234",
+          tickIntervalMs: 30000,
+        })
+        yield* logSessionEnd("c", "clean")
+      }),
+    )
+    const last = JSON.parse(contents.trim().split("\n").pop() as string)
+    expect(last.behavior.type).toBe("session_end")
+    expect(last.behavior.reason).toBe("clean")
+    expect(last.behavior.digest.counts.session_start).toBe(1)
+    expect(last.behavior.digest.counts.session_end).toBe(1)
+    expect(last.behavior.digest.terminalCause).toBe("session ended (clean)")
+  })
+
+  it("logSessionEnd is idempotent — a second call emits nothing", async () => {
+    resetBehaviorDigest("c")
+    const contents = await readJsonl(
+      Effect.gen(function* () {
+        yield* logSessionEnd("c", "clean")
+        yield* logSessionEnd("c", "signal", "SIGTERM")
+      }),
+    )
+    const endLines = contents.trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.kind === "behavior" && e.behavior.type === "session_end")
+    expect(endLines).toHaveLength(1)
+    expect(endLines[0].behavior.reason).toBe("clean")
   })
 })
