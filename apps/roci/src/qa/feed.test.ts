@@ -94,4 +94,18 @@ describe("reduce", () => {
     const anomaly = records.find((r) => r.kind === "anomaly" && r.type === "DEGRADED_TIER")
     expect(anomaly).toBeUndefined()
   })
+
+  it("does not double-emit SESSION_START when the first event is a behavior session_start", () => {
+    const startBehavior: UnifiedEvent = {
+      timestamp: "2026-06-21T00:00:00.000Z",
+      character: "ada",
+      system: "orchestrator",
+      subsystem: "main",
+      kind: "behavior",
+      behavior: { type: "session_start", domain: "spacemolt", character: "ada", gitSha: "x", tickIntervalMs: 30000 },
+    }
+    const { records } = run([startBehavior])
+    const starts = records.filter((r) => r.type === "SESSION_START")
+    expect(starts).toHaveLength(1)
+  })
 })

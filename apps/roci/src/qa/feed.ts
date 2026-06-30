@@ -18,7 +18,12 @@ export function reduce(
   const records: FeedRecord[] = []
   let { tick, started } = state
 
-  if (!started) {
+  // Auto-inject a SESSION_START guess on the very first event — UNLESS that first
+  // event is a real behavior session_start, which classifyEvent already maps to
+  // SESSION_START below (avoids a double count). The structured event is the
+  // source of truth; this guess only covers pre-behavior / legacy streams.
+  const isBehaviorSessionStart = ev.kind === "behavior" && ev.behavior.type === "session_start"
+  if (!started && !isBehaviorSessionStart) {
     started = true
     records.push({
       ts: ev.timestamp,
@@ -28,6 +33,8 @@ export function reduce(
       tick,
       summary: `session start (${ev.character})`,
     })
+  } else if (!started) {
+    started = true
   }
 
   if (ev.kind === "system" && /^hindbrain: /.test(ev.message)) {
