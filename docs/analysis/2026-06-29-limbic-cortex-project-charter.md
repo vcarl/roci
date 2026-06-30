@@ -385,3 +385,79 @@ test-first), committed in 2 logical commits. Core suite 455 passed / 4 skipped.
 - **Deferred follow-ups:** abstract drop-everything emergencies as deterministic
   amygdala-style state rules (the 2B can't judge them — Finding 2); the
   complementary hindbrain-interrupt rung is plumbed+gated but unexercised by the 2B.
+
+---
+
+## Subteam B — resolved decisions (2026-06-30, lead-of-leads)
+
+Design spec: `docs/superpowers/specs/2026-06-30-longterm-memory-design.md`. The B
+investigation **resolved the feasibility crux GREEN**: the conscious agent
+already invokes an in-container bash subprocess tool (`frontier`) — generated
+script base64-piped to `/usr/local/bin/<tool>`, provisioned idempotently in
+`conscious-thought.ts` `provisionImpl`, documented in the agent-markdown system
+prompt. A `memory` CLI is a near-verbatim clone — **no MCP, no new transport, no
+hot-loop change.** The store is greenfield (zero sqlite/vector deps today).
+Deployment GREEN: host `players/` is bind-mounted RW at `/work/players`, so a db
+under `players/<name>/me/` is the same file host↔container; firewall allows
+`host.docker.internal` (blocks HF/models.dev).
+
+Lead-of-leads calls (human granted "no approvals needed; the plan is all there"):
+
+1. **Storage = `sqlite-vec` + `bun:sqlite`,** one file `players/<name>/me/
+   longterm.db` (WAL). In-container `memory` CLI is a bun script (matches
+   `frontier`/`/work/bin` precedent, no native build). *Pending Spike 1.*
+2. **Embedding = host embeddings server,** reached at `host.docker.internal:<port>`
+   (mirrors the conscious-provider host-native pattern; charter decision 3 binds
+   "a **vector DB**", so this is the v1 target). **FTS5 lexical is the documented
+   fallback** only if the embedding spike disappoints. *Pending Spike 2.* Standing
+   up the embed server (a non-mlx binary — mlx_lm.server can't embed) is **in B's
+   scope** (resolves spec ambiguity S2).
+3. **Pre-cull promotion hook = YES** (resolves S1). A deterministic step in
+   `runReflection` (`planned-action.ts:34-65`, NOT the hot loop) reads the diary
+   and appends new-since-last-promotion entries to long-term **before** the
+   destructive `dream` cull — this is what actually retires the
+   destructive-forgetting risk the whole thread targets. A read-before-promote
+   does not change cull *behavior*, so it is in-bounds. Built as a **separable
+   unit** (spec Unit 7) so it can be dropped without unwinding the core.
+4. **Write paths:** Route 1 = explicit `memory remember "<text>" [--tags …]` the
+   conscious agent calls (charter-required). Route 2 = the promotion hook (#3).
+5. **Per-character store** under `players/<name>/me/` (identity isolation —
+   resolves S3; no cross-character shared memory).
+6. **CLI shape** (clone of `frontier`): `memory remember|search|recent`, NDJSON
+   stdout for `search`, documented in `buildCharacterAgentMarkdown`. **Schema:**
+   append-only `memories(id,ts,source,tags,text)` + `vec0` virtual table keyed by
+   id (+ optional `fts5` for hybrid/fallback). Provenance `source` distinguishes
+   `conscious` vs `promotion` writes.
+
+**Gate:** implementation HELD pending the two BLOCKER spikes (Spike 1: sqlite-vec
+loads under `bun:sqlite` in the real container image, KNN returns ranked rows;
+Spike 2: host embed source + retrieval quality on a character-memory corpus).
+Backing the whole-file read seams at `loop.ts:316-318/410-412` with retrieval
+(spec Unit 8) is **explicitly out of B's core** — it touches the hot
+`cortex/loop.ts` and is deferred to a follow-on phase to avoid rebase contention.
+
+### Subteam B — spike results (2026-06-30): GO
+
+All three blocker spikes PASSED; implementation gate lifted. Pinned parameters:
+- **Spike 1 (sqlite-vec under bun in-container) — PASS.** sqlite-vec **0.1.9**
+  linux-arm64 `vec0.so`, baked into the image (not downloaded in-container —
+  dodges the egress firewall). Load via `db.loadExtension(path,
+  "sqlite3_vec_init")` — the **explicit entrypoint is required** (bun's
+  filename-derived default `sqlite3_vec0_init` mismatches). KNN:
+  `WHERE embedding MATCH ? AND k = ? ORDER BY distance`; vectors inserted as JSON
+  strings. bun at `/home/node/.bun/bin/bun`.
+- **Spike 2 (embeddings + retrieval quality) — PASS.** `mlx-community/
+  bge-small-en-v1.5-bf16`, **384-dim**, served by `mlx-embeddings` (native MLX on
+  host) behind OpenAI-shape `/v1/embeddings`; container reached
+  `host.docker.internal:<port>` in ~17ms/embed end-to-end. Plain text, **no**
+  instruction prefix. Topical/paraphrase recall strong, clean noise separation;
+  one exact-fact miss where **vectors still beat FTS5** (hybrid FTS5 = later
+  optimization, not a blocker). **Firewall must whitelist `host.docker.internal:
+  <embed-port>`.**
+- **Spike 3 (cross-process WAL) — PASS.** WAL + `busy_timeout=5000` handles
+  concurrent in-container writers/readers cleanly (integrity ok). **Flag:**
+  host-side `bun:sqlite` opening the same WAL file Bus-errors on macOS — so the
+  db is **in-container-access-only**; the host runs only the embed HTTP server.
+- **Decision:** GO. Embed model bge-small/384-dim, sqlite-vec 0.1.9, WAL +
+  in-container-only. FTS5 hybrid carried as a documented later optimization for
+  exact-fact recall, not part of B's core.
