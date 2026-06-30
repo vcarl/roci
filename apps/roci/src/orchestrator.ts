@@ -9,7 +9,10 @@ import type { ResolvedDomain } from "./domains/registry.js"
 import { OAuthToken } from "@roci/core/services/OAuthToken.js"
 import type { ModelConfig } from "@roci/core/core/model-config.js"
 import { provisionConsciousProvider } from "@roci/core/conscious/opencode-config.js"
+import { provisionMemoryCli } from "@roci/core/conscious/memory-cli.js"
+import { DEFAULT_EMBED_BASE_URL } from "@roci/core/conscious/memory-embed.js"
 import { DEFAULT_CORTEX_MODELS } from "@roci/core/model/handles.js"
+import { launchEmbedServer, reapEmbedServers } from "./embed-server.js"
 
 /**
  * Ensure a domain container exists and is running.
@@ -81,6 +84,14 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
     const projectRoot = yield* ProjectRoot
     const docker = yield* Docker
 
+    // Bring up the host long-term-memory embed server alongside the mlx tiers.
+    // Placed HERE — the single chokepoint every start path funnels through
+    // (`roci start` via startCommand AND bare `roci` via validateAndStart) — so
+    // long-term memory comes up exactly once on every invocation, not only the
+    // explicit `start` subcommand. Best-effort: a missing python env logs loud and
+    // continues (error channel `never`); it must never block character startup.
+    yield* launchEmbedServer(projectRoot)
+
     const totalChars = resolvedDomains.reduce((n, rd) => n + rd.characters.length, 0)
     yield* logToConsole(
       "orchestrator",
@@ -128,6 +139,22 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       yield* provisionConsciousProvider(containerId, DEFAULT_CORTEX_MODELS.conscious).pipe(
         Effect.catchAll((e) =>
           logToConsole("orchestrator", "main", `conscious provider provisioning failed: ${e}`, "warn"),
+        ),
+      )
+
+      // Provision the in-container `memory` CLI EAGERLY at startup — core character
+      // infrastructure must not be hot-loaded during the active loop. The
+      // spacemolt startup-phase reflection runs a pre-cull promotion hook
+      // (store.promote → `docker exec … memory promote`) BEFORE the cortex loop's
+      // conscious-provision step, so a lazily-provisioned binary `exit 127`s there
+      // and the subsequent dream cull overwrites diary.md, losing the raw entries.
+      // Provisioning here (right after the container is up) closes that window.
+      // Idempotent (overwrites the script); needs only a running container + root
+      // exec; embedBaseUrl is the constant — no node-user or player-dir dependency.
+      // Failure-tolerant: log loud and continue (long-term memory degrades).
+      yield* provisionMemoryCli(containerId, { embedBaseUrl: DEFAULT_EMBED_BASE_URL }).pipe(
+        Effect.catchAll((e) =>
+          logToConsole("orchestrator", "main", `memory CLI provisioning failed (long-term memory unavailable): ${e}`, "warn"),
         ),
       )
     }
@@ -234,6 +261,12 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
           yield* logToConsole("orchestrator", "main", "Shutting down — stopping containers...").pipe(
             Effect.catchAll(() => Effect.void),
           )
+          // Reap the host embed server on the Effect shutdown path (graceful
+          // SIGTERM; the synchronous reaper in main.ts is the SIGKILL backstop).
+          // This is what tears the child down on a FATAL teardown where no OS
+          // signal fires — mirroring the container stop just below, same path,
+          // runs on normal exit, error, or interrupt.
+          yield* Effect.sync(() => reapEmbedServers(undefined, "SIGTERM"))
           for (const [domainName] of containerIds) {
             const containerName = `roci-${domainName}`
             yield* docker.stop(containerName).pipe(

@@ -2,6 +2,7 @@ import { Command } from "@effect/cli"
 import { NodeContext, NodeRuntime } from "@effect/platform-node"
 import { Effect } from "effect"
 import { reapResidentServers } from "@roci/core"
+import { reapEmbedServers } from "./embed-server.js"
 import { rociCommand, serviceLayer } from "./cli.js"
 
 // Synchronous orphan-reaper backstop for the RESIDENT mlx server (the 122B on
@@ -15,9 +16,23 @@ import { rociCommand, serviceLayer } from "./cli.js"
 // finalizers still run on the non-double-forking packaged path). 'exit' is a
 // final backstop, but note it does NOT fire on SIGKILL, so the signal handlers
 // are the primary guard.
-process.on("SIGTERM", () => reapResidentServers())
-process.on("SIGINT", () => reapResidentServers())
-process.on("exit", () => reapResidentServers())
+// The host embed server (long-term memory, port 8084) is a session-long spawned
+// child like the resident mlx server, so it gets the same synchronous backstop:
+// reapEmbedServers group-SIGKILLs the (detached, unref'd) embed child inside the
+// same shutdown window, so it can't orphan and leak its port on a SIGKILL race or
+// fatal teardown. Additive to runMain's own handlers; we don't call process.exit.
+process.on("SIGTERM", () => {
+  reapResidentServers()
+  reapEmbedServers()
+})
+process.on("SIGINT", () => {
+  reapResidentServers()
+  reapEmbedServers()
+})
+process.on("exit", () => {
+  reapResidentServers()
+  reapEmbedServers()
+})
 
 // Provide services at the command level so they only initialize when a
 // command handler actually runs — not during --help / --version parsing.

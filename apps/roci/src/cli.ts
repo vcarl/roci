@@ -16,7 +16,6 @@ import { ModelServiceLive, ModelBackendTag } from "@roci/core/services/ModelServ
 import { makeMlxBackend } from "@roci/core/services/mlx-backend.js"
 import { runOrchestrator } from "./orchestrator.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
-import { launchEmbedServer } from "./embed-server.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, autoAcceptReview } from "@roci/core/core/character-scaffold.js"
@@ -127,10 +126,8 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
       }
     }
 
-    // Bring up the host long-term-memory embed server alongside the mlx tiers
-    // (best-effort; a missing python env must not block start — memory degrades).
-    yield* launchEmbedServer(PROJECT_ROOT)
-
+    // The embed server is launched inside runOrchestrator (the single chokepoint
+    // shared with the bare-`roci` auto-detect path), so it is not launched here.
     yield* runOrchestrator(resolved, args.tickInterval, models, Option.getOrElse(args.manualApproval, () => false))
   }),
 ).pipe(
