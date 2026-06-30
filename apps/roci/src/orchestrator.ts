@@ -8,6 +8,8 @@ import { execSync } from "node:child_process"
 import type { ResolvedDomain } from "./domains/registry.js"
 import { OAuthToken } from "@roci/core/services/OAuthToken.js"
 import type { ModelConfig } from "@roci/core/core/model-config.js"
+import { provisionConsciousProvider } from "@roci/core/conscious/opencode-config.js"
+import { DEFAULT_CORTEX_MODELS } from "@roci/core/model/handles.js"
 
 /**
  * Ensure a domain container exists and is running.
@@ -119,6 +121,15 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       const containerName = `roci-${rd.name}`
       const containerId = yield* ensureContainer(containerName, rd)
       containerIds.set(rd.name, containerId)
+
+      // Provision the local conscious-tier provider at startup so the `local`
+      // opencode provider exists before any dream (dreamCompression runs on it).
+      // Idempotent; failure-tolerant — a provisioning failure only logs.
+      yield* provisionConsciousProvider(containerId, DEFAULT_CORTEX_MODELS.conscious).pipe(
+        Effect.catchAll((e) =>
+          logToConsole("orchestrator", "main", `conscious provider provisioning failed: ${e}`, "warn"),
+        ),
+      )
     }
 
     // Validate token inside first container — catches auth issues before any character starts.
