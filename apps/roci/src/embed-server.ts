@@ -3,7 +3,7 @@ import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { CharacterLog, logToConsole, logError } from "@roci/core/logging/log-writer.js"
+import { CharacterLog, logToConsole, logError, logBehavior } from "@roci/core/logging/log-writer.js"
 import { LLM_ENV_VAR, DEFAULT_LLM_ENV_DIRNAME } from "@roci/core/services/mlx-backend.js"
 
 /**
@@ -306,6 +306,7 @@ export function launchEmbedServer(
     const ready = yield* probeReady(EMBED_PORT, fetchImpl)
     if (ready) {
       yield* logToConsole("embed", "cli", `embed server ready on 127.0.0.1:${EMBED_PORT} (${EMBED_MODEL})`)
+      yield* logBehavior("embed", "cli", "provision", { type: "provision", component: "embed_server", status: "ready" })
     } else {
       yield* logToConsole(
         "embed",
@@ -313,11 +314,20 @@ export function launchEmbedServer(
         `embed server launched on 127.0.0.1:${EMBED_PORT} but not ready yet; long-term memory will activate once it finishes loading (or stays down if its python env is missing)`,
         "warn",
       )
+      yield* logBehavior("embed", "cli", "provision", { type: "provision", component: "embed_server", status: "failed", detail: "launched but not ready yet" })
     }
   }).pipe(
     Effect.catchAll((e) =>
       logError("embed", "cli", `embed server launch failed (long-term memory unavailable): ${e}`).pipe(
         Effect.catchAll(() => Effect.void),
+        Effect.zipRight(
+          logBehavior("embed", "cli", "provision", {
+            type: "provision",
+            component: "embed_server",
+            status: "failed",
+            detail: String(e),
+          }),
+        ),
       ),
     ),
   )
