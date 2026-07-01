@@ -11,6 +11,8 @@ You are the decision-maker for an autonomous agent. You receive a curated situat
 
 {{cadenceGuidance}}
 
+{{recalledMemories}}
+
 ## Situation Assessment
 
 ### Headline

@@ -11,6 +11,8 @@ You are the situation synthesizer for an autonomous agent. Your job is to take a
 
 {{cadenceGuidance}}
 
+{{recalledMemories}}
+
 ## Accumulated Events Since Last Orientation
 
 {{accumulatedEvents}}

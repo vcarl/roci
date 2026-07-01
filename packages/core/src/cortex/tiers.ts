@@ -55,6 +55,7 @@ export interface EvaluateInput {
   conditionCheck: string
   emotionalState: string
   remainingSteps: string
+  recalledMemories?: string
 }
 
 export interface DiaryTurnInput {
@@ -195,6 +196,7 @@ export function runForebrain(
   domainState: string,
   identity: { background: string; values: string; diary: string },
   emotionalWeight: string,
+  recalledMemories = "",
 ): Effect.Effect<OrientResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.orient.render({
     cadence: config.cadence,
@@ -205,6 +207,7 @@ export function runForebrain(
     values: identity.values,
     diary: identity.diary,
     emotionalWeight,
+    recalledMemories,
   })
   const fallback = orientFallback(emotionalWeight)
   return callTier(config, "forebrain", "orient", prompt).pipe(
@@ -248,6 +251,7 @@ export function runConsciousDecide(
   orient: OrientResult,
   currentPlanState: string,
   availableActions: string,
+  recalledMemories = "",
 ): Effect.Effect<DecideResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.decide.render({
     cadence: config.cadence,
@@ -265,6 +269,7 @@ export function runConsciousDecide(
     metrics: JSON.stringify(orient.metrics, null, 2),
     currentPlanState,
     availableSkills: availableActions,
+    recalledMemories,
   })
   return callTier(config, "conscious", "decide", prompt).pipe(
     Effect.map((text) =>
@@ -327,6 +332,7 @@ export function runConsciousEvaluate(
     conditionCheck: input.conditionCheck,
     emotionalState: input.emotionalState,
     remainingSteps: input.remainingSteps,
+    recalledMemories: input.recalledMemories ?? "",
   })
   return callTier(config, "conscious", "evaluate", prompt).pipe(
     Effect.map((text) => {

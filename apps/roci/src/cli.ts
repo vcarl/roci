@@ -12,6 +12,7 @@ import { CharacterLogLive } from "@roci/core/logging/log-writer.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { ModelClientLive, ConsciousThoughtLive } from "@roci/core"
 import { LongtermStoreLive } from "@roci/core/conscious/longterm-store.js"
+import { MemoryGatewayLive } from "@roci/core/conscious/memory-gateway.js"
 import { ModelServiceLive, ModelBackendTag } from "@roci/core/services/ModelService.js"
 import { makeMlxBackend } from "@roci/core/services/mlx-backend.js"
 import { runOrchestrator } from "./orchestrator.js"
@@ -708,6 +709,8 @@ const serviceLayer = Layer.mergeAll(
   // Long-term memory store seam for the pre-cull promotion hook (runReflection).
   // Shells the in-container `memory` CLI, so it depends on Docker.
   LongtermStoreLive.pipe(Layer.provide(DockerLive)),
+  // Memory policy seam (capture + recall) for the cortex loop. Depends on LongtermStore → Docker.
+  MemoryGatewayLive.pipe(Layer.provide(LongtermStoreLive.pipe(Layer.provide(DockerLive)))),
 )
 
 export { rociCommand, serviceLayer }

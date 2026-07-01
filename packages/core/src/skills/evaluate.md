@@ -11,6 +11,8 @@ You are evaluating whether a step in your plan was completed successfully. Based
 
 {{cadenceGuidance}}
 
+{{recalledMemories}}
+
 ## The Step That Was Executed
 
 **Task:** {{task}}
