@@ -59,6 +59,16 @@ export function newSinceMark(diary: string, mark: DiaryMark | null): string[] {
   return splitDiaryEntries(diary)
 }
 
+/** A ranked recall hit — one NDJSON line from the in-container `memory search`. */
+export interface MemoryHit {
+  readonly id: number
+  readonly ts: string
+  readonly source: string
+  readonly tags: ReadonlyArray<string>
+  readonly text: string
+  readonly score: number
+}
+
 export class LongtermStore extends Context.Tag("LongtermStore")<
   LongtermStore,
   {
@@ -79,6 +89,19 @@ export class LongtermStore extends Context.Tag("LongtermStore")<
       char: CharacterConfig,
       entries: ReadonlyArray<string>,
     ) => Effect.Effect<number, Error>
+    /** Persist a single memory with an explicit source + tags (in-container `memory remember`). */
+    readonly remember: (
+      containerId: string,
+      char: CharacterConfig,
+      entry: { readonly text: string; readonly source: string; readonly tags: ReadonlyArray<string> },
+    ) => Effect.Effect<void, Error>
+    /** Semantic recall of top-k memories (in-container `memory search`); parses NDJSON. */
+    readonly recall: (
+      containerId: string,
+      char: CharacterConfig,
+      query: string,
+      opts?: { readonly k?: number; readonly tags?: ReadonlyArray<string> },
+    ) => Effect.Effect<ReadonlyArray<MemoryHit>, Error>
   }
 >() {}
 
@@ -134,6 +157,31 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
           const out = yield* docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail))
           const n = Number(out.trim())
           return Number.isFinite(n) ? n : entries.length
+        }),
+      remember: (containerId, char, entry) => {
+        const tagsArg = entry.tags.length > 0 ? ` --tags ${shQuote(entry.tags.join(","))}` : ""
+        const cmd =
+          `${cd(char)} && ${MEMORY_CLI_PATH} remember ${shQuote(entry.text)}` +
+          `${tagsArg} --source ${shQuote(entry.source)}`
+        return docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail), Effect.asVoid)
+      },
+      recall: (containerId, char, query, opts) =>
+        Effect.gen(function* () {
+          const k = opts?.k ?? 5
+          const tagsArg = opts?.tags && opts.tags.length > 0 ? ` --tags ${shQuote(opts.tags.join(","))}` : ""
+          const cmd = `${cd(char)} && ${MEMORY_CLI_PATH} search ${shQuote(query)} -k ${k}${tagsArg}`
+          const out = yield* docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail))
+          return out
+            .split("\n")
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0)
+            .flatMap((l) => {
+              try {
+                return [JSON.parse(l) as MemoryHit]
+              } catch {
+                return []
+              }
+            })
         }),
     })
   }),

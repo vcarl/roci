@@ -7,8 +7,10 @@ import {
   LongtermStore,
   LongtermStoreLive,
   MEMORY_CLI_PATH,
+  type MemoryHit,
 } from "./longterm-store.js"
 import { Docker } from "../services/Docker.js"
+import type { CharacterConfig } from "../services/CharacterFs.js"
 
 describe("splitDiaryEntries", () => {
   it("splits on blank-line boundaries, trimming and dropping empties", () => {
@@ -116,5 +118,54 @@ describe("LongtermStoreLive — in-container command construction (N2)", () => {
     expect(joined).toContain(`${MEMORY_CLI_PATH} mark-set`)
     expect(joined).toContain('"len":42')
     expect(joined).toContain('"hash":"abc"')
+  })
+})
+
+const char = { name: "ada space" } as CharacterConfig
+
+// Minimal Docker stub: records the argv it was called with, returns canned stdout.
+function dockerStub(stdout: string, captured: string[][]) {
+  return Layer.succeed(
+    Docker,
+    {
+      exec: (_id: string, args: ReadonlyArray<string>) =>
+        Effect.sync(() => {
+          captured.push([...args])
+          return stdout
+        }),
+    } as unknown as typeof Docker.Service,
+  )
+}
+
+describe("LongtermStore.remember / recall", () => {
+  it("remember shells `memory remember` with quoted text, --tags and --source", async () => {
+    const captured: string[][] = []
+    await Effect.runPromise(
+      Effect.flatMap(LongtermStore, (s) =>
+        s.remember("cid", char, { text: "the wormhole is unstable", source: "orient", tags: ["medium", "situation"] }),
+      ).pipe(Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub("", captured))))),
+    )
+    const joined = captured.flat().join(" ")
+    expect(joined).toContain(`cd '/work/players/ada space'`)
+    expect(joined).toContain(`${MEMORY_CLI_PATH} remember 'the wormhole is unstable'`)
+    expect(joined).toContain(`--tags 'medium,situation'`)
+    expect(joined).toContain(`--source 'orient'`)
+  })
+
+  it("recall shells `memory search` with -k and parses NDJSON into hits", async () => {
+    const captured: string[][] = []
+    const ndjson =
+      `{"id":1,"ts":"t","source":"orient","tags":["a"],"text":"first","score":0.9}\n` +
+      `{"id":2,"ts":"t","source":"evaluate","tags":[],"text":"second","score":0.5}\n` +
+      `   \n` // blank line must be ignored
+    const hits: ReadonlyArray<MemoryHit> = await Effect.runPromise(
+      Effect.flatMap(LongtermStore, (s) => s.recall("cid", char, "danger", { k: 2 })).pipe(
+        Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub(ndjson, captured)))),
+      ),
+    )
+    const joined = captured.flat().join(" ")
+    expect(joined).toContain(`${MEMORY_CLI_PATH} search 'danger' -k 2`)
+    expect(hits.map((h) => h.text)).toEqual(["first", "second"])
+    expect(hits[0].score).toBeCloseTo(0.9)
   })
 })

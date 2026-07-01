@@ -74,6 +74,8 @@ function makeStore(opts: { failPromote?: boolean } = {}) {
               promotedCalls.push([...entries])
               return entries.length
             }),
+      remember: () => Effect.void,
+      recall: () => Effect.succeed([]),
     }),
   )
   return { layer, promotedCalls, getMark: () => mark }
