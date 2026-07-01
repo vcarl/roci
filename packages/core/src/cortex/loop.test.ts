@@ -16,6 +16,7 @@ import { PromptBuilderTag } from "../core/prompt-builder.js"
 import { CharacterFs, CharacterFsError } from "../services/CharacterFs.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import { OAuthToken } from "../services/OAuthToken.js"
+import { MemoryGateway } from "../conscious/memory-gateway.js"
 import { STEP_DONE_MARKER } from "./state.js"
 import { ModelService } from "../services/ModelService.js"
 
@@ -180,7 +181,11 @@ const StubDocker = Layer.succeed(
   Docker,
   Docker.of({ exec: () => Effect.succeed("") } as unknown as typeof Docker.Service),
 )
-const fakeRuntimeDeps = Layer.mergeAll(StubCommandExecutor, StubOAuthToken, StubDocker)
+const fakeMemory = Layer.succeed(
+  MemoryGateway,
+  MemoryGateway.of({ remember: () => Effect.void, recall: () => Effect.succeed("") }),
+)
+const fakeRuntimeDeps = Layer.mergeAll(StubCommandExecutor, StubOAuthToken, StubDocker, fakeMemory)
 
 /** Canonical canned TurnResult for a step that completes successfully. */
 const successTurnResult = (task: string): TurnResult => ({

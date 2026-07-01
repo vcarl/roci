@@ -25,6 +25,16 @@ import type { Alert } from "../core/types.js"
 import type { ObserveResult } from "../skills/types.js"
 import { Docker } from "../services/Docker.js"
 import {
+  MemoryGateway,
+  observeMemories,
+  orientMemories,
+  decideMemories,
+  evaluateMemories,
+  orientQuery,
+  decideQuery,
+  evaluateQuery,
+} from "../conscious/memory-gateway.js"
+import {
   runHindbrain,
   runForebrain,
   runConsciousDecide,
@@ -110,6 +120,7 @@ export const runCortex = (config: CortexLoopConfig) =>
     const promptBuilder = yield* PromptBuilderTag
     const consciousThought = yield* ConsciousThought
     const charFs = yield* CharacterFs
+    const memory = yield* MemoryGateway
 
     const cadence: Cadence = config.cadence ?? "planned-action"
     const orientInterval = config.orientInterval ?? DEFAULT_ORIENT_INTERVAL
@@ -289,6 +300,9 @@ export const runCortex = (config: CortexLoopConfig) =>
         } else {
           const observe = yield* runHindbrain(runnerConfig, ev.text, cortex.waitState)
           appraisals.push({ event: ev.text, observe })
+          for (const w of observeMemories(observe)) {
+            yield* memory.remember(config.containerId, config.char, w)
+          }
         }
       }
       const esc =
@@ -318,15 +332,34 @@ export const runCortex = (config: CortexLoopConfig) =>
           const background = yield* readOrEmpty("background", charFs.readBackground(config.char))
           const values = yield* readOrEmpty("values", charFs.readValues(config.char))
           const diary = yield* readOrEmpty("diary", charFs.readDiary(config.char))
+          const orientRecall = yield* memory.recall(
+            config.containerId,
+            config.char,
+            orientQuery(cortex.accumulatedEvents, cortex.emotionalWeight),
+            { k: 2, label: "You recall", maxChars: 300 },
+          )
           const orient = yield* runForebrain(
             runnerConfig,
             cortex.accumulatedEvents,
             JSON.stringify(summary, null, 2),
             { background, values, diary },
             cortex.emotionalWeight,
+            orientRecall,
           )
           yield* logBehavior(config.char.name, "cortex", "forebrain", { type: "orient", headline: orient.headline })
-          const decide = yield* runConsciousDecide(runnerConfig, orient, "No active plan.", AVAILABLE_ACTIONS)
+          for (const w of orientMemories(orient)) {
+            yield* memory.remember(config.containerId, config.char, w)
+          }
+          const decideRecall = yield* memory.recall(
+            config.containerId,
+            config.char,
+            decideQuery(orient),
+            { k: 5, label: "Relevant memories" },
+          )
+          const decide = yield* runConsciousDecide(runnerConfig, orient, "No active plan.", AVAILABLE_ACTIONS, decideRecall)
+          for (const w of decideMemories(decide)) {
+            yield* memory.remember(config.containerId, config.char, w)
+          }
           yield* (decide.decision === "plan" || decide.decision === "wait" || decide.decision === "terminate"
             ? logBehavior(config.char.name, "cortex", "conscious", { type: "decision", disposition: decide.decision })
             : logBehavior(config.char.name, "cortex", "conscious", { type: "note", label: `decision:${decide.decision}` }))
@@ -414,14 +447,24 @@ export const runCortex = (config: CortexLoopConfig) =>
           const background = yield* readOrEmpty("background", charFs.readBackground(config.char))
           const values = yield* readOrEmpty("values", charFs.readValues(config.char))
           const diary = yield* readOrEmpty("diary", charFs.readDiary(config.char))
+          const orientRecall = yield* memory.recall(
+            config.containerId,
+            config.char,
+            orientQuery(cortex.accumulatedEvents, cortex.emotionalWeight),
+            { k: 2, label: "You recall", maxChars: 300 },
+          )
           const orient = yield* runForebrain(
             runnerConfig,
             cortex.accumulatedEvents,
             JSON.stringify(summary, null, 2),
             { background, values, diary },
             cortex.emotionalWeight,
+            orientRecall,
           )
           yield* logBehavior(config.char.name, "cortex", "forebrain", { type: "orient", headline: orient.headline })
+          for (const w of orientMemories(orient)) {
+            yield* memory.remember(config.containerId, config.char, w)
+          }
           // Laundered directive: formatSteerDirective formats model-generated forebrain output.
           pendingDirective = formatSteerDirective(orient)
           if (esc.rung === "steer") bypassSteerCadence = true
@@ -467,6 +510,12 @@ export const runCortex = (config: CortexLoopConfig) =>
             const conditionCheck = stepDoneSignaled
               ? `Agent signaled completion (${STEP_DONE_MARKER}) after ${ticksConsumed} ticks`
               : `Tick budget elapsed: ${ticksConsumed} ticks consumed of ${step.timeoutTicks} budgeted; no completion signal`
+            const evalRecall = yield* memory.recall(
+              config.containerId,
+              config.char,
+              evaluateQuery(step.task, step.goal),
+              { k: 5, label: "Relevant memories" },
+            )
             const evalResult = yield* runConsciousEvaluate(runnerConfig, {
               task: step.task,
               goal: step.goal,
@@ -482,12 +531,16 @@ export const runCortex = (config: CortexLoopConfig) =>
                   .slice(stepIdx + 1)
                   .map((s) => `${s.task}: ${s.goal}`)
                   .join("\n") || "None.",
+              recalledMemories: evalRecall,
             })
             yield* logBehavior(config.char.name, "cortex", "conscious", {
               type: "note",
               label: "evaluate",
               data: { judgment: evalResult.judgment, transition: evalResult.transition.transition },
             })
+            for (const w of evaluateMemories(evalResult)) {
+              yield* memory.remember(config.containerId, config.char, w)
+            }
             // Dedicated diary turn — a separate model turn that always produces a
             // short first-person reflection on the step just completed (replaces the
             // old optional `diaryEntry` field the small conscious model omitted). The
@@ -632,4 +685,5 @@ export const runCortex = (config: CortexLoopConfig) =>
     | Docker
     | CommandExecutor.CommandExecutor
     | OAuthToken
+    | MemoryGateway
   >
