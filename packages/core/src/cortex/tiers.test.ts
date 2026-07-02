@@ -1,5 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest"
+import { describe, it, expect, afterEach, beforeEach } from "vitest"
 import { createServer, type Server } from "node:http"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 import { Effect, Layer } from "effect"
 import { ModelClient, ModelClientLive } from "../model/client.js"
 import type { ModelHandle } from "../model/handles.js"
@@ -11,12 +14,14 @@ import {
   runForebrain,
   runConsciousDecide,
   runConsciousEvaluate,
+  runDiaryTurn,
   type CortexRunnerConfig,
 } from "./tiers.js"
 import type { OrientResult } from "../skills/types.js"
 import { ModelService } from "../services/ModelService.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import type { UnifiedEvent } from "../logging/events.js"
+import { setEpisodeLogRoot, setEpisodeTick, resetEpisodeContext } from "../logging/episodes.js"
 
 // A CharacterLog that records every emitted event's message, so tests can
 // assert the raw forebrain text surfaced on a parse failure.
@@ -455,5 +460,82 @@ describe("runForebrain — full (untruncated) raw output on parse failure", () =
     expect(msg).toBeDefined()
     expect(msg!).toContain(raw) // FULL raw present
     expect(msg!).not.toMatch(/truncated/i)
+  })
+})
+
+describe("transition episodes — OODA tier calls", () => {
+  let root: string
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-tiers-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    setEpisodeTick("ada", 7)
+  })
+  afterEach(() => {
+    setEpisodeLogRoot(null)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const transitionFile = () => path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+  const readTransitions = () =>
+    fs.readFileSync(transitionFile(), "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+
+  const orientFixture: OrientResult = {
+    headline: "h", sections: [], whatChanged: "w", emotionalState: "😐", confidence: "low", metrics: {},
+  }
+
+  it("orient appends a full-fidelity tier record: rendered prompt, parsed output, tick", async () => {
+    await Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["combat happened"], "{}", { background: "", values: "", diary: "" }, "😰"),
+        Layer.mergeAll(
+          fixedClient('{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","confidence":"high","metrics":{}}'),
+          recordingService([]),
+          silentLog,
+        ),
+      ),
+    )
+    const [rec] = readTransitions()
+    expect(rec).toMatchObject({ type: "tier", phase: "orient", tick: 7, stepId: null })
+    expect(rec.prompt).toContain("combat happened")
+    expect(rec.output.headline).toBe("act now")
+  })
+
+  it("decide, evaluate, and diary each append their phase; observe never does", async () => {
+    const layersFor = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
+
+    await Effect.runPromise(
+      Effect.provide(runHindbrain(config, "type: noise\n{}", null),
+        layersFor('{"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"reason":"x"}')),
+    )
+    expect(fs.existsSync(transitionFile())).toBe(false) // observe excluded
+
+    await Effect.runPromise(
+      Effect.provide(runConsciousDecide(config, orientFixture, "No active plan.", "actions"),
+        layersFor('{"decision":"continue","reasoning":"r"}')),
+    )
+    await Effect.runPromise(
+      Effect.provide(
+        runConsciousEvaluate(config, {
+          task: "t", goal: "g", successCondition: "s", ticksBudgeted: 2, ticksConsumed: 1,
+          executionReport: "r", stateDiff: "", conditionCheck: "c", emotionalState: "😐", remainingSteps: "None.",
+        }),
+        layersFor('{"judgment":"succeeded","reasoning":"done","transition":{"transition":"next_step"}}'),
+      ),
+    )
+    await Effect.runPromise(
+      Effect.provide(
+        runDiaryTurn(config, {
+          charName: "ada", task: "t", goal: "g", judgment: "succeeded",
+          reasoning: "r", executionReport: "e", emotionalState: "😐",
+        }),
+        layersFor("Dear diary, it went fine."),
+      ),
+    )
+
+    const phases = readTransitions().map((r) => r.phase)
+    expect(phases).toEqual(["decide", "evaluate", "diary"])
+    const diary = readTransitions()[2]
+    expect(diary.output).toBe("Dear diary, it went fine.")
   })
 })

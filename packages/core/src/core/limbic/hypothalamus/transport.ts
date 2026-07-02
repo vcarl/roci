@@ -6,6 +6,7 @@ import type { InternalEvent } from "../../../logging/stream-normalizer.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
 import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
+import { appendToolEpisode, episodeContext, summarizeArgs } from "../../../logging/episodes.js"
 
 /**
  * How long a body/brain turn may stay silent (no stdout) before the heartbeat
@@ -127,6 +128,25 @@ export const runTransport = (input: TransportInput): Effect.Effect<
                 yield* log.emit(input.char, event)
                 if (event.kind === "text") {
                   yield* Ref.update(textAccumulator, (arr) => [...arr, event.text])
+                }
+              }
+              // Episode substrate (spec §1): one low-fidelity record per OpenCode
+              // tool call that reached a terminal state. Only normalizeOpenCode
+              // sets `status`, so claude-runtime brain turns are naturally
+              // excluded. Never store the tool output. appendToolEpisode is
+              // swallow-and-log — it can never disturb the transport.
+              for (const ie of internal) {
+                if (ie.type === "tool_use" && (ie.status === "completed" || ie.status === "error")) {
+                  const ctx = episodeContext(input.char.name)
+                  yield* appendToolEpisode(input.char.name, {
+                    ts: new Date().toISOString(),
+                    tick: ctx.tick,
+                    stepId: ctx.stepId,
+                    tool: ie.name,
+                    argsSummary: summarizeArgs(ie.input),
+                    status: ie.status,
+                    durationMs: ie.durationMs ?? null,
+                  })
                 }
               }
             } else if (line.trim()) {

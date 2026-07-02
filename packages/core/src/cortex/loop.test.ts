@@ -19,6 +19,10 @@ import { OAuthToken } from "../services/OAuthToken.js"
 import { MemoryGateway } from "../conscious/memory-gateway.js"
 import { STEP_DONE_MARKER } from "./state.js"
 import { ModelService } from "../services/ModelService.js"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
+import { setEpisodeLogRoot, resetEpisodeContext, setEpisodeStep, setEpisodeTick } from "../logging/episodes.js"
 
 // No-op ModelService: withTier is transparent (passes the effect through unchanged).
 const noopModelService = Layer.succeed(
@@ -1414,6 +1418,98 @@ describe("runCortex (conscious-session executor)", () => {
     const count = await Effect.runPromise(program)
     // Only the initial plan's decide ran; the wait transition did not self-drive an orient.
     expect(count).toBe(1)
+  }, 20_000)
+
+  it("emits step-start and step-end transition episodes (verdict, null skill/wm fields)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-loop-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    try {
+      const ctLayer = ConsciousThoughtTest((config) => ({
+        result: successTurnResult(config.prompt),
+        sessionId: "ses_ep",
+      }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      const start = records.find((r) => r.type === "step-start")
+      const end = records.find((r) => r.type === "step-end")
+      expect(start).toMatchObject({ task: "act", goal: "do the thing", skill: null, wmDeltas: null })
+      expect(typeof start.tick).toBe("number")
+      expect(start.stepId).toMatch(/^s\d+-0$/)
+      expect(end).toMatchObject({
+        stepId: start.stepId,
+        task: "act",
+        verdict: "succeeded",
+        transition: "terminate",
+        skill: null,
+        wmDeltas: null,
+      })
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("resets a stale per-character episode context at runCortex entry (no stepId bleed across sessions)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-loop-stale-"))
+    setEpisodeLogRoot(root)
+    // Simulate the dangling context a prior runCortex invocation can leave behind
+    // when it exits via the terminate/critical-interrupt paths (which return before
+    // the per-step reset) — a fresh invocation must not inherit it.
+    setEpisodeTick("ada", 99)
+    setEpisodeStep("ada", "s99-9")
+    try {
+      const ctLayer = ConsciousThoughtTest((config) => ({
+        result: successTurnResult(config.prompt),
+        sessionId: "ses_ep_stale",
+      }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      // Earliest transition records (the orient tier call, then step-start) must
+      // carry a fresh context, never the previous session's dangling stepId.
+      const firstTier = records.find((r) => r.type === "tier")
+      const start = records.find((r) => r.type === "step-start")
+      expect(firstTier).toBeDefined()
+      expect(firstTier.stepId).not.toBe("s99-9")
+      expect(start).toBeDefined()
+      expect(start.stepId).not.toBe("s99-9")
+      expect(start.stepId).toMatch(/^s\d+-0$/)
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   }, 20_000)
 })
 

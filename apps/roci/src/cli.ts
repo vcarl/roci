@@ -9,6 +9,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs"
 import { Docker, DockerLive } from "@roci/core/services/Docker.js"
 import { CharacterFs, CharacterFsLive, makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { CharacterLogLive } from "@roci/core/logging/log-writer.js"
+import { setEpisodeLogRoot } from "@roci/core/logging/episodes.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { ModelClientLive, ConsciousThoughtLive } from "@roci/core"
 import { LongtermStoreLive } from "@roci/core/conscious/longterm-store.js"
@@ -31,6 +32,7 @@ import {
 import type { AnyModel } from "@roci/core/core/limbic/hypothalamus/runtime.js"
 
 const PROJECT_ROOT = process.cwd()
+setEpisodeLogRoot(PROJECT_ROOT)
 
 // --- model layer (start-scoped) ---
 // Building ModelServiceLive eagerly cold-loads the resident 122B mlx server (it

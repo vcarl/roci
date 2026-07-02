@@ -11,6 +11,7 @@ import { logToConsole, logError, logBehavior } from "../../logging/log-writer.js
 import type { ModelConfig } from "../model-config.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { LongtermStore, newSinceMark, diaryMark } from "../../conscious/longterm-store.js"
+import { finishEpisodeCycle } from "../../logging/episodes.js"
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -122,6 +123,12 @@ export const runReflection = (
         ),
       ),
     )
+
+    // Close this reflection cycle's episode window and rotate (spec §1):
+    // retain the last EPISODE_RETAIN_CYCLES cycles, dropping only whole
+    // cycles. finishEpisodeCycle is swallow-and-log — it can never fail
+    // reflection, mirroring the best-effort stages above.
+    yield* finishEpisodeCycle(char.name)
   })
 
 // ── runBreak ─────────────────────────────────────────────────

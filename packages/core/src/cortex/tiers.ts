@@ -21,6 +21,7 @@ import { extractJson, parseOr, tryParseJson, isPlainObject } from "./parse.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { CharacterLog, logToConsole, logExchange, logBehavior } from "../logging/log-writer.js"
+import { appendTransitionEpisode, episodeContext } from "../logging/episodes.js"
 
 export { extractJson, parseOr }
 
@@ -117,6 +118,29 @@ const callTier = (
     }).pipe(Effect.catchAll(() => Effect.void))
     return res.text
   })
+
+/**
+ * Full-fidelity transition record for one OODA tier call (spec §1): the rendered
+ * prompt and the PARSED output. Observe is excluded (per-event, high cadence).
+ * Never fails; never disturbs the tier call.
+ */
+const emitTier = (
+  character: string,
+  phase: "orient" | "decide" | "evaluate" | "diary",
+  prompt: string,
+  output: unknown,
+): Effect.Effect<void> => {
+  const ctx = episodeContext(character)
+  return appendTransitionEpisode(character, {
+    type: "tier",
+    ts: new Date().toISOString(),
+    tick: ctx.tick,
+    stepId: ctx.stepId,
+    phase,
+    prompt,
+    output,
+  })
+}
 
 // ── Hindbrain (observe) ──────────────────────────────────────
 /**
@@ -229,6 +253,7 @@ export function runForebrain(
         Effect.as<OrientResult>(fallback),
       )
     }),
+    Effect.tap((result) => emitTier(config.char.name, "orient", prompt, result)),
   )
 }
 
@@ -262,6 +287,7 @@ export function runConsciousDecide(
     Effect.map((text) =>
       parseOr<DecideResult>(text, { decision: "continue", reasoning: "parse failure — defaulting to continue" }),
     ),
+    Effect.tap((result) => emitTier(config.char.name, "decide", prompt, result)),
   )
 }
 
@@ -333,6 +359,7 @@ export function runConsciousEvaluate(
       // object — a bare-string or wrong-typed transition is coerced here.
       return { ...result, transition: normalizeTransition(result.transition) }
     }),
+    Effect.tap((result) => emitTier(config.char.name, "evaluate", prompt, result)),
   )
 }
 
@@ -357,5 +384,8 @@ export function runDiaryTurn(
     executionReport: input.executionReport,
     emotionalState: input.emotionalState,
   })
-  return callTier(config, "forebrain", "diary", prompt).pipe(Effect.map((text) => text.trim()))
+  return callTier(config, "forebrain", "diary", prompt).pipe(
+    Effect.map((text) => text.trim()),
+    Effect.tap((entry) => emitTier(config.char.name, "diary", prompt, entry)),
+  )
 }

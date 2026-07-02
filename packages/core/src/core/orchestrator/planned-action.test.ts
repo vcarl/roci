@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { Effect, Layer, Queue } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { CommandExecutor } from "@effect/platform"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 
 // Mock the model turn used by both consolidate and dream (cull).
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
@@ -19,6 +22,7 @@ import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
 import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
 import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
+import { setEpisodeLogRoot, appendToolEpisode } from "../../logging/episodes.js"
 
 const char = { name: "ada", dir: "/work/players/ada/me" }
 
@@ -354,5 +358,34 @@ describe("runBreak — event-processing error path", () => {
     // Control flow unchanged: best-effort, the break still completes.
     expect(result._tag).toBe("Completed")
     expect(errorMessages.some((m) => m.toLowerCase().includes("event processing error during break"))).toBe(true)
+  })
+})
+
+describe("runReflection — episode cycle rotation", () => {
+  it("closes the episode cycle: cycle-boundary appended to both streams, best-effort", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-reflect-"))
+    setEpisodeLogRoot(root)
+    try {
+      await Effect.runPromise(
+        appendToolEpisode("ada", {
+          ts: "t", tick: 1, stepId: "s1-0", tool: "bash", argsSummary: "{}", status: "completed", durationMs: 1,
+        }),
+      )
+      const fsx = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+      runTurnMock.mockImplementation(() => Effect.succeed({ output: "x", timedOut: false, durationMs: 1 }))
+      await run(
+        runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
+          Effect.provide(Layer.mergeAll(fsx.layer, makeStore().layer, fakeLog, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)),
+        ) as Effect.Effect<unknown, unknown, never>,
+      )
+      for (const file of ["episodes-tool.jsonl", "episodes-transition.jsonl"]) {
+        const text = fs.readFileSync(path.join(root, "players", "ada", "logs", file), "utf8")
+        const recs = text.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+        expect(recs.some((r) => r.type === "cycle-boundary")).toBe(true)
+      }
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })

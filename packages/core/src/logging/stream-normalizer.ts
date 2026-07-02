@@ -3,7 +3,7 @@ export type InternalEvent =
   | { type: "system"; model?: string }
   | { type: "thinking"; text: string }
   | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown>; status?: string; durationMs?: number }
   | { type: "tool_result"; toolUseId: string; text: string }
   | { type: "rate_limit"; status: string }
   | { type: "error"; message: string }
@@ -80,11 +80,16 @@ export function normalizeOpenCode(raw: RawEvent): InternalEvent[] {
 
   if (type === "tool_use") {
     const state = part?.state as RawEvent | undefined
+    const time = state?.time as RawEvent | undefined
+    const start = typeof time?.start === "number" ? time.start : undefined
+    const end = typeof time?.end === "number" ? time.end : undefined
     return [{
       type: "tool_use",
       id: (part?.id as string) ?? "",
       name: (part?.tool as string) ?? "",
       input: (state?.input as Record<string, unknown>) ?? {},
+      ...(typeof state?.status === "string" ? { status: state.status } : {}),
+      ...(start !== undefined && end !== undefined ? { durationMs: end - start } : {}),
     }]
   }
 
