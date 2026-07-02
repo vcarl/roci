@@ -27,7 +27,7 @@ core/limbic/
     process-runner.ts               runTurn() / runOpenCodeSessionTurn() / runSdkTurn() -- compose payload + transport
     runtime.ts                      Runtime binary selection (claude vs opencode)
     tempo.ts                        TempoConfig discriminated union
-    types.ts                        TurnConfig, TurnResult (SessionConfig/SessionResult exported but not re-exported through the limbic barrel)
+    types.ts                        TurnConfig, TurnResult
     sdk-runner/                     In-container Agent-SDK worker (.mjs) + NDJSON protocol
     timeout-summarizer.ts           summarizeTimeout() -- DEAD (zero callers, not re-exported through the limbic barrel)
   hippocampus/                      Memory consolidation
@@ -180,10 +180,9 @@ events/result on stdout. The pure protocol logic (`sdk-runner-protocol.mjs`) is 
 on the host. It is installed in the image at `/home/node/sdk-runner/sdk-runner.mjs`
 (`sdk-payload.ts:4`).
 
-> Note: `types.ts` still *defines* `SessionConfig`/`SessionResult` (leftovers of the
-> deleted session model), but they are **not** exported through the barrel and no live
-> code constructs them. `timeout-summarizer.ts` (`summarizeTimeout`) is likewise dead --
-> zero callers, not re-exported.
+> Note: `SessionConfig`/`SessionResult` (leftovers of the deleted session model) have
+> now been removed from `types.ts`. `timeout-summarizer.ts` (`summarizeTimeout`) is
+> likewise dead -- zero callers, not re-exported.
 
 ## Hippocampus -- Memory Consolidation
 

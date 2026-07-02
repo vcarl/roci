@@ -1,5 +1,4 @@
 {
-  "channelsEnabled": true,
   "hooks": {
     "PreToolUse": [{
       "hooks": [{

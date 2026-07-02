@@ -38,23 +38,3 @@ export interface TurnResult {
   /** First captured stream value (e.g. OpenCode sessionID), when a capture hook ran. */
   sessionId?: string
 }
-
-/** Configuration for a long-lived channel session. */
-export interface SessionConfig {
-  containerId: string
-  playerName: string
-  systemPrompt: string
-  model: AnyModel
-  sessionTimeoutMs: number
-  env?: Record<string, string>
-  addDirs?: string[]
-  char: CharacterConfig
-  channelPort?: number
-}
-
-/** Result when a session terminates. */
-export interface SessionResult {
-  reason: "completed" | "unachievable" | "crashed" | "killed"
-  summary?: string
-  durationMs: number
-}

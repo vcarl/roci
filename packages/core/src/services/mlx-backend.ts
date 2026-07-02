@@ -26,7 +26,7 @@ export const MLX_SERVER_BIN = "mlx_lm.server"
 
 /**
  * Env var overriding the venv ROOT we look in for `bin/mlx_lm.server`. Follows
- * the repo's `ROCI_` env convention (cf. ROCI_SDK_*, ROCI_CHANNEL_PORT). When
+ * the repo's `ROCI_` env convention (cf. ROCI_SDK_*). When
  * unset we default to `~/llm-env` (the documented Apple-Silicon location).
  */
 export const LLM_ENV_VAR = "ROCI_LLM_ENV"

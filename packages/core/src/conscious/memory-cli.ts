@@ -12,6 +12,7 @@ import {
 } from "./memory-sql.js"
 import { embedEndpoint } from "./memory-embed.js"
 import { MEMORY_USAGE } from "./memory-args.js"
+import { installContainerCli } from "./install-cli.js"
 
 /** Where the generated CLI is installed inside the container (on PATH). */
 export const MEMORY_CLI_PATH = "/usr/local/bin/memory"
@@ -208,15 +209,11 @@ if (verb === "remember") {
 }
 
 /**
- * Write the generated `memory` CLI into the container and make it executable.
- * Base64-pipes the script to sidestep shell quoting.
+ * Write the generated `memory` CLI into the container and make it executable via
+ * the shared `installContainerCli` idiom. The db lives in node-owned
+ * `players/<name>/me/`, so writes still work under the node runtime user.
  *
- * Runs AS ROOT (`{ user: "root" }`): `/usr/local/bin` is root-owned and the
- * container's default user is `node`, so provisioning as `node` would
- * `Permission denied`. The installed file ends up `root:root 0755` — `node` can
- * execute it, and the db lives in node-owned `players/<name>/me/`, so writes work.
- *
- * The error channel PROPAGATES (DockerError): unlike the old swallow-to-void, a
+ * The error channel PROPAGATES (DockerError): unlike a swallow-to-void, a
  * provisioning failure must surface. The caller (`provisionImpl`) logs it loud and
  * continues (best-effort), so a future breakage shows up in logs instead of only
  * as a later "command not found" the agent silently hits.
@@ -226,10 +223,5 @@ export function provisionMemoryCli(
   opts: MemoryCliOpts,
 ): Effect.Effect<void, DockerError, Docker> {
   const script = buildMemoryCliScript(opts)
-  const b64 = Buffer.from(script).toString("base64")
-  const sh = `echo ${b64} | base64 -d > ${MEMORY_CLI_PATH} && chmod 0755 ${MEMORY_CLI_PATH}`
-  return Effect.gen(function* () {
-    const docker = yield* Docker
-    yield* docker.exec(containerId, ["bash", "-lc", sh], { user: "root" })
-  })
+  return installContainerCli(containerId, MEMORY_CLI_PATH, script)
 }

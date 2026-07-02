@@ -55,12 +55,6 @@ RUN sed -i 's/\r$//' /usr/local/bin/init-firewall.sh && \
     chmod 0440 /etc/sudoers.d/node-firewall
 USER node
 
-# Install roci channel server and its dependencies
-RUN mkdir -p /work/bin
-COPY --chown=node:node channel-package.json /work/bin/package.json
-RUN cd /work/bin && bun install
-COPY --chown=node:node roci-channel.ts /work/bin/roci-channel.ts
-
 # Bake the sqlite-vec loadable extension (linux-arm64 0.1.9) used by the
 # long-term memory `memory` CLI (bun:sqlite db.loadExtension with the explicit
 # sqlite3_vec_init entrypoint). World-readable so USER node can load it.

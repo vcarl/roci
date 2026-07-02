@@ -7,7 +7,7 @@ import {
   FRONTIER_RUN_DIR,
   provisionFrontierCli,
 } from "./frontier-cli.js"
-import { taskLine, steerLine, endLine } from "../core/limbic/hypothalamus/sdk-payload.js"
+import { endLine } from "../core/limbic/hypothalamus/sdk-payload.js"
 import { Docker } from "../services/Docker.js"
 
 describe("buildFrontierWorkerFlags", () => {
@@ -60,10 +60,8 @@ describe("buildFrontierCliScript", () => {
     expect(script).toContain('"type":"task"')
     expect(script).toContain('"type":"steer"')
     expect(script).toContain('"type":"end"')
-    // shared builder shapes (laundering note: $1/$2 are model-authored args, never raw events)
+    // shared builder shape (laundering note: $1/$2 are model-authored args, never raw events)
     expect(endLine()).toBe('{"v":1,"type":"end"}')
-    expect(taskLine("X")).toContain('"type":"task"')
-    expect(steerLine("X")).toContain('"type":"steer"')
   })
   it("prints a trailing status line on poll and wait", () => {
     expect(script).toMatch(/status:/)

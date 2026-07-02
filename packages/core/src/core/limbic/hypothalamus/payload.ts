@@ -28,6 +28,21 @@ export function selectRuntime(config: TurnConfig): AgentRuntime {
   return config.runtime ?? runtimeBinary(config.model)
 }
 
+/**
+ * The `--title <prefix>-<player>` flag pair for an opencode invocation.
+ *
+ * Providing an explicit session title stops opencode from firing its automatic
+ * title-generation ("small model") call. That call hits the single-request local
+ * model server CONCURRENTLY with the main agent call; on the large resident model
+ * the two concurrent requests wedge it (0% CPU, both hang) and the turn stalls for
+ * the full timeout. An explicit --title suppresses the title call, leaving exactly
+ * one request to the model. Only a session-opening turn needs it — a resume turn
+ * reuses the already-named session.
+ */
+function openCodeTitleArgs(prefix: string, playerName: string): string[] {
+  return ["--title", shellEscape(`${prefix}-${playerName}`)]
+}
+
 /** The normalizer matching a runtime's stdout format. */
 export function normalizerFor(
   runtime: AgentRuntime,
@@ -62,12 +77,7 @@ export function buildInnerArgs(config: TurnConfig, runtime: AgentRuntime): strin
   }
 
   if (runtime === "opencode") {
-    // Provide an explicit session title so opencode does NOT fire its automatic
-    // title-generation call. That call hits the single-request local model server
-    // CONCURRENTLY with the main turn; the two concurrent requests wedge the
-    // resident model and the turn stalls for the full timeout. An explicit --title
-    // suppresses the title call, leaving exactly one request to the model.
-    args.push("--title", shellEscape(`turn-${config.playerName}`))
+    args.push(...openCodeTitleArgs("turn", config.playerName))
   }
 
   // Tool access control
@@ -182,14 +192,7 @@ export function buildOpenCodeSessionCommand(
   } else {
     parts.push("--agent", config.agentName ?? CONSCIOUS_AGENT_NAME)
     parts.push("-m", String(config.model))
-    // Provide an explicit session title so opencode does NOT fire its automatic
-    // title-generation ("small model") call. That call hits the same single-request
-    // local model server CONCURRENTLY with the main agent call; on the large resident
-    // model the two concurrent requests wedge it (0% CPU, both hang) and the body
-    // stalls for the full turn timeout. An explicit --title suppresses the title call
-    // entirely, leaving exactly one request to the model. Only the first turn creates
-    // (and names) the session, so resume turns don't need it.
-    parts.push("--title", shellEscape(`cortex-${config.playerName}`))
+    parts.push(...openCodeTitleArgs("cortex", config.playerName))
   }
   parts.push(shellEscape(config.prompt))
   return parts.join(" ")

@@ -358,6 +358,5 @@ All events are printed type-tagged with timestamp and character name:
 
 | File | Role |
 |------|------|
-| `scripts/run-step.sh` | In-container: cd to player dir, exec claude -p |
 | `.devcontainer/Dockerfile` | Container image: node20, claude-code, firewall |
 | `.devcontainer/init-firewall.sh` | iptables whitelist for allowed domains |

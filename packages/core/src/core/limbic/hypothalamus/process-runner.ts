@@ -6,9 +6,6 @@
  * + kill — see `transport.ts`). It runs the agent inside the Docker container
  * with full tool access, streaming output, and a timeout, returning the
  * accumulated text.
- *
- * For orchestrator-internal tasks that don't need tool access, use
- * `Claude.invoke` from `services/Claude.ts` instead — that runs on the host.
  */
 
 import { Effect, Stream } from "effect"
@@ -19,8 +16,7 @@ import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog, logToConsole, logExchange } from "../../../logging/log-writer.js"
 import { selectRuntime, buildInnerCommand, normalizerFor, buildOpenCodeSessionCommand, openCodeBodyEnv, wrapWithTimeout, OPENCODE_DISABLE_NETWORK_ENV } from "./payload.js"
 import { runTransport } from "./transport.js"
-import { buildSdkInnerCommand, buildSdkStdin, sdkEnv } from "./sdk-payload.js"
-import { normalizeSdk, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
+import { normalizeOpenCode, type InternalEvent } from "../../../logging/stream-normalizer.js"
 
 /** Build the `docker exec` args: working dir, env (incl. OAuth token), inner command. */
 export function buildExecArgs(config: TurnConfig, innerCmd: string, token: string): string[] {
@@ -41,6 +37,63 @@ const emitBodyExchange = (config: TurnConfig, output: string) =>
   logExchange(config.char.name, "body", "act", config.prompt, output).pipe(Effect.catchAll(() => Effect.void))
 
 /**
+ * Shared runner body: resolve OAuth, build the `docker exec` args, log the exec
+ * line (token redacted), attach the given stdin, run the transport, and archive
+ * the body exchange. The two public runners differ only in the inner command, the
+ * exec env, the stdin, and the transport's normalize/runtimeTag/captureFromRaw —
+ * all supplied via `opts`. Callers add their own `mapError` so failure messages
+ * stay distinct.
+ */
+const runOverTransport = (
+  config: TurnConfig,
+  opts: {
+    innerCmd: string
+    env: Record<string, string> | undefined
+    stdin: Stream.Stream<Uint8Array>
+    normalize: (raw: Record<string, unknown>) => InternalEvent[]
+    runtimeTag: string
+    captureFromRaw?: (raw: Record<string, unknown>) => string | null
+    /** runTurn logs an extra "oauth token resolved" diagnostic; the session path does not. */
+    logTokenResolved?: boolean
+  },
+) =>
+  Effect.gen(function* () {
+    const oauthToken = yield* OAuthToken
+    const { token } = yield* oauthToken.getToken
+
+    const execArgs = buildExecArgs({ ...config, env: opts.env }, opts.innerCmd, token)
+
+    if (opts.logTokenResolved) {
+      // Diagnostic: confirm a token was resolved without leaking any of its value.
+      yield* logToConsole(
+        config.char.name,
+        config.role,
+        `oauth token resolved=${token.length > 0}`,
+        "debug",
+      )
+    }
+    // Log the full docker exec command (redact token values).
+    const redactedArgs = execArgs.map((a) =>
+      a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
+    )
+    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`, "debug")
+
+    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(opts.stdin))
+
+    const result = yield* runTransport({
+      command,
+      normalize: opts.normalize,
+      runtimeTag: opts.runtimeTag,
+      char: config.char,
+      role: config.role,
+      timeoutMs: config.timeoutMs,
+      captureFromRaw: opts.captureFromRaw,
+    })
+    yield* emitBodyExchange(config, result.output)
+    return result
+  })
+
+/**
  * Run one turn: build the payload, inject OAuth, exec inside the container,
  * stream the result through the transport. Signature/behavior unchanged from the
  * pre-split version — all existing callers are untouched.
@@ -51,9 +104,6 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
   CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
 > =>
   Effect.gen(function* () {
-    const oauthToken = yield* OAuthToken
-    const { token } = yield* oauthToken.getToken
-
     const runtime = selectRuntime(config)
     // Issue 3: self-bound the in-container process so a host-side timeout/interrupt
     // (which `docker exec` does not signal-forward) cannot orphan the agent.
@@ -62,99 +112,23 @@ export const runTurn = (config: TurnConfig): Effect.Effect<
     // fall back to the configured local provider (see openCodeBodyEnv / the env doc).
     const execEnv =
       runtime === "opencode" ? { ...config.env, ...OPENCODE_DISABLE_NETWORK_ENV } : config.env
-    const execArgs = buildExecArgs({ ...config, env: execEnv }, innerCmd, token)
-
-    // Diagnostic: confirm a token was resolved without leaking any of its value.
-    yield* logToConsole(
-      config.char.name,
-      config.role,
-      `oauth token resolved=${token.length > 0}`,
-      "debug",
-    )
-    // Log the full docker exec command (redact token values).
-    const redactedArgs = execArgs.map((a) =>
-      a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
-    )
-    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`, "debug")
-
-    const promptStream = Stream.encodeText(Stream.make(config.prompt))
-    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(promptStream))
 
     // NOTE: runtimeTag is intentionally "claude" for both runtimes here, matching
     // pre-split behavior (Phase 1 is behavior-preserving). Phase 2 corrects the
     // tag for the opencode payload.
-    const result = yield* runTransport({
-      command,
+    return yield* runOverTransport(config, {
+      innerCmd,
+      env: execEnv,
+      stdin: Stream.encodeText(Stream.make(config.prompt)),
       normalize: normalizerFor(runtime),
       runtimeTag: "claude",
-      char: config.char,
-      role: config.role,
-      timeoutMs: config.timeoutMs,
+      logTokenResolved: true,
     })
-    yield* emitBodyExchange(config, result.output)
-    return result
   }).pipe(
     Effect.mapError((e) =>
       e instanceof ClaudeError ? e : new ClaudeError("Process runner failed", e),
     ),
   )
-
-/** Shared SDK transport composition given a prebuilt stdin byte stream. */
-const runSdkWithStdin = (
-  config: TurnConfig,
-  stdin: Stream.Stream<Uint8Array>,
-): Effect.Effect<TurnResult, ClaudeError, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
-  Effect.gen(function* () {
-    const oauthToken = yield* OAuthToken
-    const { token } = yield* oauthToken.getToken
-
-    // Issue 3: self-bound the in-container process (see runTurn). `timeout`
-    // forwards stdin, so the runner's NDJSON task/steer stream still reaches it.
-    const innerCmd = wrapWithTimeout(buildSdkInnerCommand(), config.timeoutMs)
-    const execArgs = buildExecArgs({ ...config, env: sdkEnv(config) }, innerCmd, token)
-
-    const redactedArgs = execArgs.map((a) =>
-      a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
-    )
-    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`, "debug")
-
-    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(stdin))
-
-    const result = yield* runTransport({
-      command,
-      normalize: normalizeSdk,
-      runtimeTag: "sdk",
-      char: config.char,
-      role: config.role,
-      timeoutMs: config.timeoutMs,
-    })
-    yield* emitBodyExchange(config, result.output)
-    return result
-  }).pipe(
-    Effect.mapError((e) => (e instanceof ClaudeError ? e : new ClaudeError("SDK runner failed", e))),
-  )
-
-/**
- * Run a frontier-worker SDK turn run-to-completion. Builds the static NDJSON stdin
- * (`task` then `end`) and delegates to the shared transport composition.
- */
-export const runSdkTurn = (config: TurnConfig): Effect.Effect<
-  TurnResult,
-  ClaudeError,
-  CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
-> => runSdkWithStdin(config, Stream.encodeText(Stream.make(buildSdkStdin(config.prompt))))
-
-/**
- * Run a steerable frontier-worker SDK session. The caller supplies the dynamic
- * stdin byte stream (typically buildSteeredStdinStream over a steering queue):
- * directives become `steer` lines mid-session, and shutting the queue down ends
- * it. Run-to-completion is the degenerate case (a stdin that is just task+end).
- */
-export const runSdkSession = (
-  config: TurnConfig,
-  stdin: Stream.Stream<Uint8Array>,
-): Effect.Effect<TurnResult, ClaudeError, CommandExecutor.CommandExecutor | CharacterLog | OAuthToken> =>
-  runSdkWithStdin(config, stdin)
 
 /** Capture predicate for the OpenCode sessionID field on a raw stream line. */
 export const firstSessionId = (raw: Record<string, unknown>): string | null =>
@@ -186,39 +160,26 @@ export const runOpenCodeSessionTurn = (
   CommandExecutor.CommandExecutor | CharacterLog | OAuthToken
 > =>
   Effect.gen(function* () {
-    const oauthToken = yield* OAuthToken
-    const { token } = yield* oauthToken.getToken
-
     // Issue 3: self-bound the in-container process (see runTurn). The empty,
     // immediately-closing stdin below is forwarded by `timeout` unchanged.
     const innerCmd = wrapWithTimeout(buildOpenCodeSessionCommand(config, resume), config.timeoutMs)
-    // Inject the env that lets opencode skip the firewall-blocked models.dev fetch
-    // and fall back to the configured local provider (see openCodeBodyEnv).
-    const execArgs = buildExecArgs({ ...config, env: openCodeBodyEnv(config) }, innerCmd, token)
 
-    const redactedArgs = execArgs.map((a) =>
-      a.includes("CLAUDE_CODE_OAUTH_TOKEN=") ? "CLAUDE_CODE_OAUTH_TOKEN=<redacted>" : a,
-    )
-    yield* logToConsole(config.char.name, config.role, `docker ${redactedArgs.join(" ")}`, "debug")
-
-    // opencode `run` blocks at init reading stdin when stdin is an open pipe with no
-    // EOF: `docker exec -i` (buildExecArgs) keeps stdin open, and Effect does not close
-    // an unconfigured stdin, so opencode waits forever — before ever creating a session
-    // or calling the model (the "init then silence" body hang). The prompt is passed as
-    // a CLI arg, not via stdin, so feed an empty, immediately-closing stdin to signal
-    // EOF and let opencode proceed.
-    const command = Command.make("docker", ...execArgs).pipe(Command.stdin(Stream.empty))
-
-    const result = yield* runTransport({
-      command,
+    const result = yield* runOverTransport(config, {
+      innerCmd,
+      // Inject the env that lets opencode skip the firewall-blocked models.dev fetch
+      // and fall back to the configured local provider (see openCodeBodyEnv).
+      env: openCodeBodyEnv(config),
+      // opencode `run` blocks at init reading stdin when stdin is an open pipe with no
+      // EOF: `docker exec -i` (buildExecArgs) keeps stdin open, and Effect does not close
+      // an unconfigured stdin, so opencode waits forever — before ever creating a session
+      // or calling the model (the "init then silence" body hang). The prompt is passed as
+      // a CLI arg, not via stdin, so feed an empty, immediately-closing stdin to signal
+      // EOF and let opencode proceed.
+      stdin: Stream.empty,
       normalize: normalizeOpenCode,
       runtimeTag: "opencode",
-      char: config.char,
-      role: config.role,
-      timeoutMs: config.timeoutMs,
       captureFromRaw: firstSessionId,
     })
-    yield* emitBodyExchange(config, result.output)
 
     const sessionId = result.sessionId ?? resume?.sessionId
     if (!sessionId) {
