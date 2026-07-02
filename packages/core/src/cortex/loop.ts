@@ -59,7 +59,13 @@ import {
   DEFAULT_APPRAISAL_THRESHOLDS,
   STEP_DONE_MARKER,
 } from "./state.js"
-import { appendTransitionEpisode, episodeContext, setEpisodeStep, setEpisodeTick } from "../logging/episodes.js"
+import {
+  appendTransitionEpisode,
+  episodeContext,
+  resetEpisodeContext,
+  setEpisodeStep,
+  setEpisodeTick,
+} from "../logging/episodes.js"
 
 export interface CortexLoopConfig {
   char: CharacterConfig
@@ -114,6 +120,16 @@ const AVAILABLE_ACTIONS =
 
 export const runCortex = (config: CortexLoopConfig) =>
   Effect.gen(function* () {
+    // Episode substrate (spec §1): the per-character tick/step context is a
+    // module-level map that outlives this run (mirrors behavior-digest.ts).
+    // Both exit paths above the per-step reset (evaluate→terminate, critical
+    // interrupt) can leave a dangling stepId from a prior invocation, and a
+    // fresh session's tick restarts at 0 — so without this reset, this run's
+    // first orient/decide tier records could be stamped with a stale stepId,
+    // corrupting the substrate's join key. Reset once, here, before anything
+    // else stamps the context.
+    resetEpisodeContext(config.char.name)
+
     const eventProcessor = yield* EventProcessorTag
     const classifier = yield* SituationClassifierTag
     const interrupts = yield* InterruptRegistryTag
