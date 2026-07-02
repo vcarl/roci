@@ -188,10 +188,16 @@ describe("cli model-layer scoping", () => {
     //     was built on the start path — which is exactly the invariant under test.
     const spawned = { fired: false }
     const originalFetch = globalThis.fetch
+    const originalRestartRetries = process.env.ROCI_MODEL_RESTART_RETRIES
     // Offline fetch: reject every request so probeOnce classifies the tier as not
     // ready and the backend proceeds to spawn (where the tripwire fires).
     globalThis.fetch = (() =>
       Promise.reject(new Error("offline: no model server in test"))) as typeof fetch
+    // Disable model-server restarts: the tripwire spawn can never succeed, so the
+    // production restart loop would retry it with exponential backoff past the test
+    // timeout. 0 restarts makes the first tripwire failure surface immediately,
+    // which is exactly the fail-fast the assertions below expect.
+    process.env.ROCI_MODEL_RESTART_RETRIES = "0"
 
     try {
       const provided = rociCommand.pipe(
@@ -221,6 +227,8 @@ describe("cli model-layer scoping", () => {
       expect(spawned.fired).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
+      if (originalRestartRetries === undefined) delete process.env.ROCI_MODEL_RESTART_RETRIES
+      else process.env.ROCI_MODEL_RESTART_RETRIES = originalRestartRetries
     }
   })
 })

@@ -26,6 +26,17 @@ export class ModelService extends Context.Tag("ModelService")<
 export const RESTART_MAX_RETRIES = 10
 export const RESTART_BASE_DELAY_MS = 1_000
 
+// Effective restart ceiling, overridable via `ROCI_MODEL_RESTART_RETRIES`
+// (default RESTART_MAX_RETRIES). Set 0 to disable restarts — the first readiness
+// failure surfaces immediately with no backoff. Read per acquire so a test (or
+// ops) can scope the override; invalid/negative values fall back to the default.
+export function resolveMaxRestarts(): number {
+  const raw = process.env.ROCI_MODEL_RESTART_RETRIES
+  if (raw === undefined) return RESTART_MAX_RETRIES
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 0 ? n : RESTART_MAX_RETRIES
+}
+
 // ONE acquire+probe attempt: adopt-if-healthy, else spawn into the AMBIENT scope,
 // then probe ready under the tier timeout. The acquireRelease registers a
 // spawned-only kill finalizer on that scope, so closing the scope tears down
@@ -98,6 +109,7 @@ export const acquireReady = (
 ): Effect.Effect<RunningServer, SpawnError | ReadinessError, Scope.Scope> =>
   Effect.gen(function* () {
     const parent = yield* Effect.scope
+    const maxRestarts = resolveMaxRestarts()
     for (let attempt = 0; ; attempt++) {
       // Fork a child of the ambient scope: closing the parent closes this child,
       // so a SUCCESSFUL attempt's server is torn down with the parent (unchanged
@@ -111,7 +123,7 @@ export const acquireReady = (
       // leak across restarts). Closing with the failure exit runs the kill
       // finalizer; for an adopted server there is no finalizer → harmless no-op.
       yield* Scope.close(child, result)
-      if (attempt >= RESTART_MAX_RETRIES) {
+      if (attempt >= maxRestarts) {
         // Exhausted: re-raise the last failure exactly (preserves ReadinessError
         // timedOut + stderr tail). Yielding a failed Exit re-fails the effect.
         return yield* result
@@ -119,7 +131,7 @@ export const acquireReady = (
       const delayMs = RESTART_BASE_DELAY_MS * 2 ** attempt
       yield* Effect.logWarning(
         `model readiness failed; restarting server [tier=${spec.tier} model=${spec.model} ` +
-          `port=${spec.port}] restart ${attempt + 1}/${RESTART_MAX_RETRIES} in ${delayMs}ms`,
+          `port=${spec.port}] restart ${attempt + 1}/${maxRestarts} in ${delayMs}ms`,
       )
       yield* Effect.sleep(`${delayMs} millis`)
     }
