@@ -59,6 +59,7 @@ import {
   DEFAULT_APPRAISAL_THRESHOLDS,
   STEP_DONE_MARKER,
 } from "./state.js"
+import { appendTransitionEpisode, episodeContext, setEpisodeStep, setEpisodeTick } from "../logging/episodes.js"
 
 export interface CortexLoopConfig {
   char: CharacterConfig
@@ -192,6 +193,7 @@ export const runCortex = (config: CortexLoopConfig) =>
       pendingDirective = null
       lastSteerTick = 0
       bypassSteerCadence = false
+      setEpisodeStep(config.char.name, null)
     }
 
     // Provision the conscious agent once before the first tick.
@@ -211,6 +213,9 @@ export const runCortex = (config: CortexLoopConfig) =>
 
     while (true) {
       tick++
+
+      // Stamp the episode context so tool/tier records carry the current tick.
+      setEpisodeTick(config.char.name, tick)
 
       // 1. Drain world events into state. Track per-event whether it produced a
       // `stateUpdate` — an event that changed nothing is INERT and gets the
@@ -559,6 +564,20 @@ export const runCortex = (config: CortexLoopConfig) =>
               label: "evaluate",
               data: { judgment: evalResult.judgment, transition: evalResult.transition.transition },
             })
+            // Episode substrate (spec §1): step-end with the evaluate verdict.
+            // skill/wmDeltas are schema-stable placeholders — Stage 2/3 fill them.
+            yield* appendTransitionEpisode(config.char.name, {
+              type: "step-end",
+              ts: new Date().toISOString(),
+              tick,
+              stepId: episodeContext(config.char.name).stepId ?? `s${stepStartTick}-${stepIdx}`,
+              task: step.task,
+              goal: step.goal,
+              verdict: evalResult.judgment,
+              transition: evalResult.transition.transition,
+              skill: null,
+              wmDeltas: null,
+            })
             for (const w of evaluateMemories(evalResult)) {
               yield* memory.remember(config.containerId, config.char, w)
             }
@@ -635,6 +654,7 @@ export const runCortex = (config: CortexLoopConfig) =>
             pendingDirective = null
             lastSteerTick = 0
             bypassSteerCadence = false
+            setEpisodeStep(config.char.name, null)
             stepStartTick = tick
             stepStartSnapshot = renderer.richSnapshot(state as never)
           } else {
@@ -643,6 +663,18 @@ export const runCortex = (config: CortexLoopConfig) =>
               // Turn 1: open the session.
               stepStartTick = tick
               stepStartSnapshot = renderer.richSnapshot(state as never)
+              const episodeStepId = `s${tick}-${cortex.currentStepIndex}`
+              setEpisodeStep(config.char.name, episodeStepId)
+              yield* appendTransitionEpisode(config.char.name, {
+                type: "step-start",
+                ts: new Date().toISOString(),
+                tick,
+                stepId: episodeStepId,
+                task: step.task,
+                goal: step.goal,
+                skill: null,
+                wmDeltas: null,
+              })
               yield* logBehavior(config.char.name, "cortex", "step", { type: "step", phase: "start", turn: 1, task: step.task })
               consciousFiber = yield* Effect.fork(
                 consciousThought.turn(

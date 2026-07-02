@@ -19,6 +19,10 @@ import { OAuthToken } from "../services/OAuthToken.js"
 import { MemoryGateway } from "../conscious/memory-gateway.js"
 import { STEP_DONE_MARKER } from "./state.js"
 import { ModelService } from "../services/ModelService.js"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
+import { setEpisodeLogRoot, resetEpisodeContext } from "../logging/episodes.js"
 
 // No-op ModelService: withTier is transparent (passes the effect through unchanged).
 const noopModelService = Layer.succeed(
@@ -1414,6 +1418,52 @@ describe("runCortex (conscious-session executor)", () => {
     const count = await Effect.runPromise(program)
     // Only the initial plan's decide ran; the wait transition did not self-drive an orient.
     expect(count).toBe(1)
+  }, 20_000)
+
+  it("emits step-start and step-end transition episodes (verdict, null skill/wm fields)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-loop-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    try {
+      const ctLayer = ConsciousThoughtTest((config) => ({
+        result: successTurnResult(config.prompt),
+        sessionId: "ses_ep",
+      }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      const start = records.find((r) => r.type === "step-start")
+      const end = records.find((r) => r.type === "step-end")
+      expect(start).toMatchObject({ task: "act", goal: "do the thing", skill: null, wmDeltas: null })
+      expect(typeof start.tick).toBe("number")
+      expect(start.stepId).toMatch(/^s\d+-0$/)
+      expect(end).toMatchObject({
+        stepId: start.stepId,
+        task: "act",
+        verdict: "succeeded",
+        transition: "terminate",
+        skill: null,
+        wmDeltas: null,
+      })
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   }, 20_000)
 })
 
