@@ -5,6 +5,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import {
   ARGS_SUMMARY_MAX,
+  EPISODE_RETAIN_CYCLES,
   TOOL_EPISODE_FILE,
   TRANSITION_EPISODE_FILE,
   summarizeArgs,
@@ -15,6 +16,8 @@ import {
   resetEpisodeContext,
   appendToolEpisode,
   appendTransitionEpisode,
+  retainLastCycles,
+  finishEpisodeCycle,
   type ToolEpisode,
 } from "./episodes.js"
 
@@ -116,5 +119,51 @@ describe("append writers", () => {
     // Make players/ a regular FILE so mkdir -p under it fails.
     fs.writeFileSync(path.join(root, "players"), "not a directory")
     await expect(Effect.runPromise(appendToolEpisode("ada", toolRecord()))).resolves.toBeUndefined()
+  })
+})
+
+describe("retainLastCycles (pure rotation)", () => {
+  const boundary = JSON.stringify({ type: "cycle-boundary", ts: "t" })
+  const rec = (n: number) => JSON.stringify({ ts: `t${n}`, tool: "bash" })
+
+  it("keeps everything when there are at most N completed cycles", () => {
+    const lines = [rec(1), boundary, rec(2), boundary]
+    expect(retainLastCycles(lines, 2)).toEqual(lines)
+  })
+
+  it("drops only whole cycles, keeping the last N with their boundaries", () => {
+    const lines = [rec(1), boundary, rec(2), boundary, rec(3), boundary]
+    expect(retainLastCycles(lines, 2)).toEqual([rec(2), boundary, rec(3), boundary])
+  })
+
+  it("keeps the in-progress tail after the last boundary", () => {
+    const lines = [rec(1), boundary, rec(2), boundary, rec(3)]
+    expect(retainLastCycles(lines, 1)).toEqual([rec(2), boundary, rec(3)])
+  })
+
+  it("preserves unparseable lines (they are never boundaries, never dropped alone)", () => {
+    const lines = ["not json", boundary, rec(2), boundary]
+    expect(retainLastCycles(lines, 1)).toEqual([rec(2), boundary])
+  })
+})
+
+describe("finishEpisodeCycle", () => {
+  it("appends a cycle-boundary to both streams and rotates whole cycles beyond EPISODE_RETAIN_CYCLES", async () => {
+    for (let c = 1; c <= EPISODE_RETAIN_CYCLES + 2; c++) {
+      await Effect.runPromise(appendToolEpisode("ada", toolRecord({ tick: c })))
+      await Effect.runPromise(finishEpisodeCycle("ada"))
+    }
+    const records = readLines(TOOL_EPISODE_FILE).map((l) => JSON.parse(l))
+    const ticks = records.filter((r) => r.tool === "bash").map((r) => r.tick)
+    expect(ticks).toEqual([3, 4, 5, 6, 7]) // cycles 1-2 dropped whole
+    expect(records.filter((r) => r.type === "cycle-boundary")).toHaveLength(EPISODE_RETAIN_CYCLES)
+    // Transition stream got boundaries too (created even when otherwise empty).
+    const transitions = readLines(TRANSITION_EPISODE_FILE).map((l) => JSON.parse(l))
+    expect(transitions.every((r) => r.type === "cycle-boundary")).toBe(true)
+  })
+
+  it("never fails, even when the logs path is unwritable", async () => {
+    fs.writeFileSync(path.join(root, "players"), "not a directory")
+    await expect(Effect.runPromise(finishEpisodeCycle("ada"))).resolves.toBeUndefined()
   })
 })

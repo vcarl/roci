@@ -151,3 +151,64 @@ export const appendTransitionEpisode = (
   character: string,
   record: TransitionEpisode,
 ): Effect.Effect<void> => append(character, TRANSITION_EPISODE_FILE, record)
+
+// ── Rotation: retain the last N reflection cycles ────────────
+function lineType(line: string): string | undefined {
+  try {
+    const rec = JSON.parse(line) as { type?: unknown }
+    return typeof rec?.type === "string" ? rec.type : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Pure. A cycle is the lines up to and including its `cycle-boundary` marker.
+ * Keeps the last `retain` completed cycles (boundaries included) plus the
+ * in-progress tail — drops only whole cycles, never a partial one.
+ */
+export function retainLastCycles(lines: readonly string[], retain: number): string[] {
+  const boundaries: number[] = []
+  lines.forEach((line, i) => {
+    if (lineType(line) === "cycle-boundary") boundaries.push(i)
+  })
+  if (boundaries.length <= retain) return [...lines]
+  const cut = boundaries[boundaries.length - retain - 1]
+  return lines.slice(cut + 1)
+}
+
+/**
+ * Close the current reflection cycle: append a cycle-boundary marker to both
+ * episode streams, then rotate each to the last EPISODE_RETAIN_CYCLES cycles
+ * (write-to-tmp + rename, so a concurrent reader never sees a torn file).
+ * Swallow-and-log: a rotation failure must never disturb reflection.
+ */
+export const finishEpisodeCycle = (character: string): Effect.Effect<void> => {
+  const root = episodeRoot
+  if (root === null) return Effect.void
+  return Effect.tryPromise({
+    try: async () => {
+      const boundary: CycleBoundaryEpisode = { type: "cycle-boundary", ts: new Date().toISOString() }
+      const line = `${JSON.stringify(boundary)}\n`
+      const dir = logsDir(root, character)
+      await fsp.mkdir(dir, { recursive: true })
+      for (const file of [TOOL_EPISODE_FILE, TRANSITION_EPISODE_FILE]) {
+        const filePath = path.join(dir, file)
+        await fsp.appendFile(filePath, line, "utf8")
+        const text = await fsp.readFile(filePath, "utf8")
+        const lines = text.split("\n").filter((l) => l.trim().length > 0)
+        const kept = retainLastCycles(lines, EPISODE_RETAIN_CYCLES)
+        if (kept.length < lines.length) {
+          const tmp = `${filePath}.tmp`
+          await fsp.writeFile(tmp, kept.map((l) => `${l}\n`).join(""), "utf8")
+          await fsp.rename(tmp, filePath)
+        }
+      }
+    },
+    catch: (e) => e,
+  }).pipe(
+    Effect.catchAll((e) =>
+      Effect.sync(() => console.error(`[episodes] cycle rotation failed for ${character}: ${e}`)),
+    ),
+  )
+}
