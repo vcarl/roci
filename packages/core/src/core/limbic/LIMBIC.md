@@ -29,7 +29,6 @@ core/limbic/
     tempo.ts                        TempoConfig discriminated union
     types.ts                        TurnConfig, TurnResult
     sdk-runner/                     In-container Agent-SDK worker (.mjs) + NDJSON protocol
-    timeout-summarizer.ts           summarizeTimeout() -- DEAD (zero callers, not re-exported through the limbic barrel)
   hippocampus/                      Memory consolidation
     index.ts                        Barrel
     dream.ts                        dream.execute() -- diary + secrets compression (the cull)
@@ -181,8 +180,7 @@ on the host. It is installed in the image at `/home/node/sdk-runner/sdk-runner.m
 (`sdk-payload.ts:4`).
 
 > Note: `SessionConfig`/`SessionResult` (leftovers of the deleted session model) have
-> now been removed from `types.ts`. `timeout-summarizer.ts` (`summarizeTimeout`) is
-> likewise dead -- zero callers, not re-exported.
+> now been removed from `types.ts`.
 
 ## Hippocampus -- Memory Consolidation
 
@@ -353,5 +351,5 @@ import them directly from `hypothalamus/process-runner.js`. The deleted session 
 from the barrel entirely; importing them per an older doc yields a missing-export error.
 
 Internal modules (`process-runner.ts`, `transport.ts`, `payload.ts`, `sdk-payload.ts`,
-`timeout-summarizer.ts`, `consolidate.ts`, the `sdk-runner/` worker, and the dream prompt
+`consolidate.ts`, the `sdk-runner/` worker, and the dream prompt
 templates) are reached by direct import, not through the barrel.

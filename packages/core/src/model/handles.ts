@@ -37,13 +37,6 @@ export interface ModelHandle {
 
 export type CortexModelConfig = Record<CortexTier, ModelHandle>
 
-/** Partial overlay applied per tier (from a config file or CLI flags). */
-export interface CortexModelOverlay {
-  hindbrain?: Partial<ModelHandle>
-  forebrain?: Partial<ModelHandle>
-  conscious?: Partial<ModelHandle>
-}
-
 /**
  * Default local config for Apple Silicon (M5 / 128GB). Model names are
  * starting points to be tuned empirically by the testbench
@@ -118,8 +111,8 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   },
   // conscious (decide/evaluate) is the designated deep-thinker. gemma-4-31b-it
   // is a large instruction-tuned model — not a chain-of-thought reasoner like
-  // the former Qwen3.5-122B-A10B — so isReasoningModel returns false for it.
-  // The generous token budget gives headroom for multi-step decide/evaluate tasks.
+  // the former Qwen3.5-122B-A10B. The generous token budget gives headroom for
+  // multi-step decide/evaluate tasks.
   conscious: {
     tier: "conscious",
     provider: "mlx",
@@ -129,51 +122,7 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   },
 }
 
-/**
- * Whether a model id denotes a reasoning ("thinking") model — one that spends
- * its token budget on an internal chain-of-thought before emitting a final
- * answer. The structured-output tiers (hindbrain/forebrain) must NOT be backed
- * by such a model (Bug B: they hit finish=length with empty content).
- *
- * The conscious tier is the designated deep-thinker but is NOT required to be
- * a reasoning model. As of gemma-4-31b-it-8bit it is instruction-tuned (no
- * chain-of-thought regime), so isReasoningModel returns false for it.
- *
- * Classification is by name marker. Known reasoning families:
- *   - Qwen3.5-122B-A10B MoE (the ladder's reasoning member; dense siblings are not)
- *   - QwQ, DeepSeek-R1, Magistral, GLM-4.7-Flash
- *
- * This is only a classifier — it enforces nothing on its own. `mergeCortexModels`
- * applies overlays without consulting it, so an overlay can currently repoint a
- * structured tier at a reasoner. A future overlay-validator/guard could call this
- * to detect (and reject or warn about) such a repoint before it ships.
- */
-export function isReasoningModel(model: string): boolean {
-  const REASONING_MARKERS = [
-    "A10B", // Qwen3.5-122B-A10B — the ladder's reasoning MoE
-    "QwQ",
-    "DeepSeek-R1",
-    "Magistral",
-    "GLM-4.7-Flash",
-  ]
-  return REASONING_MARKERS.some((m) => model.includes(m))
-}
-
 /** Look up the handle backing a cortex tier. */
 export function resolveHandle(config: CortexModelConfig, tier: CortexTier): ModelHandle {
   return config[tier]
-}
-
-/** Merge a per-tier overlay onto a base config. Each tier is shallow-merged. */
-export function mergeCortexModels(
-  base: CortexModelConfig,
-  overlay: CortexModelOverlay | undefined,
-): CortexModelConfig {
-  if (!overlay) return base
-  const tiers: CortexTier[] = ["hindbrain", "forebrain", "conscious"]
-  const out = {} as CortexModelConfig
-  for (const tier of tiers) {
-    out[tier] = overlay[tier] ? { ...base[tier], ...overlay[tier] } : base[tier]
-  }
-  return out
 }
