@@ -307,9 +307,6 @@ export const runCortex = (config: CortexLoopConfig) =>
       }
       const esc =
         tickEvents.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
-      // The seam: surface the well-formed escalation every tick (never undefined;
-      // rung:"none"/escalate:false when there were no events or nothing salient).
-      cortex.escalation = esc
       const nonDiscard = esc.accumulated.length > 0
       if (tickEvents.length > 0) {
         yield* logBehavior(config.char.name, "cortex", "hindbrain", {
@@ -324,6 +321,21 @@ export const runCortex = (config: CortexLoopConfig) =>
         if (esc.escalate) escalate = true
       }
       if (!escalate && shouldForceOrient(cortex, tick, orientInterval)) escalate = true
+
+      // Will section 6a evaluate this tick? Mirrors 6a's guard exactly (same
+      // step, stepStartTick, sessionId — none mutated between here and 6a on any
+      // path that reaches 6a). If true, a 5b steer forebrain call would be
+      // wasted: 6a resets pendingDirective, discarding whatever directive it
+      // produced. Computed here so 5b can skip that ~9B call. (Meaningful only
+      // when a plan is active + no turn is in flight; false otherwise.)
+      let willEvaluate = false
+      if (cortex.currentPlan !== null && !consciousFiber && !isWedgedEmptyPlan(cortex.currentPlan)) {
+        const step = planSteps(cortex.currentPlan)[cortex.currentStepIndex]
+        if (step) {
+          const budgetElapsed = sessionId !== null && tick - stepStartTick >= step.timeoutTicks
+          willEvaluate = stepDoneSignaled || budgetElapsed
+        }
+      }
 
       // 5. FOREBRAIN — two disjoint call sites, never both in the same tick.
       if (cortex.currentPlan === null) {
@@ -409,31 +421,33 @@ export const runCortex = (config: CortexLoopConfig) =>
         // This is the in-session escalation consumption the pre-A loop lacked
         // (§1.2/§8.1). The amygdala critical path (section 2) is unchanged and
         // still owns hard-interrupt-to-EXIT; this is the in-LOOP graded route.
-        if (esc.rung === "interrupt") {
-          // Hard-interrupt rung — gated behind an explicit per-event interrupt:true
-          // (the 2B caps at reorient; this fires for a genuine physical attack the
-          // amygdala would also catch, or a future stronger tier). Kill the
-          // in-flight turn, drop the plan, reorient now. Distinct from the
-          // amygdala critical, which EXITS the loop to the break phase.
-          yield* logToConsole(
-            config.char.name,
-            "cortex",
-            `hindbrain interrupt (in-session): ${esc.dominant?.reason ?? "drop-everything"}`,
-            "warn",
-          )
-          if (consciousFiber) {
-            yield* Fiber.interrupt(consciousFiber)
-            consciousFiber = null
+        if (esc.rung === "reorient" || esc.rung === "interrupt") {
+          // Reorient — drop the plan so the idle path re-orients next tick. The
+          // `interrupt` rung is exactly this plus a fiber-kill: gated behind an
+          // explicit per-event interrupt:true (the 2B caps at reorient; it fires
+          // for a genuine physical attack the amygdala would also catch, or a
+          // future stronger tier), it kills the in-flight turn FIRST rather than
+          // letting the current turn finish naturally. Both then drop the plan
+          // and re-orient identically. Distinct from the amygdala critical, which
+          // EXITS the loop to the break phase.
+          if (esc.rung === "interrupt") {
+            yield* logToConsole(
+              config.char.name,
+              "cortex",
+              `hindbrain interrupt (in-session): ${esc.dominant?.reason ?? "drop-everything"}`,
+              "warn",
+            )
+            if (consciousFiber) {
+              yield* Fiber.interrupt(consciousFiber)
+              consciousFiber = null
+            }
+          } else {
+            yield* logToConsole(
+              config.char.name,
+              "cortex",
+              `hindbrain reorient (in-session): ${esc.dominant?.reason ?? "high salience"}`,
+            )
           }
-          resetPlanState()
-        } else if (esc.rung === "reorient") {
-          // Force reorient — drop the plan so the idle path re-orients next tick;
-          // the current conscious turn finishes naturally (not interrupted).
-          yield* logToConsole(
-            config.char.name,
-            "cortex",
-            `hindbrain reorient (in-session): ${esc.dominant?.reason ?? "high salience"}`,
-          )
           resetPlanState()
         } else if (esc.rung === "steer" || nonDiscard) {
           // steer / accumulate → run forebrain → formatSteerDirective → store as
@@ -444,30 +458,37 @@ export const runCortex = (config: CortexLoopConfig) =>
           // `discard` disposition computes rung "steer"/escalate:true (and the idle
           // path would orient), so the in-session path must steer on it too — even
           // though it never joined `accumulatedEvents` (so `nonDiscard` is false).
-          const background = yield* readOrEmpty("background", charFs.readBackground(config.char))
-          const values = yield* readOrEmpty("values", charFs.readValues(config.char))
-          const diary = yield* readOrEmpty("diary", charFs.readDiary(config.char))
-          const orientRecall = yield* memory.recall(
-            config.containerId,
-            config.char,
-            orientQuery(cortex.accumulatedEvents, cortex.emotionalWeight),
-            { k: 2, label: "You recall", maxChars: 300 },
-          )
-          const orient = yield* runForebrain(
-            runnerConfig,
-            cortex.accumulatedEvents,
-            JSON.stringify(summary, null, 2),
-            { background, values, diary },
-            cortex.emotionalWeight,
-            orientRecall,
-          )
-          yield* logBehavior(config.char.name, "cortex", "forebrain", { type: "orient", headline: orient.headline })
-          for (const w of orientMemories(orient)) {
-            yield* memory.remember(config.containerId, config.char, w)
+          // Skip the forebrain call entirely when this tick will evaluate (6a):
+          // 6a resets pendingDirective, so the directive would be thrown away —
+          // the whole ~9B call wasted. The bookkeeping (drain accumulatedEvents,
+          // advance lastOrientTick) still runs so state is identical to the
+          // non-skipped path minus the discarded model output.
+          if (!willEvaluate) {
+            const background = yield* readOrEmpty("background", charFs.readBackground(config.char))
+            const values = yield* readOrEmpty("values", charFs.readValues(config.char))
+            const diary = yield* readOrEmpty("diary", charFs.readDiary(config.char))
+            const orientRecall = yield* memory.recall(
+              config.containerId,
+              config.char,
+              orientQuery(cortex.accumulatedEvents, cortex.emotionalWeight),
+              { k: 2, label: "You recall", maxChars: 300 },
+            )
+            const orient = yield* runForebrain(
+              runnerConfig,
+              cortex.accumulatedEvents,
+              JSON.stringify(summary, null, 2),
+              { background, values, diary },
+              cortex.emotionalWeight,
+              orientRecall,
+            )
+            yield* logBehavior(config.char.name, "cortex", "forebrain", { type: "orient", headline: orient.headline })
+            for (const w of orientMemories(orient)) {
+              yield* memory.remember(config.containerId, config.char, w)
+            }
+            // Laundered directive: formatSteerDirective formats model-generated forebrain output.
+            pendingDirective = formatSteerDirective(orient)
+            if (esc.rung === "steer") bypassSteerCadence = true
           }
-          // Laundered directive: formatSteerDirective formats model-generated forebrain output.
-          pendingDirective = formatSteerDirective(orient)
-          if (esc.rung === "steer") bypassSteerCadence = true
           cortex.accumulatedEvents = []
           cortex.lastOrientTick = tick
         }

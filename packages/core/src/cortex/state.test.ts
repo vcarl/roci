@@ -37,13 +37,6 @@ describe("freshCortexState", () => {
     expect(s.currentPlan).toBeNull()
     expect(s.lastOrientTick).toBe(0)
   })
-
-  it("carries a well-formed (non-escalating) HindbrainEscalation seam from tick 0", () => {
-    const s = freshCortexState()
-    expect(s.escalation).toEqual(emptyEscalation())
-    expect(s.escalation.rung).toBe("none")
-    expect(s.escalation.escalate).toBe(false)
-  })
 })
 
 // Unit 1 — appraise(): validate/clamp a single per-event ObserveResult.
@@ -135,7 +128,6 @@ describe("appraiseTick — per-tick escalation aggregation", () => {
     expect(esc.maxWeight).toBe(5)
     expect(esc.dominant?.reason).toBe("hull critical")
     expect(esc.accumulated).toEqual(["threat"]) // only the non-discard event
-    expect(esc.reasons).toEqual(["safety: hull critical"])
   })
 
   it("dominant = the highest-weight event; maxWeight tracks it", () => {
@@ -157,7 +149,6 @@ describe("appraiseTick — per-tick escalation aggregation", () => {
     )
     expect(esc.rung).toBe("steer")
     expect(esc.escalate).toBe(true)
-    expect(esc.reasons).toEqual(["agency: waited-on resolved"])
   })
 
   it("weight ≥ steer (4) but < reorient (5) → steer; non-discard low weight → accumulate", () => {

@@ -8,14 +8,6 @@ export interface CortexState {
   currentStepIndex: number
   waitState: WaitState | null
   lastOrientTick: number
-  /**
-   * The hindbrain-escalation seam (Subteam A). Recomputed every tick by
-   * `appraiseTick` over the tick's per-event appraisals, and surfaced here for
-   * the (out-of-scope) forebrain-wake session to read. Guaranteed well-formed
-   * every tick — never undefined; `rung:"none"/escalate:false` when there were
-   * no events or nothing salient.
-   */
-  escalation: HindbrainEscalation
 }
 
 export function freshCortexState(): CortexState {
@@ -26,7 +18,6 @@ export function freshCortexState(): CortexState {
     currentStepIndex: 0,
     waitState: null,
     lastOrientTick: 0,
-    escalation: emptyEscalation(),
   }
 }
 
@@ -67,13 +58,11 @@ export interface HindbrainEscalation {
   readonly dominant: ObserveResult | null
   /** Raw text of every non-discard event, for `accumulatedEvents`. */
   readonly accumulated: ReadonlyArray<string>
-  /** "drive: reason" for each event at the steer rung or higher — context for the forebrain. */
-  readonly reasons: ReadonlyArray<string>
 }
 
 /** A well-formed, non-escalating escalation — the every-tick default and the empty result. */
 export function emptyEscalation(): HindbrainEscalation {
-  return { rung: "none", maxWeight: 0, escalate: false, dominant: null, accumulated: [], reasons: [] }
+  return { rung: "none", maxWeight: 0, escalate: false, dominant: null, accumulated: [] }
 }
 
 const DISPOSITIONS: ReadonlySet<Disposition> = new Set(["discard", "accumulate", "escalate"])
@@ -145,7 +134,7 @@ function eventRung(o: ObserveResult, thresholds: AppraisalThresholds): Escalatio
  * Reduce the tick's per-event appraisals into one `HindbrainEscalation` (§4.4).
  * Pure. The tick rung is the MAX rung across events; `dominant` is the
  * highest-weight event (ties → first); `accumulated` is the raw text of every
- * non-discard event; `reasons` are "drive: reason" for steer+ events.
+ * non-discard event.
  */
 export function appraiseTick(
   results: ReadonlyArray<{ event: string; observe: ObserveResult }>,
@@ -157,7 +146,6 @@ export function appraiseTick(
   let maxWeight = 0
   let dominant: ObserveResult | null = null
   const accumulated: string[] = []
-  const reasons: string[] = []
 
   for (const { event, observe } of results) {
     const w = clampWeight(observe.weight)
@@ -168,7 +156,6 @@ export function appraiseTick(
       dominant = observe
     }
     if (observe.disposition !== "discard") accumulated.push(event)
-    if (RUNG_RANK[r] >= RUNG_RANK.steer) reasons.push(`${observe.drive ?? "—"}: ${observe.reason}`)
   }
 
   return {
@@ -177,7 +164,6 @@ export function appraiseTick(
     escalate: RUNG_RANK[rung] >= RUNG_RANK.steer,
     dominant,
     accumulated,
-    reasons,
   }
 }
 

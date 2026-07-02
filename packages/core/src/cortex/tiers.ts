@@ -68,19 +68,6 @@ export interface DiaryTurnInput {
   emotionalState: string
 }
 
-/**
- * Strip a forebrain model's `<think>…</think>` reasoning preamble. The Qwen
- * forebrain emits its chain-of-thought wrapped in <think> tags; the journal
- * text is whatever follows the final closing tag. If there's no closing tag,
- * the whole (trimmed) text is the journal entry.
- */
-export function stripThinking(text: string): string {
-  if (text.includes("</think>")) {
-    return text.slice(text.lastIndexOf("</think>") + "</think>".length).trim()
-  }
-  return text.trim()
-}
-
 /** Map a tier-call failure to a tier_call outcome. Pure. */
 export function classifyTierOutcome(error: unknown): "error" | "timeout" {
   if (error instanceof ReadinessError && error.timedOut) return "timeout"
@@ -354,7 +341,8 @@ export function runConsciousEvaluate(
  * Dedicated journal turn — runs after evaluate and always produces a short
  * first-person reflection on the step just completed. Replaces the old optional
  * `diaryEntry` field the small conscious model reliably omitted. Returns plain
- * prose (any `<think>` preamble stripped); the caller appends it to the diary.
+ * (trimmed) prose; the caller appends it to the diary. The forebrain runs with
+ * enable_thinking:false (handles.ts), so there is no `<think>` preamble to strip.
  */
 export function runDiaryTurn(
   config: CortexRunnerConfig,
@@ -369,5 +357,5 @@ export function runDiaryTurn(
     executionReport: input.executionReport,
     emotionalState: input.emotionalState,
   })
-  return callTier(config, "forebrain", "diary", prompt).pipe(Effect.map(stripThinking))
+  return callTier(config, "forebrain", "diary", prompt).pipe(Effect.map((text) => text.trim()))
 }
