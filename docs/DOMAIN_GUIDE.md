@@ -6,18 +6,17 @@ How to build a new domain for the Roci orchestrator. New domains should be creat
 
 The orchestrator is a generic engine for running autonomous character-driven sessions. The execution engine is the **cortex loop** (`runCortex`, `packages/core/src/cortex/loop.ts`) -- a per-character cognitive tick loop that drains domain events, appraises them across three model tiers, runs tool-using work inside Docker containers, and monitors for interrupts. None of this logic knows about any specific game or environment. See [CORTEX.md](CORTEX.md) for the engine reference.
 
-A **domain** plugs into this engine by implementing 6 service interfaces (plus a phase registry and config object). The core never imports domain code -- services are injected via Effect tags at startup. SpaceMolt and GitHub are the two reference implementations.
+A **domain** plugs into this engine by implementing 5 service interfaces (plus a phase registry and config object). The core never imports domain code -- services are injected via Effect tags at startup. SpaceMolt and GitHub are the two reference implementations.
 
-## The 6 Services at a Glance
+## The 5 Services at a Glance
 
 | # | Interface | Tag | Purpose | Difficulty |
 |---|-----------|-----|---------|------------|
 | 1 | `EventProcessor` | `EventProcessorTag` | Translate raw events to `EventResult` with `EventCategory` | Medium |
 | 2 | `SituationClassifier` | `SituationClassifierTag` | Derive `SituationSummary` (headline, sections, metrics) from state | Medium |
-| 3 | `StateRenderer` | `StateRendererTag` | State to human-readable text (snapshots, diffs, console bar) | Medium |
+| 3 | `StateRenderer` | `StateRendererTag` | State to human-readable text (rich snapshots, diffs, console bar) | Medium |
 | 4 | `InterruptRegistry` | `InterruptRegistryTag` | Declarative rules that trigger session interruption | Easy |
-| 5 | `PromptBuilder` | `PromptBuilderTag` | Assemble session prompts (system, task, channel events) | Hard |
-| 6 | `SkillRegistry` | `SkillRegistryTag` | Domain skill catalog and deterministic step-completion checks | Easy (stub OK) |
+| 5 | `PromptBuilder` | `PromptBuilderTag` | Assemble the session system prompt | Hard |
 
 Additionally:
 - **`PhaseRegistry`** -- defines the session lifecycle (connect, play, reflect, repeat)
@@ -142,7 +141,7 @@ The `SituationSummary` shape:
 - **`sections`** -- structured content blocks (each has `id`, `heading`, `body`)
 - **`metrics`** -- key/value pairs passed to `StateRenderer.formatStateBar()`
 
-### 4. `StateRenderer` -- Snapshots, Diffs, Console Bar
+### 4. `StateRenderer` -- Rich Snapshots, Diffs, Console Bar
 
 Renders state into human-readable forms for diff tracking and logging:
 
@@ -151,10 +150,6 @@ import { Layer } from "effect"
 import { StateRendererTag } from "@roci/core/core/state-renderer.js"
 
 const myRenderer = {
-  snapshot(state: unknown): Record<string, unknown> {
-    const s = state as MyState
-    return { project: s.projectName, issues: s.openIssues.length }
-  },
   richSnapshot(state: unknown): Record<string, unknown> {
     return { ...(state as MyState) }
   },
@@ -205,23 +200,17 @@ export const MyInterruptRegistryLive = Layer.succeed(
 
 The factory handles: iterating rules, checking conditions, building `Alert` objects, respecting `suppressWhenTaskIs`, and sorting by priority.
 
-### 6. `PromptBuilder` -- Session Prompts
+### 6. `PromptBuilder` -- Session Prompt
 
-The PromptBuilder has one required method and two optional fallback methods:
+The PromptBuilder has a single method:
 
 ```ts
 interface PromptBuilder {
   systemPrompt(mode: BrainMode, task: string): string
-  taskPrompt?(ctx: TaskPromptContext): string    // deprecated fallback
-  channelEvent?(ctx: ChannelEventContext): string // deprecated fallback
 }
 ```
 
-**`systemPrompt(mode, task)`** -- The system prompt for the persistent session. Defines the agent's capabilities and constraints. Can vary by mode (e.g., read-only vs. full-access) and task (e.g., diary-only).
-
-**`taskPrompt(ctx)`** *(deprecated)* -- Fallback initial task content used when a session starts before the OODA chain runs. The OODA orient+decide chain now produces task content for the session. Only called if the OODA chain fails.
-
-**`channelEvent(ctx)`** *(deprecated)* -- Fallback state update for ticks where the OODA chain doesn't produce a structured push. Only used for accumulate-disposition ticks as a lightweight state update.
+**`systemPrompt(mode, task)`** -- The system prompt for the persistent session. Defines the agent's capabilities and constraints. Can vary by mode (e.g., read-only vs. full-access) and task (e.g., diary-only). Task content and per-tick updates are produced by the cortex OODA chain, not the builder.
 
 **Cortex integration:** The engine is the cortex loop (`runCortex`), which runs the OODA skill chain (observe → orient → decide → evaluate) across three model tiers to classify events, assess situations, and produce structured directives. See [CORTEX.md](CORTEX.md) for the full engine reference. Tune the loop via the optional `CortexLoopConfig` fields when calling `runCortex` (`loop.ts:53-66`):
 
@@ -237,30 +226,7 @@ yield* runCortex({
 
 See the GitHub implementation (`packages/domain-github/src/prompt-builder.ts`) for a full reference.
 
-### 7. `SkillRegistry` -- Stub or Implement
-
-A stub is valid for getting started:
-
-```ts
-import { Layer } from "effect"
-import { SkillRegistryTag } from "@roci/core/core/skill.js"
-
-export const StubSkillRegistryLive = Layer.succeed(SkillRegistryTag, {
-  skills: [],
-  getSkill: () => undefined,
-  taskList: () => "",
-  isStepComplete: () => ({
-    complete: false,
-    reason: "No skill registry configured",
-    matchedCondition: null,
-    relevantState: {},
-  }),
-})
-```
-
-For file-based skills, see the GitHub domain's `index.ts` which loads `.md` files with YAML frontmatter from `.claude/skills/` subdirectories.
-
-### 8. `PhaseRegistry` -- Session Lifecycle
+### 7. `PhaseRegistry` -- Session Lifecycle
 
 Phases are the top-level session structure. A minimal registry needs startup (connects and returns a `ConnectionState`) and active (runs `runCortex`).
 
@@ -298,11 +264,11 @@ const activePhase = {
 }
 ```
 
-The key pattern: **`Effect.provide(context.domainBundle)`** injects your 6 service layers (EventProcessor, SituationClassifier, StateRenderer, InterruptRegistry, PromptBuilder, SkillRegistry) into the engine.
+The key pattern: **`Effect.provide(context.domainBundle)`** injects your 5 service layers (EventProcessor, SituationClassifier, StateRenderer, InterruptRegistry, PromptBuilder) into the engine.
 
 Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is *not* a `runCortex` config field: the diary rewrite and cull run in a per-cycle reflection phase via `runReflection` (`packages/core/src/core/orchestrator/planned-action.ts`), which domains invoke from their own `reflection` phase.
 
-### 9. `DomainConfig` -- Assemble Everything
+### 8. `DomainConfig` -- Assemble Everything
 
 ```ts
 import { Layer } from "effect"
@@ -314,7 +280,6 @@ export const myDomainBundle: DomainBundle = Layer.mergeAll(
   MyStateRendererLive,
   MyInterruptRegistryLive,
   MyPromptBuilderLive,
-  StubSkillRegistryLive,
 )
 
 export const myDomainConfig = (projectRoot: string): DomainConfig => ({
@@ -389,7 +354,6 @@ Each domain runs in its own Docker container named `roci-<domain>`. Characters w
 | `StateRenderer` | `packages/domain-spacemolt/src/renderer.ts` |
 | `InterruptRegistry` | `packages/domain-spacemolt/src/interrupts.ts` |
 | `PromptBuilder` | `packages/domain-spacemolt/src/prompt-builder.ts` |
-| `SkillRegistry` | Stub in `packages/domain-spacemolt/src/index.ts` |
 | `PhaseRegistry` | `packages/domain-spacemolt/src/phases.ts` |
 | Event source | `packages/domain-spacemolt/src/game-socket-impl.ts` (WebSocket) |
 
@@ -402,7 +366,6 @@ Each domain runs in its own Docker container named `roci-<domain>`. Characters w
 | `StateRenderer` | `packages/domain-github/src/renderer.ts` |
 | `InterruptRegistry` | `packages/domain-github/src/interrupts.ts` |
 | `PromptBuilder` | `packages/domain-github/src/prompt-builder.ts` |
-| `SkillRegistry` | File-based loader in `packages/domain-github/src/index.ts` |
 | `PhaseRegistry` | `packages/domain-github/src/phases.ts` |
 | Event source | `packages/domain-github/src/github-client.ts` (GraphQL polling) |
 
@@ -413,13 +376,12 @@ New domain author checklist:
 - [ ] `types.ts` -- State, Situation, and Event types defined
 - [ ] `EventProcessor` -- translates events to `EventResult` with `EventCategory`
 - [ ] `SituationClassifier` -- `summarize()` returns `SituationSummary`
-- [ ] `StateRenderer` -- `snapshot()`, `richSnapshot()`, `stateDiff()`, `formatStateBar()`
+- [ ] `StateRenderer` -- `richSnapshot()`, `stateDiff()`, `formatStateBar()`
 - [ ] `InterruptRegistry` -- rules array + `createInterruptRegistry()` factory
-- [ ] `PromptBuilder` -- `systemPrompt()` (required); `taskPrompt()`, `channelEvent()` (optional fallbacks)
-- [ ] `SkillRegistry` -- stub or real implementation
+- [ ] `PromptBuilder` -- `systemPrompt()`
 - [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runCortex()` with `Effect.provide(context.domainBundle)`
 - [ ] `DomainConfig` -- bundle, phaseRegistry, containerMounts, imageName
-- [ ] Domain bundle -- `Layer.mergeAll(...)` of all 6 service layers
+- [ ] Domain bundle -- `Layer.mergeAll(...)` of all 5 service layers
 - [ ] Domain registered in `apps/roci/src/domains/registry.ts`
 - [ ] Domain entry added to `config.json` at project root
 - [ ] Event source connection/reconnection handled in startup phase

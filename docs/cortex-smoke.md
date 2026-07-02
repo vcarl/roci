@@ -349,7 +349,7 @@ This smoke uses a plain `docker run` (firewall init bypassed) so the container h
 
 ### Phase Scope Note (Phase 3–4 Deferred)
 
-The **steering channel (Phase 3)** and the **cortex loop rework (Phase 4)** are not yet wired. In Phase 2, the `steer` command is parsed by the runner but is never sent by the host — all turns are run-to-completion only (`task` then `end`). The frontier SDK worker is invoked via `runSdkTurn` (host side) for escalation; everyday character work continues to run on the conscious-tier OpenCode agent.
+The **steering channel (Phase 3)** and the **cortex loop rework (Phase 4)** are not yet wired. In Phase 2, the `steer` command is parsed by the runner but is never sent by the host — all turns are run-to-completion only (`task` then `end`). The frontier SDK worker is invoked in-container via the `frontier` CLI for escalation; everyday character work continues to run on the conscious-tier OpenCode agent.
 
 ### Steering Channel (Phase 3)
 
@@ -369,7 +369,7 @@ The steered stdin stream (built in `packages/core/src/conscious/frontier-cli.ts`
 2. For each directive offered to the queue, send one `steer` line.
 3. When the queue is shut down, send `end` — which closes the input stream and causes the runner's async generator to return, ending the session.
 
-`runSdkSession(config, stdin)` (in `packages/core/src/core/limbic/hypothalamus/process-runner.ts`) runs this stream through the shared transport, unchanged from Phase 2.
+The `frontier` CLI (`packages/core/src/conscious/frontier-cli.ts`) drives this stream in-container, replacing the former host-side SDK-session transport path.
 
 #### Frontier CLI Delegation
 

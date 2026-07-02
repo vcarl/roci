@@ -23,8 +23,8 @@ core/limbic/
     index.ts                        Barrel (exports only the Tempo types)
     transport.ts                    runTransport() -- reusable docker-exec stream/race/kill transport
     payload.ts                      Per-runtime inner command + normalizer (claude / opencode)
-    sdk-payload.ts                  Inner command + NDJSON stdin/env for the SDK runner
-    process-runner.ts               runTurn() / runOpenCodeSessionTurn() / runSdkTurn() -- compose payload + transport
+    sdk-payload.ts                  endLine() -- shared NDJSON framing helper for the frontier worker
+    process-runner.ts               runTurn() / runOpenCodeSessionTurn() -- compose payload + transport
     runtime.ts                      Runtime binary selection (claude vs opencode)
     tempo.ts                        TempoConfig discriminated union
     types.ts                        TurnConfig, TurnResult
@@ -146,7 +146,7 @@ A *payload* is the inner command run inside the container, plus its stdout norma
   `--system-prompt`, and the opencode network-disabling env (`OPENCODE_DISABLE_NETWORK_ENV`).
 - `wrapWithTimeout` wraps any inner command in coreutils `timeout` as an in-container
   backstop, since `docker exec` does not signal-forward a host-side kill.
-- `sdk-payload.ts` builds the inner command + NDJSON stdin/env for the SDK runner.
+- `sdk-payload.ts` exposes `endLine()`, the shared `end` control-line framing reused by the frontier CLI.
 
 ### Process Runner (`process-runner.ts`) -- the primary entrypoints
 
@@ -159,11 +159,11 @@ A *payload* is the inner command run inside the container, plus its stdout norma
 - `runOpenCodeSessionTurn(config, resume?)` -- one conscious-tier OpenCode session turn; the
   first turn opens the session and captures its id, a resume turn continues it. This is the
   conscious executor's per-turn mechanism (used by `conscious/conscious-thought.ts`).
-- `runSdkTurn` / `runSdkSession` -- frontier-worker SDK turns over the same transport,
-  driving the in-container `sdk-runner/` worker via NDJSON.
-
-For orchestrator-internal tasks that need no tools, `Claude.invoke` (`services/Claude.ts`)
-runs on the **host** instead of in the container.
+The former host-side SDK-turn entrypoints (`runSdkTurn` / `runSdkSession`) have been removed:
+the frontier Agent-SDK worker is now driven **in-container** by the generated `frontier` CLI
+(provisioned by `conscious/frontier-cli.ts`) and invoked by the conscious executor as a
+delegation tool, not through `process-runner.ts`. `services/Claude.ts` is likewise reduced to
+the `ClaudeModel` type and `ClaudeError`; the old host-side `Claude.invoke` no-tools path is gone.
 
 ### Runtime Selection (`runtime.ts`)
 
@@ -176,8 +176,7 @@ disables OAuth token resolution).
 `sdk-runner/sdk-runner.mjs` is the in-container Agent-SDK worker: it reads NDJSON commands
 (`task`/`steer`/`end`) on stdin, drives the streaming-input `query()`, and writes NDJSON
 events/result on stdout. The pure protocol logic (`sdk-runner-protocol.mjs`) is unit-tested
-on the host. It is installed in the image at `/home/node/sdk-runner/sdk-runner.mjs`
-(`sdk-payload.ts:4`).
+on the host. It is installed in the image at `/home/node/sdk-runner/sdk-runner.mjs`.
 
 > Note: `SessionConfig`/`SessionResult` (leftovers of the deleted session model) have
 > now been removed from `types.ts`.
@@ -291,14 +290,13 @@ Thresholds are tunable (`DEFAULT_APPRAISAL_THRESHOLDS = { steer: 4, reorient: 5 
 behind an explicit `interrupt: true`, reserved for the amygdala / a future stronger tier / a
 genuine redundant physical-attack appraisal.
 
-`appraiseTick(results, thresholds)` (`state.ts:150`) reduces the tick's per-event appraisals
-into one `HindbrainEscalation` (`state.ts:59`): the tick `rung` is the **MAX** rung across
+`appraiseTick(results, thresholds)` (`state.ts:139`) reduces the tick's per-event appraisals
+into one `HindbrainEscalation` (`state.ts:50`): the tick `rung` is the **MAX** rung across
 events; `maxWeight` and `dominant` come from the highest-weight event (ties → first);
-`accumulated` is the raw text of every non-discard event; `reasons` are `"drive: reason"` for
-steer-or-higher events; `escalate` is true at `steer` or above. The result is surfaced every
-tick on `CortexState.escalation` (`state.ts:18`) -- the seam between the limbic appraisal and
-the loop, **guaranteed well-formed** every tick (never undefined; `emptyEscalation()` when there
-were no events or nothing salient).
+`accumulated` is the raw text of every non-discard event; `escalate` is true at `steer` or
+above. The loop calls `appraiseTick` each tick and consumes the returned `HindbrainEscalation`
+directly -- the seam between the limbic appraisal and the loop is **guaranteed well-formed**
+every tick (never undefined; `emptyEscalation()` when there were no events or nothing salient).
 
 ### 4. How the cortex loop consumes it
 

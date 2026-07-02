@@ -44,8 +44,8 @@ export interface AppraisalThresholds {
 export const DEFAULT_APPRAISAL_THRESHOLDS: AppraisalThresholds = { steer: 4, reorient: 5 }
 
 /**
- * The aggregated per-tick escalation signal (§4.4) — the seam Subteam A emits on
- * `CortexState`. Reduced from the tick's per-event `ObserveResult`s.
+ * The aggregated per-tick escalation signal (§4.4), reduced from the tick's
+ * per-event `ObserveResult`s and consumed directly by the tick loop.
  */
 export interface HindbrainEscalation {
   /** The MAX rung across the tick's events (§3.2 ladder). */
@@ -54,7 +54,7 @@ export interface HindbrainEscalation {
   readonly maxWeight: number
   /** True when `rung` is `steer` or higher — the only signal the forebrain-wake session needs. */
   readonly escalate: boolean
-  /** The highest-weight event's appraisal — drives the tick mood + reasons. null when no events. */
+  /** The highest-weight event's appraisal — drives the tick mood. null when no events. */
   readonly dominant: ObserveResult | null
   /** Raw text of every non-discard event, for `accumulatedEvents`. */
   readonly accumulated: ReadonlyArray<string>

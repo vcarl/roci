@@ -4,7 +4,6 @@ import type { EventProcessorTag } from "./limbic/thalamus/event-processor.js";
 import type { SituationClassifierTag } from "./limbic/thalamus/situation-classifier.js";
 import type { PhaseRegistry } from "./phase.js";
 import type { PromptBuilderTag } from "./prompt-builder.js";
-import type { SkillRegistryTag } from "./skill.js";
 import type { StateRendererTag } from "./state-renderer.js";
 
 /** Result message from a domain procedure. */
@@ -38,8 +37,7 @@ export type DomainBundle = Layer.Layer<
 	| SituationClassifierTag
 	| StateRendererTag
 	| InterruptRegistryTag
-	| PromptBuilderTag
-	| SkillRegistryTag,
+	| PromptBuilderTag,
 	never,
 	never
 >;

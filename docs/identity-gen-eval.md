@@ -66,13 +66,19 @@ acceptable for identity generation.
    },
    ```
 
-2. To test an alternate model without changing the default, pass a `CortexModelOverlay` to
-   `mergeCortexModels` (exported from `packages/core/src/model/handles.ts`). In a quick script:
+2. To test an alternate model without changing the default, build a modified copy of
+   `DEFAULT_CORTEX_MODELS` (exported from `packages/core/src/model/handles.ts`). In a quick
+   script:
    ```typescript
-   import { DEFAULT_CORTEX_MODELS, mergeCortexModels } from "./packages/core/src/model/handles.js"
-   const testModels = mergeCortexModels(DEFAULT_CORTEX_MODELS, {
-     conscious: { model: "mlx-community/SomeOtherModel-4bit", baseUrl: "http://127.0.0.1:8083/v1" },
-   })
+   import { DEFAULT_CORTEX_MODELS } from "./packages/core/src/model/handles.js"
+   const testModels = {
+     ...DEFAULT_CORTEX_MODELS,
+     conscious: {
+       ...DEFAULT_CORTEX_MODELS.conscious,
+       model: "mlx-community/SomeOtherModel-4bit",
+       baseUrl: "http://127.0.0.1:8083/v1",
+     },
+   }
    // Pass testModels as the third arg to generateArtifact(step, prompt, testModels)
    ```
    Or edit `DEFAULT_CORTEX_MODELS.conscious.model` directly for a local comparison run.

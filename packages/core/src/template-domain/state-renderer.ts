@@ -4,23 +4,20 @@
  * The StateRenderer transforms domain state into human-readable
  * formats. It serves three audiences:
  *
- *   1. **Logs** — `snapshot()` produces a compact key/value object
- *      logged as JSON after each state update.
- *
- *   2. **Diffs** — `richSnapshot()` produces a more detailed object
- *      that includes data needed for meaningful diffs. `stateDiff()`
+ *   1. **Diffs** — `richSnapshot()` produces a detailed object that
+ *      includes data needed for meaningful diffs. `stateDiff()`
  *      compares two rich snapshots and produces a human-readable
  *      string showing what changed.
  *
- *   3. **Console** — `formatStateBar()` returns a compact one-line
+ *   2. **Console** — `formatStateBar()` returns a compact one-line
  *      metric string; the cortex loop emits it through the leveled
  *      logging pipeline.
  *
  * ## Design guidance
  *
- * - `snapshot()` should be cheap — it runs on every state update.
- * - `richSnapshot()` can be more expensive — it runs less often
- *   (before and after plan steps) for diff tracking.
+ * - `richSnapshot()` runs before and after plan steps for diff
+ *   tracking; the private `snapshot()` helper it builds on keeps the
+ *   compact core cheap to compute.
  * - `stateDiff()` should be deterministic and produce stable output
  *   for the same inputs.
  * - `formatStateBar()` returns a compact metric string that is emitted
@@ -32,27 +29,26 @@ import type { StateRenderer } from "../core/state-renderer.js";
 import { StateRendererTag } from "../core/state-renderer.js";
 import type { TemplateState } from "./types.js";
 
-const templateStateRenderer: StateRenderer = {
-	/**
-	 * Compact snapshot for logging.
-	 *
-	 * Return a flat object with primitive values. This gets logged
-	 * as JSON, so keep it small and readable.
-	 */
-	snapshot(state) {
-		const s = state as TemplateState;
-		const items = Object.values(s.items);
-		return {
-			total: items.length,
-			pending: items.filter((i) => i.status === "pending").length,
-			inProgress: items.filter((i) => i.status === "in_progress").length,
-			done: items.filter((i) => i.status === "done").length,
-			blocked: items.filter((i) => i.status === "blocked").length,
-			focus: s.currentFocus ?? "none",
-			tick: s.tick,
-		};
-	},
+/**
+ * Compact snapshot — the cheap core of a rich snapshot.
+ *
+ * Returns a flat object with primitive values, small and readable.
+ * Private helper: `richSnapshot()` builds on it.
+ */
+function snapshot(state: TemplateState): Record<string, unknown> {
+	const items = Object.values(state.items);
+	return {
+		total: items.length,
+		pending: items.filter((i) => i.status === "pending").length,
+		inProgress: items.filter((i) => i.status === "in_progress").length,
+		done: items.filter((i) => i.status === "done").length,
+		blocked: items.filter((i) => i.status === "blocked").length,
+		focus: state.currentFocus ?? "none",
+		tick: state.tick,
+	};
+}
 
+const templateStateRenderer: StateRenderer = {
 	/**
 	 * Rich snapshot for diff tracking.
 	 *
@@ -64,7 +60,7 @@ const templateStateRenderer: StateRenderer = {
 		const s = state as TemplateState;
 		const items = Object.values(s.items);
 		return {
-			...this.snapshot(state),
+			...snapshot(s),
 			// Include per-item status so diffs can show "item X: pending → done"
 			itemStatuses: items.map((i) => ({
 				id: i.id,

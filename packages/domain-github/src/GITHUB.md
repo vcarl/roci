@@ -62,22 +62,13 @@ Five interrupt rules:
 
 ### PromptBuilder
 
-Implements the three-method interface:
-
 - `systemPrompt(mode, task)` -- Mode-specific system prompts (select, triage, feature, review, diary) that define capability boundaries. Task overrides take precedence.
-- `taskPrompt(ctx)` -- Builds a headline + situation sections + diary excerpt + background/values + instructions for the initial session task.
-- `channelEvent(ctx)` -- State update with headline, diff, soft alerts, and situation sections.
 
 ### StateRenderer
 
-- `snapshot` -- Compact view: repo name, issue/PR counts, CI status, tick.
 - `richSnapshot` -- Per-issue and per-PR detail for diff computation.
 - `stateDiff` -- Detects changes in issue counts, PR counts, CI status, labels, assignees, reviews.
 - `formatStateBar` -- Compact status line: repo count, issue count, PR count, CI failures.
-
-### SkillRegistry
-
-File-based loader. Reads `SKILL.md` files from `.claude/skills/` subdirectories at startup. Each skill uses YAML frontmatter (`name`, `description`, `model`, `timeoutTicks`) and a markdown body.
 
 ## Configuration
 
@@ -100,7 +91,7 @@ File-based loader. Reads `SKILL.md` files from `.claude/skills/` subdirectories 
 | File | Purpose |
 |------|---------|
 | `phases.ts` | Phase definitions and tempo config |
-| `index.ts` | Domain bundle assembly and skill loading |
+| `index.ts` | Domain bundle assembly |
 | `types.ts` | All domain types |
 | `github-client.ts` | GraphQL polling client |
 | `prompt-builder.ts` | Prompt generation |

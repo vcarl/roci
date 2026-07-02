@@ -28,14 +28,8 @@ export type {
 export { PhaseRegistryTag } from "./core/phase.js";
 
 export { runPhases } from "./core/phase-runner.js";
-export type {
-	ChannelEventContext,
-	PromptBuilder,
-	TaskPromptContext,
-} from "./core/prompt-builder.js";
+export type { PromptBuilder } from "./core/prompt-builder.js";
 export { PromptBuilderTag } from "./core/prompt-builder.js";
-export type { Skill, SkillRegistry } from "./core/skill.js";
-export { SkillRegistryTag } from "./core/skill.js";
 
 export type { StateRenderer } from "./core/state-renderer.js";
 export { StateRendererTag } from "./core/state-renderer.js";

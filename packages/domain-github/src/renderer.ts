@@ -134,9 +134,6 @@ function stateDiff(
 }
 
 const gitHubStateRenderer: StateRenderer = {
-  snapshot(state) {
-    return snapshot(state as GitHubState)
-  },
   richSnapshot(state) {
     return richSnapshot(state as GitHubState)
   },

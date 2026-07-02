@@ -10,13 +10,10 @@ Roci runs **two distinct model systems**:
    **two** roles actually call `resolveModel` at runtime: `dreamCompression` and `dinner`
    (both in the hippocampus). This system is documented here for those two roles.
 
-The `Role` type union in `model-config.ts` still lists other names
-(`brainPlan`/`brainInterrupt`/`brainEvaluate`, `diarySubagent`, `scaffold*`, `ooda*`), none
-of which have any `resolveModel` call site — they exist only in the type and its tests.
-`timeoutSummary` is a special case: it *does* have a real call site
-(`core/limbic/hypothalamus/timeout-summarizer.ts:50`), but the enclosing `summarizeTimeout`
-export has zero callers, so the call is unreachable dead code. None of these roles are live
-knobs; they are intentionally omitted here, so do not treat them as configurable.
+The `Role` type union in `model-config.ts` now lists only these two live roles. The former
+OODA/brain/scaffold roles (`brainPlan`/`brainInterrupt`/`brainEvaluate`, `diarySubagent`,
+`scaffold*`, `ooda*`) and the `timeoutSummary` role were removed along with the architectures
+that consumed them, so there are no other configurable role knobs.
 
 ## Cortex MLX Tiers
 
@@ -48,9 +45,9 @@ drift.
   supported on the `mlx` provider (`mlx_lm` silently ignores the key). The loop relies on a
   tolerant JSON extractor instead.
 
-Per-tier overlays (`CortexModelOverlay`) shallow-merge onto the base via
-`mergeCortexModels` (`handles.ts`); the serving topology (which ports, on-demand loading)
-is configured externally, not by these modules.
+`handles.ts` exposes `resolveHandle(config, tier)` to look up a tier's `ModelHandle`; the
+serving topology (which ports, on-demand loading) is configured externally, not by these
+modules.
 
 ## Legacy Tier-Based Resolution
 
@@ -69,19 +66,16 @@ three-tier table.
 
 | Role | Resolution | Where it runs |
 |------|-----------|---------------|
-| `dreamCompression` | Defaults to the raw string `local/mlx-community/gemma-4-31b-it-8bit` (NOT a tier), set in `DEFAULT_MODEL_CONFIG.roles` (`model-config.ts:47`). Called with default tier `"smart"` as the fallback (`dream.ts:82`). | Memory compression in the hippocampus dream phase. Runs on the **opencode** runtime against the local conscious-tier mlx server (port 8083). The literal MUST equal `consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)`. On turn failure the dream phase degrades gracefully — it keeps the original diary/secrets and continues. |
+| `dreamCompression` | Defaults to the raw string `local/mlx-community/gemma-4-31b-it-8bit` (NOT a tier), set in `DEFAULT_MODEL_CONFIG.roles` (`model-config.ts:32`). Called with default tier `"smart"` as the fallback (`dream.ts:82`). | Memory compression in the hippocampus dream phase. Runs on the **opencode** runtime against the local conscious-tier mlx server (port 8083). The literal MUST equal `consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)`. On turn failure the dream phase degrades gracefully — it keeps the original diary/secrets and continues. |
 | `dinner` | No default override; resolves to the `"smart"` tier (`consolidate.ts:63`). | Social reflection / per-cycle diary consolidation in the hippocampus. |
 
 ### Resolution
 
-`resolveModel(config, role, defaultTier)` (`model-config.ts:62`) resolves a role to a
+`resolveModel(config, role, defaultTier)` (`model-config.ts:41`) resolves a role to a
 concrete model string:
 
-1. If the role has an explicit override in `config.roles`, use it
-   - If the override is a tier name (`"fast"`, `"smart"`, `"reasoning"`), resolve to that
-     tier's model
-   - Otherwise treat the override as a raw model string (e.g.
-     `"local/mlx-community/gemma-4-31b-it-8bit"`)
+1. If the role has an explicit override in `config.roles`, use it verbatim as a raw model
+   string (e.g. `"local/mlx-community/gemma-4-31b-it-8bit"`)
 2. Otherwise, look up `defaultTier` in `config.tiers`
 
 ### Configuration
@@ -111,9 +105,10 @@ Priority: CLI flags > `.roci/models.json` > built-in defaults.
 
 ### Merging
 
-`mergeModelConfig(base, overlay)` (`model-config.ts:81`) merges two configs:
-- Tiers are merged key-by-key (overlay wins per-key)
-- Roles are merged additively (overlay adds or overrides individual roles)
+`loadModelConfig` (`apps/roci/src/cli.ts`) layers the sources by shallow-merging plain
+objects:
+- Tiers are merged key-by-key (later source wins per-key)
+- Roles are merged additively (later source adds or overrides individual roles)
 
 This allows partial overrides without specifying the full config.
 
@@ -138,10 +133,10 @@ itself. Full model IDs (e.g., `"claude-opus-4-6"`) are also accepted and passed 
 
 | File | Purpose |
 |------|---------|
-| `packages/core/src/model/handles.ts` | `DEFAULT_CORTEX_MODELS` — the live cortex tier topology (model, provider, baseUrl, params per tier) and `mergeCortexModels` overlay logic |
+| `packages/core/src/model/handles.ts` | `DEFAULT_CORTEX_MODELS` — the live cortex tier topology (model, provider, baseUrl, params per tier), plus `resolveHandle()` |
 | `packages/core/src/services/model-tier-spec.ts` | `MODEL_TIER_SPECS` — per-tier port, lifecycle, and spawn timeout, derived from `handles.ts` |
-| `packages/core/src/core/model-config.ts` | Legacy tier types, `resolveModel`, and `mergeModelConfig` |
-| `packages/core/src/core/model-config.test.ts` | Unit tests for resolution and merging |
+| `packages/core/src/core/model-config.ts` | Legacy tier types and `resolveModel` |
+| `packages/core/src/core/model-config.test.ts` | Unit tests for `resolveModel` resolution |
 | `packages/core/src/core/limbic/hypothalamus/runtime.ts` | `runtimeBinary()` and `runtimeBaseArgs()` |
 | `.roci/models.json` | Per-project legacy model configuration (not checked in) |
 </content>

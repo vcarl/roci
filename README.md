@@ -2,7 +2,7 @@
 
 Roci is a general-purpose agent orchestrator that runs autonomous character-driven sessions using Claude Code as the agent runtime. Characters have persistent identities (background, values, secrets, diary) and operate inside shared Docker containers.
 
-The core architecture is domain-agnostic: a cortex tick loop with three model tiers (hindbrain/forebrain/conscious), operating skills (OODA loop), and 6 injectable Effect service layers handle all domain-specific behavior. A limbic drives/escalation system appraises each event to decide when to steer, reorient, or interrupt the running agent, and a long-term vector memory store persists experience across sessions. New domains can be added without modifying the engine.
+The core architecture is domain-agnostic: a cortex tick loop with three model tiers (hindbrain/forebrain/conscious), operating skills (OODA loop), and 5 injectable Effect service layers handle all domain-specific behavior. A limbic drives/escalation system appraises each event to decide when to steer, reorient, or interrupt the running agent, and a long-term vector memory store persists experience across sessions. New domains can be added without modifying the engine.
 
 ## Currently Implemented Domains
 
@@ -99,7 +99,7 @@ pnpm check
 
 ### Adding a New Domain
 
-New domains are added as packages under `packages/`. A domain implements the 6 Effect service layers that the engine requires. See [docs/DOMAIN_GUIDE.md](docs/DOMAIN_GUIDE.md) for a full walkthrough.
+New domains are added as packages under `packages/`. A domain implements the 5 Effect service layers that the engine requires. See [docs/DOMAIN_GUIDE.md](docs/DOMAIN_GUIDE.md) for a full walkthrough.
 
 ## Architecture
 

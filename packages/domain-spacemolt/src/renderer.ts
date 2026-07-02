@@ -3,16 +3,11 @@ import type { StateRenderer } from "@roci/core/core/state-renderer.js"
 import { StateRendererTag } from "@roci/core/core/state-renderer.js"
 import type { GameState } from "./types.js"
 import {
-  snapshot,
   richSnapshot,
   stateDiff,
 } from "./state-renderer.js"
 
 const spaceMoltStateRenderer: StateRenderer = {
-  snapshot(state) {
-    return snapshot(state as GameState)
-  },
-
   richSnapshot(state) {
     return richSnapshot(state as GameState)
   },

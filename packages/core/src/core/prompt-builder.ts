@@ -1,24 +1,5 @@
 import { Context } from "effect"
-import type { DomainState } from "./domain-types.js"
-import type { SituationSummary } from "./limbic/thalamus/situation-classifier.js"
-import type { Alert, BrainMode } from "./types.js"
-
-/** Context for building the initial task prompt sent to a channel session at startup. */
-export interface TaskPromptContext {
-  state: DomainState
-  summary: SituationSummary
-  diary: string
-  background: string
-  values: string
-}
-
-/** Context for a channel tick event payload pushed to a running session. */
-export interface ChannelEventContext {
-  summary: SituationSummary
-  stateDiff?: string
-  softAlerts?: Alert[]
-  tickNumber: number
-}
+import type { BrainMode } from "./types.js"
 
 /**
  * Assembles prompts for the agent session.
@@ -26,10 +7,6 @@ export interface ChannelEventContext {
 export interface PromptBuilder {
   /** Domain-specific system prompt for the subagent container, varying by mode and task. */
   systemPrompt(mode: BrainMode, task: string): string
-  /** @deprecated OODA orient+decide now produces task content. Kept for fallback. */
-  taskPrompt?(ctx: TaskPromptContext): string
-  /** @deprecated OODA orient produces channel event content. Kept for fallback. */
-  channelEvent?(ctx: ChannelEventContext): string
 }
 
 /**

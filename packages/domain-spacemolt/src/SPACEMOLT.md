@@ -74,22 +74,13 @@ Nine interrupt rules across four priority levels:
 
 ### PromptBuilder
 
-Implements the three-method interface:
-
 - `systemPrompt(mode, task)` -- Returns the `in-game-claude.md` template describing the `spacemolt` CLI and capabilities. Same for all modes.
-- `taskPrompt(ctx)` -- Game state briefing, character identity, and play instructions.
-- `channelEvent(ctx)` -- State update with situation summary, diff, and alerts.
 
 ### StateRenderer
 
-- `snapshot` -- Compact: situation type, location, fuel/hull ratios, cargo, combat flag.
 - `richSnapshot` -- Extended detail for diff computation.
 - `stateDiff` -- Detects changes in location, fuel, hull, cargo, combat state.
 - `formatStateBar` -- Status line: situation type, fuel %, hull %, cargo usage.
-
-### SkillRegistry
-
-Stub implementation. All step completion evaluation falls through to the LLM.
 
 ## Configuration
 

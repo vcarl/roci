@@ -62,8 +62,8 @@ Anchors: hindbrain `handles.ts:90-100`, forebrain `handles.ts:108-118`, consciou
   (plan / discover / wait / terminate / continue).
 - `runConsciousEvaluate` (`tiers.ts:277`) — judges a completed step and chooses a
   transition.
-- `runDiaryTurn` (`tiers.ts:326`) — a dedicated first-person journal turn, run on
-  the forebrain (`<think>` preamble stripped via `stripThinking`, `tiers.ts:76`).
+- `runDiaryTurn` (`tiers.ts:314`) — a dedicated first-person journal turn, run on
+  the forebrain with `enable_thinking:false`, so there is no `<think>` preamble to strip.
 
 Every tier call goes through `callTier` (`tiers.ts:84`), which resolves the handle
 (`resolveHandle`, `handles.ts:163`), runs the request via `ModelService.withTier`,

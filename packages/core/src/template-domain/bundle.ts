@@ -7,15 +7,14 @@
  *
  * ## DomainBundle
  *
- * A `DomainBundle` is a merged Layer providing all six services the
+ * A `DomainBundle` is a merged Layer providing all five services the
  * core state machine needs:
  *
  *   1. EventProcessorTag
  *   2. SituationClassifierTag
  *   3. InterruptRegistryTag
- *   4. SkillRegistryTag
- *   5. PromptBuilderTag
- *   6. StateRendererTag
+ *   4. PromptBuilderTag
+ *   5. StateRendererTag
  *
  * Use `Layer.mergeAll(...)` to combine them. The type system ensures
  * you don't forget one — TypeScript will error if the resulting Layer
@@ -43,7 +42,6 @@ import { TemplateEventProcessorLive } from "./event-processor.js";
 import { TemplateInterruptRegistryLive } from "./interrupt-rules.js";
 import { TemplatePromptBuilderLive } from "./prompt-builder.js";
 import { TemplateSituationClassifierLive } from "./situation-classifier.js";
-import { TemplateSkillRegistryLive } from "./skills.js";
 import { TemplateStateRendererLive } from "./state-renderer.js";
 
 /**
@@ -51,14 +49,13 @@ import { TemplateStateRendererLive } from "./state-renderer.js";
  *
  * Layer.mergeAll combines multiple Layers into one that provides
  * all of their services. The `DomainBundle` type alias ensures the
- * resulting layer provides exactly the six service tags the core
+ * resulting layer provides exactly the five service tags the core
  * state machine requires.
  */
 export const templateDomainBundle: DomainBundle = Layer.mergeAll(
 	TemplateEventProcessorLive,
 	TemplateSituationClassifierLive,
 	TemplateInterruptRegistryLive,
-	TemplateSkillRegistryLive,
 	TemplatePromptBuilderLive,
 	TemplateStateRendererLive,
 );

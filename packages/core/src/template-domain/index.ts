@@ -19,7 +19,6 @@ export { TemplateEventProcessorLive } from "./event-processor.js";
 export { TemplateInterruptRegistryLive } from "./interrupt-rules.js";
 export { TemplatePromptBuilderLive } from "./prompt-builder.js";
 export { TemplateSituationClassifierLive } from "./situation-classifier.js";
-export { TemplateSkillRegistryLive } from "./skills.js";
 export { TemplateStateRendererLive } from "./state-renderer.js";
 
 // ── Types ────────────────────────────────────────────────────

@@ -15,7 +15,6 @@
  *   - How raw events become state updates (event-processor.ts)
  *   - How to summarize state into a situation (situation-classifier.ts)
  *   - What conditions warrant interrupting the current plan (interrupt-rules.ts)
- *   - What skills/tasks the agent can perform (skills.ts)
  *   - How to assemble prompts for the brain (prompt-builder.ts)
  *   - How to render state for humans (state-renderer.ts)
  *   - How to wire it all together (bundle.ts)
@@ -67,7 +66,6 @@
  * | `event-processor.ts`      | `EventProcessorTag` — events → state updates      |
  * | `situation-classifier.ts` | `SituationClassifierTag` — state → situation       |
  * | `interrupt-rules.ts`      | `InterruptRegistryTag` — declarative alert rules   |
- * | `skills.ts`               | `SkillRegistryTag` — agent capabilities            |
  * | `prompt-builder.ts`       | `PromptBuilderTag` — prompt assembly               |
  * | `state-renderer.ts`       | `StateRendererTag` — state → human-readable output |
  * | `bundle.ts`               | `DomainBundle` Layer + `DomainConfig` export       |

@@ -25,7 +25,6 @@ import { validateAndStart } from "./setup/validate-and-start.js"
 import { OAuthTokenLive } from "@roci/core/services/OAuthToken.js"
 import {
   DEFAULT_MODEL_CONFIG,
-  mergeModelConfig,
   type ModelConfig,
   type Tier,
 } from "@roci/core/core/model-config.js"
@@ -53,14 +52,16 @@ function loadModelConfig(opts: {
   tierSmart: Option.Option<string>
   tierReasoning: Option.Option<string>
 }): ModelConfig {
-  let merged: ModelConfig = DEFAULT_MODEL_CONFIG
+  let tiers: Record<Tier, AnyModel> = { ...DEFAULT_MODEL_CONFIG.tiers }
+  let roles = { ...DEFAULT_MODEL_CONFIG.roles }
 
   const filePath = path.resolve(PROJECT_ROOT, ".roci", "models.json")
   if (existsSync(filePath)) {
     try {
       const raw = readFileSync(filePath, "utf-8")
       const parsed = JSON.parse(raw) as Partial<ModelConfig>
-      merged = mergeModelConfig(merged, parsed)
+      tiers = { ...tiers, ...parsed.tiers }
+      roles = { ...roles, ...parsed.roles }
     } catch (e) {
       console.error(`[roci] failed to parse .roci/models.json: ${e}`)
     }
@@ -70,11 +71,9 @@ function loadModelConfig(opts: {
   if (Option.isSome(opts.tierFast)) cliTiers.fast = opts.tierFast.value
   if (Option.isSome(opts.tierSmart)) cliTiers.smart = opts.tierSmart.value
   if (Option.isSome(opts.tierReasoning)) cliTiers.reasoning = opts.tierReasoning.value
-  if (Object.keys(cliTiers).length > 0) {
-    merged = mergeModelConfig(merged, { tiers: cliTiers })
-  }
+  tiers = { ...tiers, ...cliTiers }
 
-  return merged
+  return { tiers, roles }
 }
 
 // Shared options

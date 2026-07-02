@@ -135,7 +135,6 @@ const fakeDomain = Layer.mergeAll(
   Layer.succeed(
     StateRendererTag,
     StateRendererTag.of({
-      snapshot: () => ({}),
       richSnapshot: () => ({}),
       stateDiff: () => "",
       formatStateBar: () => "",
@@ -813,7 +812,7 @@ describe("runCortex (conscious-session executor)", () => {
       ),
       Layer.succeed(
         StateRendererTag,
-        StateRendererTag.of({ snapshot: () => ({}), richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
+        StateRendererTag.of({ richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
       ),
       Layer.succeed(PromptBuilderTag, PromptBuilderTag.of({ systemPrompt: () => "x" })),
     )
@@ -860,7 +859,6 @@ describe("runCortex (conscious-session executor)", () => {
       Layer.succeed(
         StateRendererTag,
         StateRendererTag.of({
-          snapshot: () => ({}),
           richSnapshot: () => ({}),
           stateDiff: () => "",
           formatStateBar: () => "",
@@ -917,7 +915,6 @@ describe("runCortex (conscious-session executor)", () => {
       Layer.succeed(
         StateRendererTag,
         StateRendererTag.of({
-          snapshot: () => ({}),
           richSnapshot: () => ({}),
           stateDiff: () => "",
           formatStateBar: () => "",
@@ -1450,7 +1447,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       ),
       Layer.succeed(
         StateRendererTag,
-        StateRendererTag.of({ snapshot: () => ({}), richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
+        StateRendererTag.of({ richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
       ),
       Layer.succeed(PromptBuilderTag, PromptBuilderTag.of({ systemPrompt: () => "x" })),
     )

@@ -7,8 +7,6 @@ import type { DomainState } from "./domain-types.js"
  * for logging/diffs.
  */
 export interface StateRenderer {
-  /** Compact snapshot for logging. */
-  snapshot(state: DomainState): Record<string, unknown>
   /** Rich snapshot (includes breakdown data + tick) for diff tracking. */
   richSnapshot(state: DomainState): Record<string, unknown>
   /** Human-readable diff between two rich snapshots. */

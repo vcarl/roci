@@ -101,16 +101,15 @@ Operating skills define how agents think at each stage of the OODA loop: observe
 
 ### Domain Services
 
-All domain knowledge is injected via 6 Effect service layers, provided as a `DomainBundle`. See [docs/DOMAIN_GUIDE.md](docs/DOMAIN_GUIDE.md) for full documentation.
+All domain knowledge is injected via 5 Effect service layers, provided as a `DomainBundle`. See [docs/DOMAIN_GUIDE.md](docs/DOMAIN_GUIDE.md) for full documentation.
 
 | Service | Tag | Role |
 |---------|-----|------|
 | **EventProcessor** | `EventProcessorTag` | Maps raw domain events to `EventResult` with `EventCategory` discriminated union |
 | **SituationClassifier** | `SituationClassifierTag` | `summarize(state)` -- structured `SituationSummary` with headline, sections, metrics |
 | **InterruptRegistry** | `InterruptRegistryTag` | Declarative interrupt rules with priority, condition, message, `suppressWhenTaskIs` |
-| **StateRenderer** | `StateRendererTag` | Snapshots, rich snapshots, diffs, console state bar |
-| **PromptBuilder** | `PromptBuilderTag` | Assembles prompts. The cortex loop uses `systemPrompt` (`loop.ts:191`) for the conscious agent; `taskPrompt`/`channelEvent` are legacy fallbacks the cortex tiers no longer drive |
-| **SkillRegistry** | `SkillRegistryTag` | Domain skill catalog and deterministic step-completion checks |
+| **StateRenderer** | `StateRendererTag` | Rich snapshots, diffs, console state bar |
+| **PromptBuilder** | `PromptBuilderTag` | Assembles the conscious agent's `systemPrompt(mode, task)` (`loop.ts:191`) |
 
 ### Phase System
 
@@ -168,7 +167,6 @@ worker model. See [docs/MODEL_CONFIG.md](docs/MODEL_CONFIG.md) for details.
 | **Event Source** | WebSocket (real-time game events) | GraphQL polling (30s interval) |
 | **Execution Engine** | Cortex loop (`runCortex`) | Cortex loop (`runCortex`) |
 | **Interrupts** | 10 rules (combat, hull, fuel, cargo, etc.) | 5 rules (CI, review, triage, etc.) |
-| **Skills** | Stub (LLM evaluates all steps) | File-based loader from `.claude/skills/` |
 
 ## Cortex Execution Detail
 
@@ -295,10 +293,9 @@ All events are printed type-tagged with timestamp and character name:
 | `src/core/limbic/hippocampus/dream.ts` | Dream compression / diary cull (`DIARY_TARGET_LINES = 150`) |
 | `src/core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
 | `src/core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
-| `src/core/domain-bundle.ts` | DomainBundle (6 service layers) + DomainConfig |
-| `src/core/prompt-builder.ts` | PromptBuilder interface (`systemPrompt` is live; `taskPrompt`/`channelEvent` legacy) |
-| `src/core/state-renderer.ts` | StateRenderer interface (`formatStateBar(metrics): string`) |
-| `src/core/skill.ts` | Skill + SkillRegistry interface |
+| `src/core/domain-bundle.ts` | DomainBundle (5 service layers) + DomainConfig |
+| `src/core/prompt-builder.ts` | PromptBuilder interface (`systemPrompt(mode, task)`) |
+| `src/core/state-renderer.ts` | StateRenderer interface (`richSnapshot`, `stateDiff`, `formatStateBar`) |
 | `src/core/drives.ts` | Innate drives (`TEMPLATE_DRIVES`, `CORE_DRIVE_NAMES`, `renderDriveLines`) |
 | `src/core/model-config.ts` | Legacy tier-based model resolution (`fast`/`smart`/`reasoning`); see also `src/services/model-tier-spec.ts` |
 | `src/skills/` | Operating skill templates (observe, orient, decide, evaluate, diary) |
