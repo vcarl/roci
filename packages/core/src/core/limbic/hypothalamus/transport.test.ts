@@ -1,7 +1,10 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { Effect, Layer, Ref, Fiber, Clock, TestClock, TestContext } from "effect"
 import { Command } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 import {
   runTransport,
   runHeartbeat,
@@ -12,6 +15,7 @@ import {
 import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import type { UnifiedEvent } from "../../../logging/events.js"
+import { ARGS_SUMMARY_MAX, setEpisodeLogRoot, resetEpisodeContext } from "../../../logging/episodes.js"
 
 const StubCharacterLog = Layer.succeed(
   CharacterLog,
@@ -246,5 +250,62 @@ describe("runTransport captureFromRaw", () => {
       ),
     )
     expect(result.sessionId).toBeUndefined()
+  })
+})
+
+describe("runTransport tool episodes", () => {
+  let root: string
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-transport-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+  })
+  afterEach(() => {
+    setEpisodeLogRoot(null)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const toolFile = () => path.join(root, "players", "ada", "logs", "episodes-tool.jsonl")
+
+  const toolLine = (status: string) =>
+    JSON.stringify({
+      type: "tool_use",
+      part: {
+        id: "prt_1",
+        tool: "bash",
+        state: {
+          status,
+          input: { command: "x".repeat(500) },
+          output: "SECRET_TOOL_OUTPUT",
+          time: { start: 1000, end: 1450 },
+        },
+      },
+    })
+
+  it("appends one truncated tool episode per completed opencode tool call — never the output", async () => {
+    const command = Command.make("bash", "-c", `printf '%s\\n' '${toolLine("completed")}'`)
+    await Effect.runPromise(
+      Effect.provide(
+        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char, role: "body", timeoutMs: 5000 }),
+        deps,
+      ),
+    )
+    const text = fs.readFileSync(toolFile(), "utf8")
+    const records = text.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ tool: "bash", status: "completed", durationMs: 450, tick: null, stepId: null })
+    expect(records[0].argsSummary.length).toBe(ARGS_SUMMARY_MAX + 1)
+    expect(text).not.toContain("SECRET_TOOL_OUTPUT")
+  })
+
+  it("does NOT append for a non-terminal tool state", async () => {
+    const command = Command.make("bash", "-c", `printf '%s\\n' '${toolLine("running")}'`)
+    await Effect.runPromise(
+      Effect.provide(
+        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char, role: "body", timeoutMs: 5000 }),
+        deps,
+      ),
+    )
+    expect(fs.existsSync(toolFile())).toBe(false)
   })
 })

@@ -101,7 +101,7 @@ describe("normalizeOpenCode", () => {
       },
     })
     expect(events).toEqual([
-      { type: "tool_use", id: "prt_abc", name: "bash", input: { command: "ls", description: "list" } },
+      { type: "tool_use", id: "prt_abc", name: "bash", input: { command: "ls", description: "list" }, status: "completed" },
     ])
   })
 
@@ -118,5 +118,24 @@ describe("normalizeOpenCode", () => {
   it("ignores step_finish", () => {
     const events = normalizeOpenCode({ type: "step_finish" })
     expect(events).toEqual([])
+  })
+
+  it("extracts status and durationMs from a completed tool state", () => {
+    const events = normalizeOpenCode({
+      type: "tool_use",
+      part: {
+        id: "prt_1",
+        tool: "bash",
+        state: { status: "completed", input: { command: "ls" }, output: "...", time: { start: 100, end: 350 } },
+      },
+    })
+    expect(events).toEqual([
+      { type: "tool_use", id: "prt_1", name: "bash", input: { command: "ls" }, status: "completed", durationMs: 250 },
+    ])
+  })
+
+  it("omits status/durationMs when the tool state carries none", () => {
+    const events = normalizeOpenCode({ type: "tool_use", part: { id: "p", tool: "read", state: { input: {} } } })
+    expect(events).toEqual([{ type: "tool_use", id: "p", name: "read", input: {} }])
   })
 })
