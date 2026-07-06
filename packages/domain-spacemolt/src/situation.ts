@@ -5,7 +5,7 @@ import type { GameState } from "./types.js"
 import { classifySituation } from "./situation-classifier.js"
 import { generateBriefing } from "./briefing.js"
 
-const spaceMoltSituationClassifier: SituationClassifier = {
+export const spaceMoltSituationClassifier: SituationClassifier = {
   summarize(state) {
     const gameState = state as GameState
     const situation = classifySituation(gameState)
@@ -27,6 +27,14 @@ const spaceMoltSituationClassifier: SituationClassifier = {
         cargoUsed: gameState.ship.cargo_used,
         cargoCapacity: gameState.ship.cargo_capacity,
         inCombat: gameState.inCombat,
+        // Staleness instrumentation: current tick + seconds since the last full
+        // player+ship snapshot refresh, so a frozen state bar is diagnosable in
+        // logs (age climbs without bound if full-state refreshes stop arriving).
+        tick: gameState.tick,
+        stateAgeSec: Math.max(
+          0,
+          Math.round((Date.now() - (gameState.lastFullStateAt ?? gameState.timestamp)) / 1000),
+        ),
       },
     } satisfies SituationSummary
   },

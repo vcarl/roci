@@ -145,6 +145,89 @@ describe("spaceMoltEventProcessor — observation_update", () => {
     expect(p2.username).toBe("NewGuy")
     expect(p2.in_combat).toBe(true)
   })
+
+  it("folds poi_id/system_id into the player so location stays fresh", () => {
+    const event = {
+      type: "observation_update",
+      payload: { tick: 100, poi_id: "poiB", system_id: "sysB", unknown_signature: false },
+    }
+    const prev = makeState({
+      player: { current_poi: "poiA", current_system: "sysA", docked_at_base: null } as unknown as GameState["player"],
+    })
+    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(prev) as GameState
+    expect(next.player.current_poi).toBe("poiB")
+    expect(next.player.current_system).toBe("sysB")
+    // Unrelated player fields are preserved (merge, not replace).
+    expect(next.player.docked_at_base).toBeNull()
+  })
+})
+
+describe("spaceMoltEventProcessor — full_state refresh", () => {
+  it("flows a get_state snapshot through the same merge as logged_in", () => {
+    const event = {
+      type: "full_state",
+      payload: {
+        player: { username: "Cmdr", credits: 1234 },
+        ship: { hull: 40, max_hull: 100, fuel: 12, cargo_used: 6, cargo_capacity: 20 },
+        cargo: [{ item_id: "ore", quantity: 6 }],
+        location: { system_id: "sysX", system_name: "Xanadu", poi_id: "poiX", poi_name: "Belt X", poi_type: "asteroid_belt", docked_at: null },
+      },
+    }
+    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
+    expect(next.player.credits).toBe(1234)
+    expect(next.ship.hull).toBe(40)
+    expect(next.ship.cargo_used).toBe(6)
+    expect(next.cargo).toEqual([{ item_id: "ore", quantity: 6 }])
+    // location → player fields
+    expect(next.player.current_system).toBe("sysX")
+    expect(next.player.current_poi).toBe("poiX")
+    expect(next.player.docked_at_base).toBeNull()
+    // minimal system/poi objects carry fresh names/type
+    expect(next.system?.name).toBe("Xanadu")
+    expect(next.poi?.name).toBe("Belt X")
+    expect(next.poi?.type).toBe("asteroid_belt")
+    // full-state stamp advanced for the age indicator
+    expect(typeof next.lastFullStateAt).toBe("number")
+  })
+
+  it("unwraps a structuredContent envelope", () => {
+    const event = {
+      type: "full_state",
+      payload: { structuredContent: { ship: { fuel: 3 }, location: { poi_id: "p", system_id: "s" } } },
+    }
+    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
+    expect(next.ship.fuel).toBe(3)
+    expect(next.player.current_poi).toBe("p")
+  })
+
+  it("an empty/degraded refresh payload never zeroes prior state", () => {
+    const prev = makeState({
+      player: { username: "Keep", credits: 500, docked_at_base: null } as unknown as GameState["player"],
+      ship: { hull: 88, max_hull: 100, fuel: 9, max_fuel: 50, cargo_used: 4, cargo_capacity: 10, cargo: [{ item_id: "ore", quantity: 4 }] } as unknown as GameState["ship"],
+    })
+    const next = spaceMoltEventProcessor.processEvent({ type: "full_state", payload: {} }, prev).stateUpdate!(prev) as GameState
+    expect(next.player.username).toBe("Keep")
+    expect(next.player.credits).toBe(500)
+    expect(next.ship.hull).toBe(88)
+    expect(next.ship.cargo_used).toBe(4)
+    expect(next.cargo).toEqual([{ item_id: "ore", quantity: 4 }])
+    // still stamps a fresh full-state time (successful, if empty, refresh)
+    expect(typeof next.lastFullStateAt).toBe("number")
+  })
+
+  it("merges fresh names onto the existing poi object when the id is unchanged", () => {
+    const prev = makeState({
+      poi: { id: "poiX", name: "old", type: "asteroid_belt", base_id: "baseX" } as unknown as GameState["poi"],
+    })
+    const event = {
+      type: "full_state",
+      payload: { location: { poi_id: "poiX", poi_name: "Belt X Renamed", system_id: "sysX" } },
+    }
+    const next = spaceMoltEventProcessor.processEvent(event, prev).stateUpdate!(prev) as GameState
+    expect(next.poi?.name).toBe("Belt X Renamed")
+    // base_id preserved from the prior object (merge-by-id keeps fields get_state lacks)
+    expect((next.poi as unknown as { base_id?: string }).base_id).toBe("baseX")
+  })
 })
 
 describe("spaceMoltEventProcessor — mining_yield", () => {

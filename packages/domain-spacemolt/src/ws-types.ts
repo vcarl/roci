@@ -57,3 +57,18 @@ export type {
   NotificationPilotlessShip,
   NotificationReconnected,
 } from "@spacemolt/client-v2"
+
+// The canonical full-state snapshot returned by the `get_state` query (v2). Used
+// by the periodic/on-reconnect full-state refresh (see game-socket-impl.ts) and
+// its normalizer in the event-processor. Its shape differs from LoggedInPayload:
+// player/ship carry a leaner field set and location (system/poi/docked) is split
+// into a dedicated `location` object rather than top-level system/poi blobs.
+export type { V2GameState } from "@spacemolt/client-v2"
+
+/**
+ * Synthetic frame type the host injects into the event queue carrying a
+ * `get_state` result payload. NOT a server `ServerEvent` — it never crosses the
+ * wire; the refresh fiber mints it locally so full-state reconciliation flows
+ * through the same event-processor/stateUpdate path as real frames.
+ */
+export const FULL_STATE_FRAME = "full_state" as const

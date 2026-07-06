@@ -7,7 +7,7 @@ import {
   stateDiff,
 } from "./state-renderer.js"
 
-const spaceMoltStateRenderer: StateRenderer = {
+export const spaceMoltStateRenderer: StateRenderer = {
   richSnapshot(state) {
     return richSnapshot(state as GameState)
   },
@@ -23,6 +23,10 @@ const spaceMoltStateRenderer: StateRenderer = {
     if (typeof metrics.fuel === "number") parts.push(`fuel:${Math.round(metrics.fuel * 100)}%`)
     if (typeof metrics.hull === "number") parts.push(`hull:${Math.round(metrics.hull * 100)}%`)
     if (metrics.cargoUsed !== undefined) parts.push(`cargo:${metrics.cargoUsed}/${metrics.cargoCapacity}`)
+    if (typeof metrics.tick === "number") parts.push(`t:${metrics.tick}`)
+    // Age of the last full player+ship refresh — a frozen snapshot shows a
+    // climbing age even as ticks advance, making the staleness visible in logs.
+    if (typeof metrics.stateAgeSec === "number") parts.push(`age:${metrics.stateAgeSec}s`)
     return parts.join(" ")
   },
 }

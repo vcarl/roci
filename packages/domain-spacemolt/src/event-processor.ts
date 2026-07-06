@@ -9,7 +9,9 @@ import type {
   NotificationMiningYield,
   NotificationObservationUpdate,
   NotificationScanDetected,
+  V2GameState,
 } from "./ws-types.js"
+import { FULL_STATE_FRAME } from "./ws-types.js"
 
 /** A single delta entry from observation_update's nearby_changed / system_changed arrays. */
 type NearbyDelta = NonNullable<NotificationObservationUpdate["nearby_changed"]>[number]
@@ -36,23 +38,160 @@ function nearbyKey(n: { player_id?: string; username?: string }): string {
   return n.player_id && n.player_id.length > 0 ? n.player_id : (n.username ?? "")
 }
 
+/**
+ * A normalized full player+ship snapshot. Both the `logged_in` handshake and the
+ * on-demand `get_state` refresh produce one of these; `applyFullState` is the
+ * single merge codepath that folds it onto the prior GameState. Fields are
+ * partial so a snapshot only overwrites what it actually carries — a sparse or
+ * malformed refresh can never zero out state it omits.
+ */
+interface FullStateSnapshot {
+  player: Partial<PlayerState>
+  ship: Partial<ShipState>
+  /** Full replacement cargo list. `undefined` = leave prior cargo untouched. */
+  cargo?: CargoItem[]
+  /** `undefined` = leave prior; `null` = clear; object = merge/replace by id. */
+  system?: SystemState | null
+  poi?: PoiState | null
+}
+
+/**
+ * The single full-state merge codepath. Spreads each partial onto the prior
+ * state so omitted fields survive. poi/system merge onto the prior object when
+ * the id matches (keeping fields the snapshot lacks, e.g. base_id/resources) and
+ * replace wholesale when the location changed. Stamps `lastFullStateAt` so the
+ * state bar's age indicator reflects a genuine full-state refresh.
+ */
+function applyFullState(s: GameState, snap: FullStateSnapshot): GameState {
+  const player = { ...s.player, ...snap.player } as PlayerState
+  const cargo = snap.cargo ?? snap.ship.cargo ?? s.ship.cargo
+  const ship = { ...s.ship, ...snap.ship, cargo } as ShipState
+  const mergeLocated = <T extends { id: string }>(prev: T | null, next: T | null | undefined): T | null => {
+    if (next === undefined) return prev
+    if (next === null) return null
+    return prev && prev.id === next.id ? { ...prev, ...next } : next
+  }
+  return {
+    ...s,
+    player,
+    ship,
+    cargo,
+    system: mergeLocated(s.system, snap.system),
+    poi: mergeLocated(s.poi, snap.poi),
+    timestamp: Date.now(),
+    lastFullStateAt: Date.now(),
+  }
+}
+
+/** Map the `logged_in` handshake payload onto a normalized full-state snapshot. */
+function loggedInToSnapshot(payload: LoggedInPayload): FullStateSnapshot {
+  const ship = payload.ship as unknown as ShipState
+  return {
+    player: payload.player as unknown as PlayerState,
+    ship,
+    cargo: ship?.cargo ?? [],
+    system: (payload.system as unknown as SystemState) ?? null,
+    poi: payload.poi ? (payload.poi as unknown as PoiState) : null,
+  }
+}
+
 function handleLoggedIn(payload: LoggedInPayload): EventResult {
   return {
     category: { _tag: "StateChange" },
-    stateUpdate: (prev) => {
-      const s = prev as GameState
-      const ship = payload.ship as unknown as ShipState
-      return {
-        ...s,
-        player: payload.player as unknown as PlayerState,
-        ship,
-        system: (payload.system as unknown as SystemState) ?? null,
-        poi: payload.poi ? (payload.poi as unknown as PoiState) : null,
-        cargo: ship?.cargo ?? [],
-        tick: s.tick,
-        timestamp: Date.now(),
-      }
-    },
+    stateUpdate: (prev) => applyFullState(prev as GameState, loggedInToSnapshot(payload)),
+  }
+}
+
+/**
+ * Map a `get_state` (v2) result onto a full-state snapshot. The get_state shape
+ * differs from `logged_in`: player/ship are leaner and location (system/poi/dock
+ * status) lives in a dedicated `location` object. We defensively unwrap a
+ * `structuredContent` envelope (the REST shape) in case the WS `result` frame
+ * carries the same wrapper, then translate location → the domain's
+ * player.current_system/current_poi/docked_at_base and minimal system/poi objects
+ * (id/name/type) so the state bar shows fresh location + names.
+ */
+function getStateToSnapshot(raw: Record<string, unknown>): FullStateSnapshot {
+  const gs = ((raw.structuredContent as Record<string, unknown> | undefined) ?? raw) as Partial<V2GameState>
+
+  const player: Partial<PlayerState> = {}
+  const p = gs.player
+  if (p) {
+    if (p.id != null) player.id = p.id
+    if (p.username != null) player.username = p.username
+    if (p.credits != null) player.credits = p.credits
+    if (p.empire != null) player.empire = p.empire
+    if (p.clan_tag != null) player.clan_tag = p.clan_tag
+    if (p.faction_id !== undefined) player.faction_id = p.faction_id ?? null
+    if (p.faction_rank !== undefined) player.faction_rank = p.faction_rank ?? null
+    if (p.is_cloaked != null) player.is_cloaked = p.is_cloaked
+    if (p.status_message != null) player.status_message = p.status_message
+    if (p.home_base != null) player.home_base = p.home_base
+    if (p.primary_color != null) player.primary_color = p.primary_color
+    if (p.secondary_color != null) player.secondary_color = p.secondary_color
+  }
+
+  const loc = gs.location
+  if (loc) {
+    if (loc.system_id != null) player.current_system = loc.system_id
+    if (loc.poi_id != null) player.current_poi = loc.poi_id
+    // `docked_at` present ⇒ docked; absent ⇒ undocked. Set explicitly (incl. null)
+    // so undocking is reflected, not left stale.
+    player.docked_at_base = loc.docked_at ?? null
+  }
+
+  const ship: Partial<ShipState> = {}
+  const sh = gs.ship
+  if (sh) {
+    const numKeys = [
+      "hull", "max_hull", "shield", "max_shield", "shield_recharge", "armor", "speed",
+      "fuel", "max_fuel", "cargo_used", "cargo_capacity", "cpu_used", "cpu_capacity",
+      "power_used", "power_capacity", "weapon_slots", "defense_slots", "utility_slots",
+    ] as const
+    for (const k of numKeys) {
+      const v = (sh as Record<string, unknown>)[k]
+      if (typeof v === "number") (ship as Record<string, unknown>)[k] = v
+    }
+    if (sh.id != null) ship.id = sh.id
+    if (sh.class_id != null) ship.class_id = sh.class_id
+    if (sh.name != null) ship.name = sh.name
+  }
+
+  const cargo = Array.isArray(gs.cargo)
+    ? gs.cargo.map((c) => ({ item_id: String(c.item_id ?? ""), quantity: Number(c.quantity ?? 0) }))
+    : undefined
+
+  // Minimal located objects from `location` (undefined = leave prior untouched).
+  let system: SystemState | null | undefined
+  let poi: PoiState | null | undefined
+  if (loc) {
+    system =
+      loc.system_id != null
+        ? ({ id: loc.system_id, name: loc.system_name ?? loc.system_id } as unknown as SystemState)
+        : undefined
+    poi =
+      loc.poi_id != null
+        ? ({
+            id: loc.poi_id,
+            name: loc.poi_name ?? loc.poi_id,
+            type: loc.poi_type ?? "",
+            system_id: loc.system_id ?? "",
+          } as unknown as PoiState)
+        : null // in open space (no current POI)
+  }
+
+  return { player, ship, cargo, system, poi }
+}
+
+/**
+ * Handle the synthetic `full_state` frame carrying a `get_state` payload. Always
+ * produces a stateUpdate (reconciling drift AND refreshing `lastFullStateAt` so
+ * the age indicator is a true liveness signal, even when nothing changed).
+ */
+function handleFullState(payload: Record<string, unknown>): EventResult {
+  return {
+    category: { _tag: "StateChange" },
+    stateUpdate: (prev) => applyFullState(prev as GameState, getStateToSnapshot(payload)),
   }
 }
 
@@ -79,8 +218,21 @@ function handleObservationUpdate(payload: NotificationObservationUpdate): EventR
           }
         }
       }
+      // The frame carries the current poi_id/system_id every tick — fold them
+      // into the player so location no longer freezes at the login snapshot. The
+      // friendly names/type still come from full-state refreshes (get_state);
+      // here we only have ids, which the renderer falls back to displaying.
+      const player =
+        payload.poi_id || payload.system_id
+          ? {
+              ...s.player,
+              ...(payload.poi_id ? { current_poi: payload.poi_id } : {}),
+              ...(payload.system_id ? { current_system: payload.system_id } : {}),
+            }
+          : s.player
       return {
         ...s,
+        player,
         nearby: Array.from(byKey.values()),
         tick: payload.tick,
         timestamp: Date.now(),
@@ -143,6 +295,11 @@ function handleChatMessage(payload: NotificationChatMessage): EventResult {
  */
 export const spaceMoltEventProcessor: EventProcessor = {
   processEvent(event, _currentState) {
+    // Synthetic host-injected full-state refresh — not a wire ServerEvent, so it
+    // is dispatched before the closed `ServerEvent` switch below.
+    if ((event as { type?: string }).type === FULL_STATE_FRAME) {
+      return handleFullState((event as { payload?: Record<string, unknown> }).payload ?? {})
+    }
     const smEvent = event as GameEvent
     switch (smEvent.type) {
       case "logged_in":

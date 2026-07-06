@@ -283,9 +283,15 @@ function formatCargoItem(item: CargoItem): string {
 }
 
 function systemPoiSection(system: SystemState, galaxyMap?: GalaxyMap): string {
+	// Defensive: SystemState declares pois/connections as non-optional arrays,
+	// but the in-SPACE get_state snapshot can leave them unpopulated while
+	// `system` itself is still truthy. Never assume they're iterable.
+	const pois = Array.isArray(system.pois) ? system.pois : [];
+	const conns = Array.isArray(system.connections) ? system.connections : [];
+
 	const lines: string[] = [];
 	lines.push("System locations:");
-	for (const poi of system.pois) {
+	for (const poi of pois) {
 		const typeName = poi.type.replace(/_/g, " ");
 		const dockable = poi.base_id ? " (dockable)" : "";
 		let detail = `- ${poi.name} [${poi.id}] — ${typeName}${dockable}`;
@@ -297,7 +303,7 @@ function systemPoiSection(system: SystemState, galaxyMap?: GalaxyMap): string {
 		}
 		lines.push(detail);
 	}
-	const connections = system.connections.map((conn) => {
+	const connections = conns.map((conn) => {
 		const mapEntry = galaxyMap?.get(conn.system_id);
 		const label = mapEntry?.name ?? conn.name ?? conn.system_id;
 		const dist = conn.distance ? ` (${conn.distance} GU)` : "";

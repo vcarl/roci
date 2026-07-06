@@ -1,15 +1,27 @@
-import { Context, Effect, Layer, Queue, Scope, Fiber } from "effect"
+import { Context, Effect, Layer, Queue, Scope, Fiber, Ref } from "effect"
 import * as path from "node:path"
 import { createSocket } from "@spacemolt/client-v2"
 import type { WebSocketCtor } from "@spacemolt/client-v2"
 import type { GameState, PlayerState, ShipState, SystemState, PoiState } from "./types.js"
 import type { GameEvent, LoggedInPayload } from "./ws-types.js"
+import { FULL_STATE_FRAME } from "./ws-types.js"
 import { readPlayerCredentials, spaceMoltSocketBaseUrl } from "./session.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import type { CharacterConfig } from "@roci/core/services/CharacterFs.js"
 
 const QUEUE_CAPACITY = 500
+
+/**
+ * How often to pull a full canonical player+ship snapshot via `get_state`. The
+ * handshake `logged_in` is the only frame that carries full ship/cargo/dock
+ * state; observation_update deltas never do. Without a periodic refresh, cargo,
+ * fuel, hull and credits drift (esp. the optimistic mining_yield cargo bump) and
+ * the state bar freezes. ~45s ≈ every 1–2 game ticks (tick_rate default 10–30s).
+ */
+const STATE_REFRESH_INTERVAL_MS = 45_000
+/** Bound each get_state request so a stuck refresh can't wedge the refresh loop. */
+const STATE_REFRESH_TIMEOUT_MS = 15_000
 
 export class GameSocketError {
   readonly _tag = "GameSocketError"
@@ -63,6 +75,7 @@ function buildInitialState(payload: LoggedInPayload, initialTick: number): GameS
     inCombat: false,
     tick: initialTick,
     timestamp: Date.now(),
+    lastFullStateAt: Date.now(),
   }
 }
 
@@ -185,6 +198,49 @@ export const makeGameSocketLive = () =>
             ),
           )
 
+          // --- Full-state refresh ---
+          // The handshake `logged_in` is the ONLY frame that carries full
+          // ship/cargo/dock/credits state; observation_update deltas never do.
+          // So pull a canonical `get_state` snapshot periodically and right after
+          // a reconnect, injecting it as a synthetic `full_state` frame so it
+          // reconciles through the same event-processor/stateUpdate path.
+          //
+          // `socket.request()` correlates by request_id inside the library's own
+          // message handler, independent of the iterator the forwarding fiber
+          // drains — so draining `it` does not steal the response.
+          const refreshInFlight = yield* Ref.make(false)
+          const doRefresh = Effect.gen(function* () {
+            const resp = yield* Effect.tryPromise({
+              try: () => socket.request({ type: "get_state" }, { timeoutMs: STATE_REFRESH_TIMEOUT_MS }),
+              catch: (e) => new GameSocketError("get_state refresh failed", e),
+            })
+            if (resp.type === "error" || resp.type === "action_error") {
+              // Terminal error frame — keep the last snapshot, never clobber.
+              yield* emitWs(
+                "error",
+                `get_state refresh error: ${(resp.payload as { message?: string })?.message ?? resp.type}`,
+              )
+            } else {
+              // Synthetic host frame (outside the ServerEvent union) — cast to enqueue.
+              const frame = {
+                type: FULL_STATE_FRAME,
+                payload: (resp as { payload?: Record<string, unknown> }).payload ?? {},
+              } as unknown as GameEvent
+              yield* Queue.offer(events, frame).pipe(
+                Effect.catchAll(() => emitWs("error", "Event queue full — dropping full_state refresh")),
+              )
+            }
+          }).pipe(
+            // A failed refresh must never zero state — log and keep the last snapshot.
+            Effect.catchAll((e) => emitWs("error", `State refresh failed: ${String(e)}`)),
+          )
+          // Skip-if-busy guard: a slow refresh never overlaps the next trigger.
+          const refreshOnce = Effect.gen(function* () {
+            const busy = yield* Ref.getAndSet(refreshInFlight, true)
+            if (busy) return
+            yield* doRefresh.pipe(Effect.ensuring(Ref.set(refreshInFlight, false)))
+          })
+
           // --- Forwarding fiber: pump live frames into the Queue. ---
           const forwardFiber = yield* Effect.gen(function* () {
             for (;;) {
@@ -195,11 +251,22 @@ export const makeGameSocketLive = () =>
                   emitWs("error", `Event queue full — dropping ${next.value.type} event`),
                 ),
               )
+              // The library reconnects transparently and does NOT re-emit
+              // logged_in, so refresh full state on `reconnected`. Fork so
+              // forwarding never blocks on the request round-trip.
+              if (next.value.type === "reconnected") {
+                yield* Effect.fork(refreshOnce)
+              }
             }
           }).pipe(
             Effect.catchAll(() => Effect.void),
             Effect.forkScoped,
           )
+
+          // --- Periodic refresh fiber (scoped: interrupted on connection close). ---
+          yield* Effect.forever(
+            Effect.sleep(`${STATE_REFRESH_INTERVAL_MS} millis`).pipe(Effect.zipRight(refreshOnce)),
+          ).pipe(Effect.forkScoped)
 
           // Scope finalizer: stop forwarding, close the socket, drain the Queue.
           yield* Scope.addFinalizer(

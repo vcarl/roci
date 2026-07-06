@@ -35,8 +35,9 @@ Translates `@spacemolt/client-v2` `GameEvent`s into state operations:
 
 | Event | Handling |
 |-------|----------|
-| `logged_in` | Initial full state on login/reconnect: player, ship, system, poi, cargo |
-| `observation_update` | Per-tick delta: advances tick counter, applies nearby-player upserts/departures |
+| `logged_in` | Initial full state on login/reconnect: player, ship, system, poi, cargo (via the shared `applyFullState` merge) |
+| `full_state` (synthetic) | Host-injected `get_state` snapshot — periodic (~45s) and on `reconnected`. Reconciles full ship/cargo/dock/credits drift through the same `applyFullState` merge; never a wire frame |
+| `observation_update` | Per-tick delta: advances tick, applies nearby-player upserts/departures, and folds `poi_id`/`system_id` into the player so location stays fresh |
 | `combat_update` | Sets `inCombat` flag, advances tick, emits a combat alert |
 | `mining_yield` | Adds the yielded resource to ship cargo |
 | `player_died` | `LifecycleReset` -- triggers plan abort and state reset |

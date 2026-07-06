@@ -2,8 +2,11 @@ import type { GameState } from "./types.js"
 
 /** Extract a compact snapshot of key state values for logging. */
 export function snapshot(state: GameState): Record<string, unknown> {
-  // Use player fields as authoritative source — poi/system objects are only
-  // set on `logged_in` and NOT refreshed by `observation_update`, so they go stale.
+  // Use player fields (current_poi/current_system) as the authoritative location
+  // source: observation_update now folds poi_id/system_id into the player every
+  // tick, and periodic get_state refreshes keep player scalars + poi/system names
+  // fresh. The poi/system objects still lag between refreshes, so we fall back to
+  // the player's id when the cached object's id no longer matches.
   const poiLabel = state.player.current_poi
     ? (state.poi?.name && state.poi.id === state.player.current_poi ? state.poi.name : state.player.current_poi)
     : "unknown"

@@ -254,6 +254,13 @@ export interface GameState {
 	inCombat: boolean;
 	tick: number;
 	timestamp: number;
+	/**
+	 * Wall-clock ms of the last full player+ship snapshot merge (login,
+	 * reconnect, or a periodic get_state refresh). Distinct from `timestamp`
+	 * (any update): drives the state-bar staleness/age indicator, so a frozen
+	 * full-state snapshot is diagnosable even while ticks keep advancing.
+	 */
+	lastFullStateAt?: number;
 	market?: MarketItem[];
 	missions?: MissionInfo[];
 	activeMissions?: ActiveMission[];
