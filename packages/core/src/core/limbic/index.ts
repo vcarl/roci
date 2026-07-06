@@ -12,6 +12,6 @@ export type { Alert } from "../types.js"
 // ── HYPOTHALAMUS ── Homeostatic regulation: timing, session execution
 export type { TempoConfig, TempoBase, StateMachineTempo, PlannedActionTempo } from "./hypothalamus/index.js"
 
-// ── HIPPOCAMPUS ── Memory consolidation: dream compression
+// ── HIPPOCAMPUS ── Memory: unified per-cycle consolidate + cull dream
 export type { DreamType, DreamInput, DreamOutput } from "./hippocampus/index.js"
-export { dream } from "./hippocampus/index.js"
+export { dream, DIARY_TARGET_LINES, REFLECTION_TURN_TIMEOUT_MS, CULL_TURN_TIMEOUT_MS, REFLECTION_CONTEXT_MAX } from "./hippocampus/index.js"

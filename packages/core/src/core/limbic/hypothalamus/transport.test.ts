@@ -308,4 +308,19 @@ describe("runTransport tool episodes", () => {
     )
     expect(fs.existsSync(toolFile())).toBe(false)
   })
+
+  it('appends an episode for an ERRORED tool call (status "error")', async () => {
+    const command = Command.make("bash", "-c", `printf '%s\\n' '${toolLine("error")}'`)
+    await Effect.runPromise(
+      Effect.provide(
+        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char, role: "body", timeoutMs: 5000 }),
+        deps,
+      ),
+    )
+    const text = fs.readFileSync(toolFile(), "utf8")
+    const records = text.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ tool: "bash", status: "error", durationMs: 450 })
+    expect(text).not.toContain("SECRET_TOOL_OUTPUT")
+  })
 })

@@ -27,10 +27,10 @@ const base: TurnConfig = {
 describe("selectRuntime", () => {
   it("derives the runtime from the model when no override", () => {
     expect(selectRuntime(base)).toBe("claude")
-    expect(selectRuntime({ ...base, model: "gpt-4o" })).toBe("opencode")
+    expect(selectRuntime({ ...base, model: "openai/gpt-4o" })).toBe("opencode")
   })
   it("honors an explicit runtime override", () => {
-    expect(selectRuntime({ ...base, model: "gpt-4o", runtime: "claude" })).toBe("claude")
+    expect(selectRuntime({ ...base, model: "openai/gpt-4o", runtime: "claude" })).toBe("claude")
   })
 })
 
@@ -94,7 +94,7 @@ describe("buildInnerCommand", () => {
     expect(buildInnerCommand(base, "claude").startsWith("claude -p")).toBe(true)
   })
   it("prefixes the opencode binary name", () => {
-    const cfg: TurnConfig = { ...base, model: "gpt-4o" }
+    const cfg: TurnConfig = { ...base, model: "openai/gpt-4o" }
     expect(buildInnerCommand(cfg, "opencode").startsWith("opencode run")).toBe(true)
   })
 })
