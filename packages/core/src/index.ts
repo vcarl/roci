@@ -74,19 +74,20 @@ export * from "./model/client.js"
 
 
 // Cortex — local-model escalation ladder
-export { runCortex } from "./cortex/loop.js"
-export type { CortexLoopConfig, CortexResult } from "./cortex/loop.js"
-export { freshCortexState, appraise, appraiseTick, emptyEscalation, DEFAULT_APPRAISAL_THRESHOLDS } from "./cortex/state.js"
-export type { CortexState, HindbrainEscalation, EscalationRung, AppraisalThresholds } from "./cortex/state.js"
+export { runCortex } from "./brain/loop/loop.js"
+export type { CortexLoopConfig, CortexResult } from "./brain/loop/loop.js"
+export { freshCortexState, appraise, appraiseTick, emptyEscalation, DEFAULT_APPRAISAL_THRESHOLDS } from "./brain/loop/state.js"
+export type { CortexState, HindbrainEscalation, EscalationRung, AppraisalThresholds } from "./brain/loop/state.js"
 // Limbic drives — innate motivators carried in the character template (Subteam A)
-export { TEMPLATE_DRIVES, CORE_DRIVE_NAMES, drivesFile, renderDriveLines, parseDriveNames } from "./core/drives.js"
-export type { DomainDrive } from "./core/drives.js"
-export { runHindbrain, runForebrain, runConsciousDecide, runConsciousEvaluate } from "./cortex/tiers.js"
-export type { CortexRunnerConfig } from "./cortex/tiers.js"
+export { TEMPLATE_DRIVES, CORE_DRIVE_NAMES, drivesFile, renderDriveLines, parseDriveNames } from "./brain/limbic/autonomic/drives.js"
+export type { DomainDrive } from "./brain/limbic/autonomic/drives.js"
+export { runHindbrain, runForebrain } from "./brain/limbic/tiers-limbic.js"
+export { runConsciousDecide, runConsciousEvaluate } from "./brain/cortex/conscious/tiers-conscious.js"
+export type { CortexRunnerConfig } from "./brain/loop/tier-config.js"
 
 // Conscious tier — local-model OpenCode executor session
-export { ConsciousThought, ConsciousThoughtLive, ConsciousThoughtTest } from "./conscious/conscious-thought.js"
-export type { ConsciousTurnConfig, ProvisionOpts } from "./conscious/conscious-thought.js"
+export { ConsciousThought, ConsciousThoughtLive, ConsciousThoughtTest } from "./brain/cortex/conscious/conscious-thought.js"
+export type { ConsciousTurnConfig, ProvisionOpts } from "./brain/cortex/conscious/conscious-thought.js"
 
 // ModelService — tier lifecycle management
 export { ModelService, ModelServiceLive, ModelBackendTag, makeModelService } from "./services/ModelService.js"

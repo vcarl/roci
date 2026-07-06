@@ -25,7 +25,7 @@ export type Behavior =
   | { type: "session_end"; reason: "clean" | "signal" | "error"; signal?: string; digest: BehaviorDigest }
   | {
       type: "provision"
-      component: "container" | "embed_server" | "memory_cli" | "wm_cli" | "conscious_provider"
+      component: "container" | "embed_server" | "memory_cli" | "wm_cli" | "wm_files" | "conscious_provider"
       status: "ready" | "failed"
       detail?: string
     }

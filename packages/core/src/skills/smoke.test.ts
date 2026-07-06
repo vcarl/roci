@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { loadSkillSync } from "./loader.js"
-import { getCadenceGuidance, type Cadence } from "./cadence.js"
+import { getCadenceGuidance, type Cadence } from "../brain/limbic/autonomic/cadence.js"
 import type {
   ObserveResult,
   OrientResult,
@@ -9,7 +9,11 @@ import type {
 } from "./types.js"
 import * as path from "node:path"
 
-const SKILLS_DIR = path.resolve(import.meta.dirname, ".")
+// observe/orient are limbic-tier prompts; decide/evaluate are cortex/conscious-tier
+// prompts (Task 10 split them out of the old shared skills/ dir into their owning
+// layers — see brain/limbic/tiers-limbic.ts and brain/cortex/conscious/tiers-conscious.ts).
+const LIMBIC_PROMPTS_DIR = path.resolve(import.meta.dirname, "../brain/limbic/prompts")
+const CONSCIOUS_PROMPTS_DIR = path.resolve(import.meta.dirname, "../brain/cortex/conscious/prompts")
 
 /**
  * Build the full variable set for a skill, including cadence guidance injection.
@@ -113,7 +117,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
       "- safety — your physical integrity\n- sustenance — resources\n- agency — your freedom to act"
 
     it("renders completely for a single event with drives + palette reference frames", () => {
-      const skill = loadSkillSync(path.join(SKILLS_DIR, "observe.md"))
+      const skill = loadSkillSync(path.join(LIMBIC_PROMPTS_DIR, "observe.md"))
       const rendered = skill.render({
         event: `type: pull_request.review_submitted\n${GITHUB_EVENT_PAYLOAD}`,
         waitState: "None — not currently waiting.",
@@ -133,7 +137,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
     })
 
     it("renders a single event with an active wait state", () => {
-      const skill = loadSkillSync(path.join(SKILLS_DIR, "observe.md"))
+      const skill = loadSkillSync(path.join(LIMBIC_PROMPTS_DIR, "observe.md"))
       const rendered = skill.render({
         event: `type: ci.status_change\n{"branch": "auth-token-refresh", "status": "passing", "suite": "auth/refresh.test.ts"}`,
         waitState: `Waiting for: CI to pass on auth-token-refresh\nResolution signal: ci.status_change with status=passing\nDisposition: hold`,
@@ -149,7 +153,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
 
   describe("orient", () => {
     it("renders completely with all identity fields", () => {
-      const skill = loadSkillSync(path.join(SKILLS_DIR, "orient.md"))
+      const skill = loadSkillSync(path.join(LIMBIC_PROMPTS_DIR, "orient.md"))
       const rendered = skill.render(
         withCadence("orient", "planned-action", {
           accumulatedEvents: ACCUMULATED_EVENTS,
@@ -172,7 +176,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
 
   describe("decide", () => {
     it("renders completely with orient output and available skills", () => {
-      const skill = loadSkillSync(path.join(SKILLS_DIR, "decide.md"))
+      const skill = loadSkillSync(path.join(CONSCIOUS_PROMPTS_DIR, "decide.md"))
       const rendered = skill.render(
         withCadence("decide", "planned-action", {
           headline:
@@ -199,7 +203,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
 
   describe("evaluate", () => {
     it("renders completely with step result data", () => {
-      const skill = loadSkillSync(path.join(SKILLS_DIR, "evaluate.md"))
+      const skill = loadSkillSync(path.join(CONSCIOUS_PROMPTS_DIR, "evaluate.md"))
       const rendered = skill.render(
         withCadence("evaluate", "planned-action", {
           task: "code-change",
@@ -229,7 +233,7 @@ describe("skill smoke tests — render with realistic GitHub data", () => {
     })
 
     it("renders with overrun warning when over budget", () => {
-      const skill = loadSkillSync(path.join(SKILLS_DIR, "evaluate.md"))
+      const skill = loadSkillSync(path.join(CONSCIOUS_PROMPTS_DIR, "evaluate.md"))
       const rendered = skill.render(
         withCadence("evaluate", "real-time", {
           task: "review-respond",

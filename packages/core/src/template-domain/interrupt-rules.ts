@@ -31,11 +31,11 @@
  */
 
 import { Layer } from "effect";
-import type { InterruptRule } from "../core/limbic/amygdala/interrupt.js";
+import type { InterruptRule } from "../brain/limbic/amygdala/interrupt.js";
 import {
 	createInterruptRegistry,
 	InterruptRegistryTag,
-} from "../core/limbic/amygdala/interrupt.js";
+} from "../brain/limbic/amygdala/interrupt.js";
 import type { TemplateSituation, TemplateState } from "./types.js";
 
 const interruptRules: ReadonlyArray<InterruptRule> = [

@@ -3,7 +3,7 @@
 Roci runs **two distinct model systems**:
 
 1. **The cortex MLX tier topology** — the live engine. Three local OpenAI-compatible
-   servers (hindbrain / forebrain / conscious) back the cortex loop. This is where the
+   servers (hindbrain / forebrain / conscious) back the `brain/loop` engine. This is where the
    bulk of model traffic goes. See [Cortex MLX Tiers](#cortex-mlx-tiers) below.
 2. **The legacy tier-based `resolveModel` system** — `fast`/`smart`/`reasoning` tiers
    that role-based callers resolve through. The live roles are the reflection-cycle
@@ -26,7 +26,7 @@ are no other configurable role knobs.
 
 ## Cortex MLX Tiers
 
-The cortex engine drives three cognition tiers, each served by a local MLX server on its
+The `brain/loop` engine drives three cognition tiers, each served by a local MLX server on its
 own port. The single source of truth for which model answers each tier and where is
 `DEFAULT_CORTEX_MODELS` in `packages/core/src/model/handles.ts` (`:54-130`).
 `packages/core/src/services/model-tier-spec.ts` (`MODEL_TIER_SPECS`) **derives** each
@@ -137,7 +137,7 @@ This allows partial overrides without specifying the full config.
 Which runtime binary a turn runs on — the frontier `claude` CLI or the local
 `opencode` runtime (mlx / other providers) — is decided by ONE authoritative
 function, `modelRuntime()` in
-`packages/core/src/core/limbic/hypothalamus/runtime.ts`. Both the dispatch path
+`packages/core/src/model/runtime.ts`. Both the dispatch path
 (`runtimeBinary` / `selectRuntime`) and config-load validation
 (`assertValidModelConfig` in `model-config.ts`) call it, so the two can never
 disagree. This closes the "two config sources of truth silently disagree" class of
@@ -194,7 +194,7 @@ first-class local-model label while a typo like `local/…` misspelled or a bare
 | `packages/core/src/services/model-tier-spec.ts` | `MODEL_TIER_SPECS` — per-tier port, lifecycle, and spawn timeout, derived from `handles.ts` |
 | `packages/core/src/core/model-config.ts` | Legacy tier types, `resolveModel`, and `assertValidModelConfig` / `ModelConfigError` (load-time model→runtime validation) |
 | `packages/core/src/core/model-config.test.ts` | Unit tests for `resolveModel` resolution and `assertValidModelConfig` |
-| `packages/core/src/core/limbic/hypothalamus/runtime.ts` | `modelRuntime()` (single source of truth), `runtimeBinary()`, and `runtimeBaseArgs()` |
+| `packages/core/src/model/runtime.ts` | `modelRuntime()` (single source of truth), `runtimeBinary()`, and `runtimeBaseArgs()` |
 | `.roci/models.json` | Per-project legacy model configuration (not checked in) |
 </content>
 </invoke>

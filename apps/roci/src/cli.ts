@@ -12,8 +12,8 @@ import { CharacterLogLive } from "@roci/core/logging/log-writer.js"
 import { setEpisodeLogRoot } from "@roci/core/logging/episodes.js"
 import { ProjectRoot } from "@roci/core/services/ProjectRoot.js"
 import { ModelClientLive, ConsciousThoughtLive } from "@roci/core"
-import { LongtermStoreLive } from "@roci/core/conscious/longterm-store.js"
-import { MemoryGatewayLive } from "@roci/core/conscious/memory-gateway.js"
+import { LongtermStoreLive } from "@roci/core/brain/limbic/hippocampus/memory/longterm-store.js"
+import { MemoryGatewayLive } from "@roci/core/brain/limbic/hippocampus/memory/memory-gateway.js"
 import { ModelServiceLive, ModelBackendTag } from "@roci/core/services/ModelService.js"
 import { makeMlxBackend } from "@roci/core/services/mlx-backend.js"
 import { runOrchestrator } from "./orchestrator.js"
@@ -31,7 +31,7 @@ import {
   type ModelConfig,
   type Tier,
 } from "@roci/core/core/model-config.js"
-import type { AnyModel } from "@roci/core/core/limbic/hypothalamus/runtime.js"
+import type { AnyModel } from "@roci/core/model/runtime.js"
 
 const PROJECT_ROOT = process.cwd()
 setEpisodeLogRoot(PROJECT_ROOT)

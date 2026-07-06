@@ -1,5 +1,5 @@
 import { Layer } from "effect"
-import { EventProcessorTag, type EventProcessor, type EventResult } from "@roci/core/core/limbic/thalamus/event-processor.js"
+import { EventProcessorTag, type EventProcessor, type EventResult } from "@roci/core/brain/limbic/thalamus/event-processor.js"
 import type { CargoItem, GameState, NearbyPlayer, PlayerState, PoiState, ShipState, SystemState } from "./types.js"
 import type {
   GameEvent,

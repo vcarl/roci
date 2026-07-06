@@ -4,7 +4,7 @@ Operating skills define how agents think at each stage of the decision loop. The
 
 ## Overview
 
-The skill system lives in `packages/core/src/skills/` and consists of four markdown templates, a type system, a loader, and a cadence guidance module.
+The skill system is the OODA prompt templates plus a type system, a loader, and a cadence guidance module. The templates live with the layer that renders them: the pre-conscious `observe.md` / `orient.md` in `packages/core/src/brain/limbic/prompts/`, and the deliberative `decide.md` / `evaluate.md` / `diary.md` in `packages/core/src/brain/cortex/conscious/prompts/`. The loader (`loadSkillSync`) and types remain in `packages/core/src/skills/`; cadence guidance moved to the autonomic subsystem (`packages/core/src/brain/limbic/autonomic/cadence.ts`).
 
 ```
 Incoming Event
@@ -278,4 +278,4 @@ const prompt = renderObserve(
 
 ## Integration Status
 
-Operating skills are wired into the cortex tick loop (`cortex/loop.ts`) via the tier runners in `cortex/tiers.ts` — `runHindbrain`, `runForebrain`, `runConsciousDecide`, and `runConsciousEvaluate`. Each tick runs the full observe-orient-decide-evaluate chain: observe triages incoming events, orient synthesizes the situation, decide chooses an action (plan/continue/wait/terminate), and evaluate judges step outcomes after execution. The skill templates are loaded from `src/skills/` via `loadSkillSync` (`cortex/tiers.ts`). Task content and per-tick updates come from this OODA chain; the `PromptBuilder` now only assembles the session `systemPrompt`.
+Operating skills are wired into the `brain/loop` tick engine (`brain/loop/loop.ts`) via tier runners split across the layer boundary: the pre-conscious `runHindbrain` / `runForebrain` (`brain/limbic/tiers-limbic.ts`) and the deliberative `runConsciousDecide` / `runConsciousEvaluate` (`brain/cortex/conscious/tiers-conscious.ts`). Each tick runs the full observe-orient-decide-evaluate chain: observe triages incoming events, orient synthesizes the situation, decide chooses an action (plan/continue/wait/terminate), and evaluate judges step outcomes after execution. The observe/orient prompt templates live in `brain/limbic/prompts/` and the decide/evaluate/diary templates in `brain/cortex/conscious/prompts/`; both are loaded via `loadSkillSync` (the loader machinery remains in `src/skills/`). Task content and per-tick updates come from this OODA chain; the `PromptBuilder` now only assembles the session `systemPrompt`.

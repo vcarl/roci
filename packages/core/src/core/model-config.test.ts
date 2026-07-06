@@ -7,7 +7,7 @@ import {
   type ModelConfig,
 } from "./model-config.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
-import { consciousModelLabel } from "../conscious/opencode-config.js"
+import { consciousModelLabel } from "../model/conscious-label.js"
 
 describe("resolveModel", () => {
   const base: ModelConfig = {

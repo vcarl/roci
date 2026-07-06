@@ -2,7 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
-import { TEMPLATE_DRIVES } from "../core/drives.js"
+import { TEMPLATE_DRIVES } from "../brain/limbic/autonomic/drives.js"
 import {
   parseSkillFile,
   serializeSkillFile,

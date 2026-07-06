@@ -1,6 +1,6 @@
 # Agent Harness
 
-The harness runs autonomous character-driven sessions inside shared Docker containers. An orchestrator on the host manages the lifecycle: connect to a domain, run the per-character **cortex loop** (the execution engine — see [docs/CORTEX.md](docs/CORTEX.md)), feed state updates in as events on an Effect queue, and capture all output. The cortex loop appraises events across three local model tiers, plans and executes work as tool-using OpenCode sessions inside the container, and steers or interrupts that work as the world changes.
+The harness runs autonomous character-driven sessions inside shared Docker containers. An orchestrator on the host manages the lifecycle: connect to a domain, run the per-character **`brain/loop` tick engine** (`runCortex` — see [docs/CORTEX.md](docs/CORTEX.md)), feed state updates in as events on an Effect queue, and capture all output. The engine appraises events across three local model tiers (reflexive → integrative → deliberative), plans and executes work as tool-using OpenCode sessions inside the container, and steers or interrupts that work as the world changes. The whole cognitive stack lives under `packages/core/src/brain/` — see [packages/core/src/brain/BRAIN.md](packages/core/src/brain/BRAIN.md) for the top-level map.
 
 ## Repository Structure
 
@@ -20,15 +20,15 @@ apps/roci/src/cli.ts
      +-- for each character: fork characterLoop()
          +-- runPhases(context, phaseRegistry)         packages/core/src/core/phase-runner.ts
              +-- Phase: startup, active, break/social, reflection
-                 +-- runCortex()                       packages/core/src/cortex/loop.ts
+                 +-- runCortex()                       packages/core/src/brain/loop/loop.ts
                      (active phase; see domain phases.ts)
 ```
 
-### Cortex Loop
+### The `brain/loop` Tick Engine
 
-The execution engine is `runCortex()` (`packages/core/src/cortex/loop.ts:104`),
+The execution engine is `runCortex()` (`packages/core/src/brain/loop/loop.ts`),
 called once per character from the domain's `active` phase
-(`domain-spacemolt/src/phases.ts:170`, `domain-github/src/phases.ts:241`). It is an
+(`domain-spacemolt/src/phases.ts`, `domain-github/src/phases.ts`). It is an
 infinite tick loop; world events arrive on an Effect `Queue` (not pushed into a
 running CLI over HTTP), and cognition is split across three local model tiers —
 **hindbrain** (2B per-event appraisal), **forebrain** (9B orient), and
@@ -41,7 +41,7 @@ escalation signal → **forebrain** orient (idle: orient→decide→plan; in-ses
 steer/reorient/interrupt) → **execute** the active plan step as a conscious turn,
 or **evaluate** it when it signals done or its tick budget elapses → **sleep**.
 
-Real loop constants (`loop.ts:72-84`): `DEFAULT_TICK_MS = 30_000`,
+Real loop constants (`brain/loop/loop.ts`): `DEFAULT_TICK_MS = 30_000`,
 `DEFAULT_ORIENT_INTERVAL = 5`, `DEFAULT_WORKER_TIMEOUT_MS = 60 * 60 * 1000` (1h
 per-turn budget), `DEFAULT_STEER_CADENCE_TICKS = 3`. The tick interval is
 overridable via `tickIntervalMs` / `--tick-interval`.
@@ -50,24 +50,29 @@ See [docs/CORTEX.md](docs/CORTEX.md) for the full tick anatomy, the three tiers,
 plan/step/completion model, steering, parse tolerance, and the conscious executor
 (including the `frontier` delegation tool).
 
-The engine and its companions live outside `core/limbic/`:
+The whole cognitive stack lives under `packages/core/src/brain/`, organized as a
+conductor plus two depth-layered layers and a shared transport seam
+(see [BRAIN.md](packages/core/src/brain/BRAIN.md)):
 
 ```
-packages/core/src/cortex/         runCortex tick loop, tier runners, escalation state, JSON parse-tolerance
-packages/core/src/conscious/      ConsciousThought (OpenCode executor), frontier + memory CLIs, long-term store
-packages/core/src/model/          Cortex tier handles (hindbrain/forebrain/conscious), ModelClient
+packages/core/src/brain/loop/       runCortex tick engine, escalation-state reducer, JSON parse-tolerance
+packages/core/src/brain/transport/  SHARED docker-exec turn plumbing (both layers import it)
+packages/core/src/brain/limbic/     PRE-CONSCIOUS layer (reflexive + integrative)
+packages/core/src/brain/cortex/     CONSCIOUS layer (deliberative): conscious/ executor + frontier CLI
+packages/core/src/model/            Neutral model->binary dispatch, tier handles, ModelClient
 ```
 
-### Limbic System
+### Limbic System (the pre-conscious layer)
 
-Domain-agnostic subsystems live under `packages/core/src/core/limbic/`, organized by analogy to limbic brain regions. See [LIMBIC.md](packages/core/src/core/limbic/LIMBIC.md) for full documentation.
+Domain-agnostic subsystems live under `packages/core/src/brain/limbic/`, organized by analogy to limbic brain regions — the reflexive and integrative depth tiers, everything up to and including **orient**. See [LIMBIC.md](packages/core/src/brain/limbic/LIMBIC.md) for full documentation.
 
 ```
-packages/core/src/core/limbic/
- +-- thalamus/         Sensory relay: event processing, situation classification
- +-- amygdala/         Threat detection: interrupt evaluation and alerting
- +-- hypothalamus/     Homeostatic regulation: session execution, timing
- +-- hippocampus/      Memory consolidation: dream compression
+packages/core/src/brain/limbic/
+ +-- thalamus/         Sensory relay: event processing, situation classification (integrative)
+ +-- amygdala/         Threat detection: interrupt safety-rail (reflexive)
+ +-- autonomic/        Homeostatic regulation: tempo, cadence, innate drives (reflexive)
+ +-- hippocampus/      Episodic/narrative memory: dream consolidate+cull, long-term vector store
+ +-- wm/               Working (procedural/intent) memory: plan/todo state machine
 ```
 
 **Data flow:**
@@ -97,7 +102,7 @@ HIPPOCAMPUS: dream.execute() (in reflection phase, when diary exceeds threshold)
 
 ### Operating Skills
 
-Operating skills define how agents think at each stage of the OODA loop: observe, orient, decide, evaluate. They live in `packages/core/src/skills/` as markdown templates with YAML frontmatter. See [docs/OPERATING_SKILLS.md](docs/OPERATING_SKILLS.md) for full documentation.
+Operating skills define how agents think at each stage of the OODA loop: observe, orient, decide, evaluate. They are markdown templates with YAML frontmatter, split across the layer boundary: the pre-conscious prompts (`observe.md`, `orient.md`) live in `packages/core/src/brain/limbic/prompts/`; the deliberative prompts (`decide.md`, `evaluate.md`, `diary.md`) live in `packages/core/src/brain/cortex/conscious/prompts/`. The loader machinery (`loadSkillSync`) remains in `packages/core/src/skills/`. See [docs/OPERATING_SKILLS.md](docs/OPERATING_SKILLS.md) for full documentation.
 
 ### Domain Services
 
@@ -109,7 +114,7 @@ All domain knowledge is injected via 5 Effect service layers, provided as a `Dom
 | **SituationClassifier** | `SituationClassifierTag` | `summarize(state)` -- structured `SituationSummary` with headline, sections, metrics |
 | **InterruptRegistry** | `InterruptRegistryTag` | Declarative interrupt rules with priority, condition, message, `suppressWhenTaskIs` |
 | **StateRenderer** | `StateRendererTag` | Rich snapshots, diffs, console state bar |
-| **PromptBuilder** | `PromptBuilderTag` | Assembles the conscious agent's `systemPrompt(mode, task)` (`loop.ts:191`) |
+| **PromptBuilder** | `PromptBuilderTag` | Assembles the conscious agent's `systemPrompt(mode, task)` (`brain/loop/loop.ts`) |
 
 ### Phase System
 
@@ -120,7 +125,7 @@ Sessions progress through a sequence of named phases. Each phase returns a `Phas
 #### SpaceMolt Phase Lifecycle
 
 ```
-startup --> active (cortex loop) --> social --> reflection (dream) --> active
+startup --> active (brain/loop) --> social --> reflection (dream) --> active
 ```
 
 - **startup** -- Read credentials, connect via WebSocket, compress diary if over threshold
@@ -131,7 +136,7 @@ startup --> active (cortex loop) --> social --> reflection (dream) --> active
 #### GitHub Phase Lifecycle
 
 ```
-startup --> active (cortex loop) --> break (90 min) --> reflection (dream) --> active
+startup --> active (brain/loop) --> break (90 min) --> reflection (dream) --> active
                  \                         ^
                   \---> (critical interrupt) ---/
 ```
@@ -153,7 +158,7 @@ startup --> active (cortex loop) --> break (90 min) --> reflection (dream) --> a
 
 ### Model Configuration
 
-Two model systems coexist. The cortex engine uses its own MLX tier topology —
+Two model systems coexist. The `brain/loop` engine uses its own MLX tier topology —
 `hindbrain`/`forebrain`/`conscious`, configured in `model/handles.ts` (see
 [docs/CORTEX.md](docs/CORTEX.md) §2). The older `fast`/`smart`/`reasoning` tier
 system with per-role overrides still backs host-side helpers and the `frontier`
@@ -165,18 +170,18 @@ worker model. See [docs/MODEL_CONFIG.md](docs/MODEL_CONFIG.md) for details.
 |---|-----------|--------|
 | **Phases** | startup, active, social, reflection | startup, active, break, reflection |
 | **Event Source** | WebSocket (real-time game events) | GraphQL polling (30s interval) |
-| **Execution Engine** | Cortex loop (`runCortex`) | Cortex loop (`runCortex`) |
+| **Execution Engine** | `brain/loop` (`runCortex`) | `brain/loop` (`runCortex`) |
 | **Interrupts** | 10 rules (combat, hull, fuel, cargo, etc.) | 5 rules (CI, review, triage, etc.) |
 
-## Cortex Execution Detail
+## Execution Detail
 
 There is no channel server and no HTTP event POST. Events arrive on an in-process
-Effect `Queue`; the cortex loop drains it each tick. Plan-step work runs as a
+Effect `Queue`; the `brain/loop` engine drains it each tick. Plan-step work runs as a
 tool-using OpenCode session that the loop forks (turn 1) and resumes (later turns)
 via `docker exec`.
 
 ```
-  Cortex loop (host)              Docker Container (roci-<domain>)
+  brain/loop engine (host)        Docker Container (roci-<domain>)
   |                               |
   | drain Effect Queue            |
   | hindbrain/forebrain/conscious |  (mlx tiers on :8081/:8082/:8083)
@@ -239,7 +244,7 @@ Add to the rules array in the domain's `interrupts.ts`:
   suppressWhenTaskIs: "refuel" }
 ```
 
-`createInterruptRegistry(rules)` builds an `InterruptRegistry` that handles rule walking, suppression, sorting, and partitioning into `criticals()` and `softAlerts()`. See the [LIMBIC.md](packages/core/src/core/limbic/LIMBIC.md) amygdala section for details.
+`createInterruptRegistry(rules)` builds an `InterruptRegistry` that handles rule walking, suppression, sorting, and partitioning into `criticals()` and `softAlerts()`. See the [LIMBIC.md](packages/core/src/brain/limbic/LIMBIC.md) amygdala section for details.
 
 ## Console Output
 
@@ -273,32 +278,35 @@ All events are printed type-tagged with timestamp and character name:
 
 | File | Role |
 |------|------|
-| `src/cortex/loop.ts` | `runCortex` -- the cortex tick loop, the primary execution engine |
-| `src/cortex/tiers.ts` | Tier runners: `runHindbrain`/`runForebrain`/`runConsciousDecide`/`runConsciousEvaluate`/`runDiaryTurn` |
-| `src/cortex/state.ts` | Cortex state, the escalation ladder (`appraise`/`appraiseTick`/`HindbrainEscalation`), plan/step/completion helpers |
-| `src/cortex/parse.ts` | Tolerant JSON extraction (`extractJson`/`tryParseJson`/`parseOr`) for mlx tier output |
-| `src/conscious/conscious-thought.ts` | `ConsciousThought` service: provisions and runs the tool-using OpenCode executor |
-| `src/conscious/frontier-cli.ts` | The `frontier` delegation tool (detached reasoning-model worker) |
-| `src/conscious/memory-cli.ts`, `longterm-store.ts` | Long-term memory: in-container `memory` CLI + sqlite-vec store |
+| `src/brain/loop/loop.ts` | `runCortex` -- the `brain/loop` tick engine, the primary execution engine |
+| `src/brain/limbic/tiers-limbic.ts` | Pre-conscious tier runners: `runHindbrain`/`runForebrain` |
+| `src/brain/cortex/conscious/tiers-conscious.ts` | Conscious tier runners: `runConsciousDecide`/`runConsciousEvaluate`/`runDiaryTurn` |
+| `src/brain/loop/state.ts` | Loop state, the escalation ladder (`appraise`/`appraiseTick`/`HindbrainEscalation`), plan/step/completion helpers |
+| `src/brain/loop/parse.ts` | Tolerant JSON extraction (`extractJson`/`tryParseJson`/`parseOr`) for mlx tier output |
+| `src/brain/cortex/conscious/conscious-thought.ts` | `ConsciousThought` service: provisions and runs the tool-using OpenCode executor |
+| `src/brain/cortex/conscious/frontier-cli.ts` | The `frontier` delegation tool (detached reasoning-model worker) |
+| `src/brain/limbic/hippocampus/memory/memory-cli.ts`, `memory/longterm-store.ts` | Long-term memory (hippocampus-owned): in-container `memory` CLI + sqlite-vec store |
 | `src/model/handles.ts` | Cortex tier handles + `DEFAULT_CORTEX_MODELS` (hindbrain/forebrain/conscious) |
 | `src/model/client.ts` | `ModelClient` -- OpenAI-compatible completion client for the mlx tiers |
 | `src/core/orchestrator/index.ts` | Orchestrator barrel (re-exports `runReflection`/`runBreak`, lifecycle, planning) |
 | `src/core/orchestrator/planned-action.ts` | `runReflection` (dream/cull + memory promotion) and `runBreak` |
 | `src/core/orchestrator/lifecycle.ts` | `PlanContext`, `LifecycleHooks` for the planned-action cadence |
-| `src/core/limbic/hypothalamus/process-runner.ts` | `runOpenCodeSessionTurn` -- the SDK/process transport for conscious turns |
-| `src/core/limbic/hypothalamus/runtime.ts` | Runtime binary selection (claude vs opencode) and CLI arg building |
-| `src/core/limbic/thalamus/event-processor.ts` | EventProcessor, EventResult, EventCategory |
-| `src/core/limbic/thalamus/situation-classifier.ts` | SituationClassifier, SituationSummary |
-| `src/core/limbic/amygdala/interrupt.ts` | InterruptRule, InterruptRegistry, createInterruptRegistry() |
-| `src/core/limbic/hippocampus/dream.ts` | Dream compression / diary cull (`DIARY_TARGET_LINES = 150`) |
+| `src/brain/transport/process-runner.ts` | `runTurn`/`runOpenCodeSessionTurn` -- shared docker-exec transport for conscious + memory turns |
+| `src/model/runtime.ts` | Runtime binary selection (claude vs opencode) and CLI arg building |
+| `src/brain/limbic/thalamus/event-processor.ts` | EventProcessor, EventResult, EventCategory |
+| `src/brain/limbic/thalamus/situation-classifier.ts` | SituationClassifier, SituationSummary |
+| `src/brain/limbic/amygdala/interrupt.ts` | InterruptRule, InterruptRegistry, createInterruptRegistry() |
+| `src/brain/limbic/hippocampus/dream.ts` | Dream compression / diary cull (`DIARY_TARGET_LINES = 150`) |
+| `src/brain/limbic/wm/wm-store.ts` | Working (procedural/intent) memory: plan/todo state machine |
 | `src/core/phase.ts` | Phase, PhaseContext, PhaseResult, PhaseRegistry |
 | `src/core/phase-runner.ts` | Runs phases in sequence, handles Continue/Restart/Shutdown |
 | `src/core/domain-bundle.ts` | DomainBundle (5 service layers) + DomainConfig |
 | `src/core/prompt-builder.ts` | PromptBuilder interface (`systemPrompt(mode, task)`) |
 | `src/core/state-renderer.ts` | StateRenderer interface (`richSnapshot`, `stateDiff`, `formatStateBar`) |
-| `src/core/drives.ts` | Innate drives (`TEMPLATE_DRIVES`, `CORE_DRIVE_NAMES`, `renderDriveLines`) |
+| `src/brain/limbic/autonomic/drives.ts` | Innate drives (`TEMPLATE_DRIVES`, `CORE_DRIVE_NAMES`, `renderDriveLines`) |
 | `src/core/model-config.ts` | Legacy tier-based model resolution (`fast`/`smart`/`reasoning`); see also `src/services/model-tier-spec.ts` |
-| `src/skills/` | Operating skill templates (observe, orient, decide, evaluate, diary) |
+| `src/brain/limbic/prompts/`, `src/brain/cortex/conscious/prompts/` | Operating skill templates: observe/orient (pre-conscious) + decide/evaluate/diary (conscious) |
+| `src/skills/loader.ts` | Skill-template loader machinery (`loadSkillSync`) |
 
 ### GitHub domain -- `packages/domain-github/` (@roci/domain-github)
 

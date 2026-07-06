@@ -8,24 +8,24 @@ import * as path from "node:path"
 
 // Mock the model turn used by both consolidate and dream (cull).
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
-vi.mock("../limbic/hypothalamus/process-runner.js", () => ({
+vi.mock("../../brain/transport/process-runner.js", () => ({
   runTurn: runTurnMock,
 }))
 
 import { runReflection, runBreak } from "./planned-action.js"
-import { LongtermStore, diaryMark, type DiaryMark } from "../../conscious/longterm-store.js"
+import { LongtermStore, diaryMark, type DiaryMark } from "../../brain/limbic/hippocampus/memory/longterm-store.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
 import { DEFAULT_MODEL_CONFIG } from "../model-config.js"
 import { DEFAULT_CORTEX_MODELS } from "../../model/handles.js"
-import { consciousModelLabel } from "../../conscious/opencode-config.js"
-import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
-import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
-import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
-import type { PlannedActionTempo } from "../limbic/hypothalamus/tempo.js"
+import { consciousModelLabel } from "../../model/conscious-label.js"
+import { EventProcessorTag } from "../../brain/limbic/thalamus/event-processor.js"
+import { SituationClassifierTag } from "../../brain/limbic/thalamus/situation-classifier.js"
+import { InterruptRegistryTag } from "../../brain/limbic/amygdala/interrupt.js"
+import type { PlannedActionTempo } from "../../brain/limbic/autonomic/tempo.js"
 import { setEpisodeLogRoot, appendToolEpisode, appendTransitionEpisode } from "../../logging/episodes.js"
-import { readProposals, appendProposals, bumpMacroCount, adjudicationsJsonlPath } from "../../conscious/growth-store.js"
+import { readProposals, appendProposals, bumpMacroCount, adjudicationsJsonlPath } from "../../brain/limbic/hippocampus/growth-store.js"
 
 // `char.dir` mirrors the (host-side) character directory growth-store.ts reads
 // and writes real files under — now that runReflection wires in the macro

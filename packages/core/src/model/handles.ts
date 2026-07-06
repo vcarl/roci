@@ -76,7 +76,7 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   // choice): temp 0.0 eliminated run-to-run noise but the human accepted mild ±1
   // variation; at 0.05 the safety-critical bar still held (zero false
   // interrupt:true on benign across 3 seeds). The validated v3.2 prompt
-  // (skills/observe.md) pairs with this temperature — both-pole few-shot, the
+  // (brain/limbic/prompts/observe.md) pairs with this temperature — both-pole few-shot, the
   // interrupt criterion separated from the weight scale, anti-collapse drive
   // routing. maxTokens 1024 is far more than the single-object output needs (the
   // model stops at the closing brace) while keeping the explicit-budget floor.

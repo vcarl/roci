@@ -1,6 +1,6 @@
-import { modelRuntime, type AnyModel } from "./limbic/hypothalamus/runtime.js"
+import { modelRuntime, type AnyModel } from "../model/runtime.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
-import { consciousModelLabel } from "../conscious/opencode-config.js"
+import { consciousModelLabel } from "../model/conscious-label.js"
 
 /** The three tiers a model role can resolve against. */
 export type Tier = "fast" | "smart" | "reasoning"

@@ -8,10 +8,11 @@ import { execSync } from "node:child_process"
 import type { ResolvedDomain } from "./domains/registry.js"
 import { OAuthToken } from "@roci/core/services/OAuthToken.js"
 import type { ModelConfig } from "@roci/core/core/model-config.js"
-import { provisionConsciousProvider } from "@roci/core/conscious/opencode-config.js"
-import { provisionMemoryCli } from "@roci/core/conscious/memory-cli.js"
-import { provisionWmCli } from "@roci/core/conscious/wm-cli.js"
-import { DEFAULT_EMBED_BASE_URL } from "@roci/core/conscious/memory-embed.js"
+import { provisionConsciousProvider } from "@roci/core/brain/cortex/conscious/opencode-config.js"
+import { provisionMemoryCli } from "@roci/core/brain/limbic/hippocampus/memory/memory-cli.js"
+import { provisionWmCli } from "@roci/core/brain/limbic/wm/wm-cli.js"
+import { ensureWmFiles } from "@roci/core/brain/limbic/wm/wm-store.js"
+import { DEFAULT_EMBED_BASE_URL } from "@roci/core/brain/limbic/hippocampus/memory/memory-embed.js"
 import { DEFAULT_CORTEX_MODELS } from "@roci/core/model/handles.js"
 import { launchEmbedServer, reapEmbedServers } from "./embed-server.js"
 import { withSessionEnd } from "./session-end.js"
@@ -190,6 +191,27 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
           ),
         ),
       )
+
+      // Seed each character's working-memory FILES (wm.json + WM.md) EAGERLY at
+      // startup, alongside the `wm` CLI (same no-lazy-provisioning rule). Lifted
+      // here from the conscious executor's first-turn provisioning so the cortex
+      // layer holds no wm (limbic) host-code dependency. Idempotent — never
+      // clobbers an existing wm.json/WM.md — and precedes the first tick on all
+      // paths, so WM.md exists before any WM.md-dependent conscious request.
+      // (Intentional micro-timing lift: seeding moves from first-conscious-turn to
+      // container startup; behavior for the running loop is unchanged.)
+      // Failure-tolerant: ensureWmFiles swallows its own errors; log ready per char.
+      for (const charName of rd.characters) {
+        const char = makeCharacterConfig(projectRoot, charName)
+        yield* ensureWmFiles(char).pipe(
+          Effect.tap(() => logBehavior(char.name, "main", "provision", { type: "provision", component: "wm_files", status: "ready" })),
+          Effect.catchAll((e) =>
+            logToConsole(char.name, "main", `wm files seeding failed (WM.md unavailable): ${e}`, "warn").pipe(
+              Effect.zipRight(logBehavior(char.name, "main", "provision", { type: "provision", component: "wm_files", status: "failed", detail: String(e) })),
+            ),
+          ),
+        )
+      }
     }
 
     // Validate token inside first container — catches auth issues before any character starts.

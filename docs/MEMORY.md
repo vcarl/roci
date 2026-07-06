@@ -5,7 +5,7 @@ Characters have two memory tiers with different lifetimes and storage models:
 - **Working memory** — the character's diary, kept coherent and bounded by the
   hippocampus. It is rewritten and culled every cycle, so it never grows without
   limit. See the hippocampus section of
-  [LIMBIC.md](../packages/core/src/core/limbic/LIMBIC.md).
+  [LIMBIC.md](../packages/core/src/brain/limbic/LIMBIC.md).
 - **Long-term memory** — an append-only, per-character vector store. Rows are
   embedded and never updated or deleted; the point is durable episodic ground
   truth that survives the working-memory cull.
@@ -22,19 +22,20 @@ structural sibling of the `frontier` delegation tool documented there.
 |---|---|---|
 | Storage | the diary text file (`players/<name>/me/`) | sqlite-vec db `players/<name>/me/longterm.db` |
 | Lifetime | rewritten + culled every cycle | append-only; rows never updated/deleted |
-| Bound | `DIARY_TARGET_LINES = 150` (`core/limbic/hippocampus/dream.ts:16`) | unbounded log of record |
-| Owner | hippocampus `consolidate`/`dream` (reflection phase) | the in-container `memory` CLI |
+| Bound | `DIARY_TARGET_LINES = 150` (`brain/limbic/hippocampus/dream.ts:29`) | unbounded log of record |
+| Owner | hippocampus `dream` (reflection phase) | the in-container `memory` CLI (hippocampus-owned) |
 
-Working memory is compressed by `consolidate.execute()` (the per-cycle narrative
-rewrite) and then `dream.execute()` (the cull toward 150 lines), both run from
-`runReflection` (`core/orchestrator/planned-action.ts`). Because the cull is
-destructive, raw episodic detail that should outlive it is copied into long-term
-memory *before* the rewrite (see §5).
+Working memory is compressed by the unified `dream.execute()` — one module, three
+sequential turns: consolidate (the per-cycle narrative rewrite) then cull the diary
+toward 150 lines then cull secrets — run from `runReflection`
+(`core/orchestrator/planned-action.ts`). Because the cull is destructive, raw episodic
+detail that should outlive it is copied into long-term memory *before* the rewrite
+(see §5).
 
 ## 2. The store (`LongtermStore`)
 
 The host-side seam is the `LongtermStore` Effect service
-(`packages/core/src/conscious/longterm-store.ts:62`), with the production layer
+(`packages/core/src/brain/limbic/hippocampus/memory/longterm-store.ts`), with the production layer
 `LongtermStoreLive` (`longterm-store.ts:98`, `R = Docker`). It exposes exactly
 three operations, all used by the promotion hook:
 
@@ -150,7 +151,7 @@ destroys it. `runReflection` (`core/orchestrator/planned-action.ts:36`) runs the
 promotion **first** (`planned-action.ts:59-78`), then `consolidate`, then `dream`,
 then re-baselines the mark (`planned-action.ts:104-120`).
 
-The cortex loop only **appends** `\n\n`-separated entries to the diary during a
+The `brain/loop` engine only **appends** `\n\n`-separated entries to the diary during a
 session, so the diary left by the previous reflection is a verbatim **prefix** of
 the current one. The hook exploits this with a bounded high-water mark — the
 length + sha256 of the previously-marked diary — to isolate exactly the new

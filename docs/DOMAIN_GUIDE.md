@@ -4,7 +4,7 @@ How to build a new domain for the Roci orchestrator. New domains should be creat
 
 ## What is a Domain?
 
-The orchestrator is a generic engine for running autonomous character-driven sessions. The execution engine is the **cortex loop** (`runCortex`, `packages/core/src/cortex/loop.ts`) -- a per-character cognitive tick loop that drains domain events, appraises them across three model tiers, runs tool-using work inside Docker containers, and monitors for interrupts. None of this logic knows about any specific game or environment. See [CORTEX.md](CORTEX.md) for the engine reference.
+The orchestrator is a generic engine for running autonomous character-driven sessions. The execution engine is the **`brain/loop` tick engine** (`runCortex`, `packages/core/src/brain/loop/loop.ts`) -- a per-character cognitive tick loop that drains domain events, appraises them across three model tiers, runs tool-using work inside Docker containers, and monitors for interrupts. None of this logic knows about any specific game or environment. See [CORTEX.md](CORTEX.md) for the engine reference.
 
 A **domain** plugs into this engine by implementing 5 service interfaces (plus a phase registry and config object). The core never imports domain code -- services are injected via Effect tags at startup. SpaceMolt and GitHub are the two reference implementations.
 
@@ -65,7 +65,7 @@ Maps raw domain events into `EventResult` objects:
 
 ```ts
 import { Layer } from "effect"
-import { EventProcessorTag, type EventResult } from "@roci/core/core/limbic/thalamus/event-processor.js"
+import { EventProcessorTag, type EventResult } from "@roci/core/brain/limbic/thalamus/event-processor.js"
 
 const myEventProcessor = {
   processEvent(event: unknown, _currentState: unknown): EventResult {
@@ -112,7 +112,7 @@ Derives a structured `SituationSummary` from raw state:
 
 ```ts
 import { Layer } from "effect"
-import { SituationClassifierTag } from "@roci/core/core/limbic/thalamus/situation-classifier.js"
+import { SituationClassifierTag } from "@roci/core/brain/limbic/thalamus/situation-classifier.js"
 
 const myClassifier = {
   summarize(state: unknown): SituationSummary {
@@ -171,7 +171,7 @@ Declarative rules that detect conditions warranting session interruption:
 
 ```ts
 import { Layer } from "effect"
-import { InterruptRegistryTag, createInterruptRegistry } from "@roci/core/core/limbic/amygdala/interrupt.js"
+import { InterruptRegistryTag, createInterruptRegistry } from "@roci/core/brain/limbic/amygdala/interrupt.js"
 
 const rules: ReadonlyArray<InterruptRule> = [
   {
@@ -212,7 +212,7 @@ interface PromptBuilder {
 
 **`systemPrompt(mode, task)`** -- The system prompt for the persistent session. Defines the agent's capabilities and constraints. Can vary by mode (e.g., read-only vs. full-access) and task (e.g., diary-only). Task content and per-tick updates are produced by the cortex OODA chain, not the builder.
 
-**Cortex integration:** The engine is the cortex loop (`runCortex`), which runs the OODA skill chain (observe → orient → decide → evaluate) across three model tiers to classify events, assess situations, and produce structured directives. See [CORTEX.md](CORTEX.md) for the full engine reference. Tune the loop via the optional `CortexLoopConfig` fields when calling `runCortex` (`loop.ts:53-66`):
+**Cortex integration:** The engine is the `brain/loop` tick engine (`runCortex`), which runs the OODA skill chain (observe → orient → decide → evaluate) across three model tiers to classify events, assess situations, and produce structured directives. See [CORTEX.md](CORTEX.md) for the full engine reference. Tune the loop via the optional `CortexLoopConfig` fields when calling `runCortex` (`brain/loop/loop.ts`):
 
 ```ts
 yield* runCortex({
@@ -233,7 +233,7 @@ Phases are the top-level session structure. A minimal registry needs startup (co
 ```ts
 import { Effect, Queue } from "effect"
 import { getModels } from "@roci/core/core/phase.js"
-import { runCortex } from "@roci/core/cortex/loop.js"
+import { runCortex } from "@roci/core/brain/loop/loop.js"
 
 const activePhase = {
   name: "active",

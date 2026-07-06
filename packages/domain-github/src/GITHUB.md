@@ -1,10 +1,10 @@
 # GitHub Domain
 
-AI agents that manage GitHub repositories through the cortex loop. Each character monitors a set of repos, triages issues, reviews PRs, investigates CI failures, and implements code changes -- all within a structured cycle of work and reflection.
+AI agents that manage GitHub repositories through the `brain/loop` tick engine. Each character monitors a set of repos, triages issues, reviews PRs, investigates CI failures, and implements code changes -- all within a structured cycle of work and reflection.
 
 ## Execution Model
 
-The GitHub domain runs on the cortex loop (`runCortex` from `@roci/core/cortex/loop.js`). State updates arrive as events every 30 seconds; the loop runs tool-using work as an OpenCode session inside Docker.
+The GitHub domain runs on the `brain/loop` tick engine (`runCortex` from `@roci/core/brain/loop/loop.js`). State updates arrive as events every 30 seconds; the loop runs tool-using work as an OpenCode session inside Docker.
 
 The loop receives:
 - An **initial task** with the full situation briefing, agent identity, and work instructions

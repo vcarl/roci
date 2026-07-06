@@ -9,8 +9,8 @@ import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { GitHubClientTag } from "./github-client.js"
 import { runBreak, runReflection } from "@roci/core/core/orchestrator/planned-action.js"
-import { runCortex } from "@roci/core/cortex/loop.js"
-import type { PlannedActionTempo } from "@roci/core/core/limbic/hypothalamus/tempo.js"
+import { runCortex } from "@roci/core/brain/loop/loop.js"
+import type { PlannedActionTempo } from "@roci/core/brain/limbic/autonomic/tempo.js"
 
 const tempo: PlannedActionTempo = {
   _tag: "PlannedAction",

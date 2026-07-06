@@ -1,7 +1,7 @@
 import type { Effect, Layer } from "effect";
-import type { InterruptRegistryTag } from "./limbic/amygdala/interrupt.js";
-import type { EventProcessorTag } from "./limbic/thalamus/event-processor.js";
-import type { SituationClassifierTag } from "./limbic/thalamus/situation-classifier.js";
+import type { InterruptRegistryTag } from "../brain/limbic/amygdala/interrupt.js";
+import type { EventProcessorTag } from "../brain/limbic/thalamus/event-processor.js";
+import type { SituationClassifierTag } from "../brain/limbic/thalamus/situation-classifier.js";
 import type { PhaseRegistry } from "./phase.js";
 import type { PromptBuilderTag } from "./prompt-builder.js";
 import type { StateRendererTag } from "./state-renderer.js";

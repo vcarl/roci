@@ -8,7 +8,7 @@ import type { ModelService } from "../services/ModelService.js"
 import type { ModelError } from "../model/errors.js"
 import type { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { TEMPLATE_PALETTE, paletteFile } from "./palette.js"
-import { renderDriveLines, drivesFile } from "./drives.js"
+import { renderDriveLines, drivesFile } from "../brain/limbic/autonomic/drives.js"
 import {
   promptForStep,
   type IdentityContext,

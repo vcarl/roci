@@ -363,17 +363,17 @@ The `Directive` type is `{ text: string }`. Directives must be model-generated (
 
 #### Dynamic Stdin Stream
 
-The steered stdin stream (built in `packages/core/src/conscious/frontier-cli.ts`) produces the dynamic stdin for a steerable session:
+The steered stdin stream (built in `packages/core/src/brain/cortex/conscious/frontier-cli.ts`) produces the dynamic stdin for a steerable session:
 
 1. Send the initial `task` line.
 2. For each directive offered to the queue, send one `steer` line.
 3. When the queue is shut down, send `end` — which closes the input stream and causes the runner's async generator to return, ending the session.
 
-The `frontier` CLI (`packages/core/src/conscious/frontier-cli.ts`) drives this stream in-container, replacing the former host-side SDK-session transport path.
+The `frontier` CLI (`packages/core/src/brain/cortex/conscious/frontier-cli.ts`) drives this stream in-container, replacing the former host-side SDK-session transport path.
 
 #### Frontier CLI Delegation
 
-The conscious mind's delegation tool is the in-container `frontier` CLI, provisioned at `/usr/local/bin/frontier` by `ConsciousThought.provision` (via `provisionFrontierCli` in `packages/core/src/conscious/frontier-cli.ts`). The conscious agent invokes it as a Bash tool call:
+The conscious mind's delegation tool is the in-container `frontier` CLI, provisioned at `/usr/local/bin/frontier` by `ConsciousThought.provision` (via `provisionFrontierCli` in `packages/core/src/brain/cortex/conscious/frontier-cli.ts`). The conscious agent invokes it as a Bash tool call:
 - `frontier start "<task>"` — starts a worker session, returns a handle id.
 - `frontier start --model <name> "<task>"` — selects an alternate model (e.g., `opus` for hard-reasoning sub-tasks).
 - `frontier poll <id>` / `frontier wait <id>` — streams partial or final worker output back.
@@ -391,12 +391,12 @@ The steering and process-runner layers can be fully exercised without Docker:
 
 ```bash
 pnpm exec vitest run \
-  packages/core/src/core/limbic/hypothalamus/process-runner.test.ts
+  packages/core/src/brain/transport/process-runner.test.ts
 ```
 
 #### Phase 4 Scope (Not Yet Built)
 
-`DEFAULT_STEER_CADENCE_TICKS` (in `cortex/loop.ts`) is defined now but is consumed only in Phase 4. The following are deferred to Phase 4: cadence-throttled production of directives, hindbrain/forebrain running during a session, escalation, completion-marker detection, and an end-to-end steered/real-container smoke test.
+`DEFAULT_STEER_CADENCE_TICKS` (in `brain/loop/loop.ts`) is defined now but is consumed only in Phase 4. The following are deferred to Phase 4: cadence-throttled production of directives, hindbrain/forebrain running during a session, escalation, completion-marker detection, and an end-to-end steered/real-container smoke test.
 
 ## Step 7: Conscious-Session Transport (Phase 4a)
 
