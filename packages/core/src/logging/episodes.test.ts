@@ -6,6 +6,7 @@ import * as path from "node:path"
 import {
   ARGS_SUMMARY_MAX,
   EPISODE_RETAIN_CYCLES,
+  EPOCH_SCAN_MAX_BYTES,
   TOOL_EPISODE_FILE,
   TRANSITION_EPISODE_FILE,
   summarizeArgs,
@@ -14,11 +15,17 @@ import {
   setEpisodeStep,
   episodeContext,
   resetEpisodeContext,
+  beginEpisodeEpoch,
+  currentEpisodeEpoch,
+  mintStepId,
   appendToolEpisode,
   appendTransitionEpisode,
+  sliceCurrentCycle,
+  readCurrentCycleEpisodes,
   retainLastCycles,
   finishEpisodeCycle,
   type ToolEpisode,
+  type WmTransitionEpisode,
 } from "./episodes.js"
 
 const toolRecord = (over: Partial<ToolEpisode> = {}): ToolEpisode => ({
@@ -79,6 +86,159 @@ describe("episode context", () => {
     expect(episodeContext("ada")).toEqual({ tick: 7, stepId: null })
     resetEpisodeContext("ada")
     expect(episodeContext("ada")).toEqual({ tick: null, stepId: null })
+  })
+})
+
+describe("run epoch + stepId minting (uniqueness across runs AND process restarts)", () => {
+  it("mintStepId composes c<epoch>-s<tick>-<step>, human-readable + citable", () => {
+    expect(mintStepId("1", 5, 0)).toBe("c1-s5-0")
+    expect(mintStepId("3", 42, 2)).toBe("c3-s42-2")
+    expect(mintStepId("tabc123", 1, 0)).toBe("ctabc123-s1-0") // timestamp-fallback epoch
+  })
+
+  it("starts at 1 on a fresh character, increments in-process, clears the stale context", () => {
+    // Simulate a prior run's dangling context.
+    setEpisodeTick("ada", 99)
+    setEpisodeStep("ada", "c1-s99-9")
+    const e1 = beginEpisodeEpoch("ada")
+    expect(e1).toBe("1")
+    // Context cleared so no stale stepId bleeds into the new run.
+    expect(episodeContext("ada")).toEqual({ tick: null, stepId: null })
+    const e2 = beginEpisodeEpoch("ada")
+    expect(e2).toBe("2")
+    expect(mintStepId(e1, 1, 0)).not.toBe(mintStepId(e2, 1, 0))
+  })
+
+  it("a RESTARTED process continues past epochs already on disk — the cross-session collision fix", async () => {
+    // Process A: epoch 1, mints c1-s1-0 and persists its step-start.
+    const runA = beginEpisodeEpoch("ada")
+    const idA = mintStepId(runA, 1, 0)
+    expect(idA).toBe("c1-s1-0")
+    await Effect.runPromise(
+      appendTransitionEpisode("ada", {
+        type: "step-start", ts: "t", tick: 1, stepId: idA,
+        task: "a", goal: "g", skill: null, wmDeltas: null,
+      }),
+    )
+    // Process restart: ALL in-memory module state for the character is gone,
+    // but episodes-transition.jsonl persists (append-mode across restarts, and
+    // rotation is by CYCLE count, so the retained window spans restarts).
+    resetEpisodeContext("ada")
+    // Process B, same tick/step as A — the exact shape of the observed 23x
+    // "s1-0" cross-session collisions. It must NOT re-issue A's epoch.
+    const runB = beginEpisodeEpoch("ada")
+    const idB = mintStepId(runB, 1, 0)
+    expect(idB).not.toBe(idA)
+    expect(runB).toBe("2")
+  })
+
+  it("scans the tool stream too, so a step-start lost to a swallowed write still cannot collide", async () => {
+    await Effect.runPromise(appendToolEpisode("ada", toolRecord({ stepId: "c7-s2-0" })))
+    resetEpisodeContext("ada") // restart; transition file absent, tool file has c7
+    expect(beginEpisodeEpoch("ada")).toBe("8")
+  })
+
+  it("legacy epoch-less ids (s1-0) are ignored by the scan and can never collide with new mints", async () => {
+    await Effect.runPromise(
+      appendTransitionEpisode("ada", {
+        type: "step-start", ts: "t", tick: 1, stepId: "s1-0",
+        task: "old", goal: "g", skill: null, wmDeltas: null,
+      }),
+    )
+    resetEpisodeContext("ada")
+    const e = beginEpisodeEpoch("ada")
+    expect(e).toBe("1")
+    expect(mintStepId(e, 1, 0)).toBe("c1-s1-0") // distinct from legacy "s1-0"
+  })
+
+  it("falls back to a TIMESTAMP epoch (never a low counter) when the scan errors", () => {
+    // Make the logs path unreadable-as-a-directory: players/ada/logs is a FILE,
+    // so opening logs/episodes-transition.jsonl fails ENOTDIR (not ENOENT).
+    fs.mkdirSync(path.join(root, "players", "ada"), { recursive: true })
+    fs.writeFileSync(path.join(root, "players", "ada", "logs"), "not a dir", "utf8")
+    const e = beginEpisodeEpoch("ada")
+    expect(e).toMatch(/^t[0-9a-z]+$/) // ms-since-epoch base36 — unique across restarts
+    // A timestamp epoch can never collide with any numeric epoch's ids.
+    expect(mintStepId(e, 1, 0)).not.toMatch(/^c\d+-/)
+  })
+
+  it("epoch state is per-character", () => {
+    resetEpisodeContext("bob")
+    beginEpisodeEpoch("ada")
+    beginEpisodeEpoch("ada")
+    expect(beginEpisodeEpoch("ada")).toBe("3")
+    expect(beginEpisodeEpoch("bob")).toBe("1") // independent
+    resetEpisodeContext("bob")
+  })
+
+  it("currentEpisodeEpoch exposes the issued epoch for record stamping; reset clears it", () => {
+    expect(currentEpisodeEpoch("ada")).toBeNull()
+    const e = beginEpisodeEpoch("ada")
+    expect(currentEpisodeEpoch("ada")).toBe(e)
+    resetEpisodeContext("ada")
+    expect(currentEpisodeEpoch("ada")).toBeNull()
+  })
+
+  it("burying scenario: >512KB of null-stepId tier blobs after the last minted id — the epoch stamp on the blobs themselves rescues the scan", async () => {
+    // Run A mints c1-s1-0 (step-start persisted, ZERO tool calls), then idles
+    // hard: every idle orient/decide appends a multi-KB tier record with
+    // stepId:null. The stepId evidence ends up buried beyond the scan window in
+    // BOTH streams (the tool stream is empty) — the residual collision path.
+    const e = beginEpisodeEpoch("ada")
+    const idA = mintStepId(e, 1, 0)
+    await Effect.runPromise(
+      appendTransitionEpisode("ada", {
+        type: "step-start", ts: "t", tick: 1, stepId: idA,
+        task: "a", goal: "g", skill: null, wmDeltas: null,
+      }),
+    )
+    const blob = "x".repeat(8 * 1024)
+    for (let i = 0; i < 80; i++) {
+      await Effect.runPromise(
+        appendTransitionEpisode("ada", {
+          type: "tier", ts: "t", tick: 2 + i, stepId: null, phase: "orient",
+          orientKind: "plan", epoch: e, prompt: blob, output: {},
+        }),
+      )
+    }
+    // Sanity: the step-start really is beyond the tail window.
+    expect(fs.statSync(logsPath(TRANSITION_EPISODE_FILE)).size).toBeGreaterThan(
+      EPOCH_SCAN_MAX_BYTES + 8 * 1024,
+    )
+    resetEpisodeContext("ada") // restart
+    expect(beginEpisodeEpoch("ada")).toBe("2") // NOT "1" — c1 must not re-mint
+  })
+
+  it("fails closed to a timestamp epoch when the only retained evidence is timestamp-epoch stamps", async () => {
+    // A prior run degraded to a t-epoch (scan failure) and its stamped records
+    // are the only evidence left in the window: numeric history may be buried
+    // beneath them, so restarting the counter at 1 could silently collide —
+    // fail closed to a fresh t-epoch instead.
+    await Effect.runPromise(
+      appendTransitionEpisode("ada", {
+        type: "tier", ts: "t", tick: 1, stepId: null, phase: "orient",
+        epoch: "tabc12", prompt: "p", output: {},
+      }),
+    )
+    resetEpisodeContext("ada")
+    expect(beginEpisodeEpoch("ada")).toMatch(/^t[0-9a-z]+$/)
+  })
+
+  it("mixed evidence: numeric epochs continue numerically even alongside timestamp stamps", async () => {
+    await Effect.runPromise(
+      appendTransitionEpisode("ada", {
+        type: "tier", ts: "t", tick: 1, stepId: "ctabc12-s1-0", phase: "decide",
+        epoch: "tabc12", prompt: "p", output: {},
+      }),
+    )
+    await Effect.runPromise(
+      appendTransitionEpisode("ada", {
+        type: "tier", ts: "t", tick: 2, stepId: null, phase: "decide",
+        epoch: "5", prompt: "p", output: {},
+      }),
+    )
+    resetEpisodeContext("ada")
+    expect(beginEpisodeEpoch("ada")).toBe("6")
   })
 })
 
@@ -165,5 +325,100 @@ describe("finishEpisodeCycle", () => {
   it("never fails, even when the logs path is unwritable", async () => {
     fs.writeFileSync(path.join(root, "players"), "not a directory")
     await expect(Effect.runPromise(finishEpisodeCycle("ada"))).resolves.toBeUndefined()
+  })
+})
+
+describe("wm transition records (Stage 2)", () => {
+  it("appendTransitionEpisode accepts a type:\"wm\" record and rotation treats it as cycle content", async () => {
+    const wmRecord: WmTransitionEpisode = {
+      type: "wm",
+      ts: "2026-07-02T00:00:00.000Z",
+      tick: 3,
+      stepId: null,
+      deltas: [{ op: "add", id: "t1", text: "x", parent: null, by: "harness", ts: "2026-07-02T00:00:00.000Z" }],
+    }
+    await Effect.runPromise(appendTransitionEpisode("ada", wmRecord))
+    const [rec] = readLines(TRANSITION_EPISODE_FILE).map((l) => JSON.parse(l))
+    expect(rec).toMatchObject({ type: "wm", tick: 3 })
+    expect(rec.deltas).toHaveLength(1)
+    // Rotation: wm records are ordinary cycle content, dropped with their cycle.
+    await Effect.runPromise(finishEpisodeCycle("ada"))
+    for (let c = 0; c < EPISODE_RETAIN_CYCLES; c++) await Effect.runPromise(finishEpisodeCycle("ada"))
+    const remaining = readLines(TRANSITION_EPISODE_FILE).map((l) => JSON.parse(l))
+    expect(remaining.every((r) => r.type === "cycle-boundary")).toBe(true)
+  })
+})
+
+describe("finishEpisodeCycle — per-file isolation (deferred Stage-1 fix)", () => {
+  it("still writes the transition boundary when the tool stream is unwritable", async () => {
+    // Make the tool stream path a DIRECTORY: appendFile → EISDIR for that stream only.
+    fs.mkdirSync(logsPath(TOOL_EPISODE_FILE), { recursive: true })
+    await expect(Effect.runPromise(finishEpisodeCycle("ada"))).resolves.toBeUndefined()
+    const transitions = readLines(TRANSITION_EPISODE_FILE).map((l) => JSON.parse(l))
+    expect(transitions.some((r) => r.type === "cycle-boundary")).toBe(true)
+  })
+
+  it("removes a stale orphaned .tmp left by a previously failed rotation", async () => {
+    await Effect.runPromise(appendToolEpisode("ada", toolRecord()))
+    fs.writeFileSync(`${logsPath(TOOL_EPISODE_FILE)}.tmp`, "orphan from a crashed rotation")
+    await Effect.runPromise(finishEpisodeCycle("ada"))
+    expect(fs.existsSync(`${logsPath(TOOL_EPISODE_FILE)}.tmp`)).toBe(false)
+    // The real stream is untouched by the orphan: its record + boundary parse fine.
+    const records = readLines(TOOL_EPISODE_FILE).map((l) => JSON.parse(l))
+    expect(records.some((r) => r.tool === "bash")).toBe(true)
+    expect(records.some((r) => r.type === "cycle-boundary")).toBe(true)
+  })
+})
+
+describe("sliceCurrentCycle / readCurrentCycleEpisodes", () => {
+  it("sliceCurrentCycle returns the tail past the last cycle-boundary", () => {
+    const lines = [
+      JSON.stringify({ type: "step-end", stepId: "a" }),
+      JSON.stringify({ type: "cycle-boundary", ts: "t1" }),
+      JSON.stringify({ type: "step-end", stepId: "b" }),
+      JSON.stringify({ type: "step-end", stepId: "c" }),
+    ]
+    expect(sliceCurrentCycle(lines)).toEqual([lines[2], lines[3]])
+  })
+  it("sliceCurrentCycle returns all lines when there is no boundary", () => {
+    const lines = [JSON.stringify({ type: "step-end", stepId: "a" })]
+    expect(sliceCurrentCycle(lines)).toEqual(lines)
+  })
+
+  it("reads only the current (not-yet-closed) cycle from both streams", async () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-cur-"))
+    setEpisodeLogRoot(testRoot)
+    try {
+      // Prior cycle: one tool call + one step, then a boundary.
+      await Effect.runPromise(appendToolEpisode("ada", {
+        ts: "t", tick: 1, stepId: "old", tool: "bash", argsSummary: "{}", status: "completed", durationMs: 1,
+      }))
+      await Effect.runPromise(appendTransitionEpisode("ada", {
+        type: "step-end", ts: "t", tick: 1, stepId: "old", task: "old", goal: "g",
+        verdict: "succeeded", transition: "next_step", skill: null, wmDeltas: null,
+      }))
+      await Effect.runPromise(finishEpisodeCycle("ada")) // closes cycle 1
+
+      // Current cycle: one new tool call + step-end.
+      await Effect.runPromise(appendToolEpisode("ada", {
+        ts: "t", tick: 2, stepId: "new", tool: "read", argsSummary: "{}", status: "error", durationMs: 1,
+      }))
+      await Effect.runPromise(appendTransitionEpisode("ada", {
+        type: "step-end", ts: "t", tick: 2, stepId: "new", task: "new", goal: "g",
+        verdict: "failed", transition: "next_step", skill: "securing-fuel", wmDeltas: null,
+      }))
+
+      const { tool, transition } = await Effect.runPromise(readCurrentCycleEpisodes("ada"))
+      expect(tool.map((t) => t.stepId)).toEqual(["new"])
+      expect(transition.filter((r) => r.type === "step-end").map((r) => (r as { stepId: string }).stepId)).toEqual(["new"])
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(testRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("returns empty arrays when the episode root is unset", async () => {
+    setEpisodeLogRoot(null)
+    expect(await Effect.runPromise(readCurrentCycleEpisodes("ghost"))).toEqual({ tool: [], transition: [] })
   })
 })

@@ -25,12 +25,12 @@ export type Behavior =
   | { type: "session_end"; reason: "clean" | "signal" | "error"; signal?: string; digest: BehaviorDigest }
   | {
       type: "provision"
-      component: "container" | "embed_server" | "memory_cli" | "conscious_provider"
+      component: "container" | "embed_server" | "memory_cli" | "wm_cli" | "conscious_provider"
       status: "ready" | "failed"
       detail?: string
     }
   | { type: "phase"; phase: string; transition: "enter" | "exit" }
-  | { type: "reflection"; stage: "consolidate" | "dream" | "promote"; status: "start" | "done"; counts?: Record<string, number> }
+  | { type: "reflection"; stage: "dream" | "promote" | "retrospect" | "synthesisBootstrap" | "macro"; status: "start" | "done"; counts?: Record<string, number> }
   // ── Cognition (Wave 2) ──────────────────────────────────────
   | { type: "tier_call"; tier: "hindbrain" | "forebrain" | "conscious"; latencyMs: number; outcome: "ok" | "error" | "timeout"; attempt?: number }
   | { type: "appraisal"; disposition: string; weight?: number; escalated: boolean }
