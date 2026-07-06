@@ -186,36 +186,38 @@ on the host. It is installed in the image at `/home/node/sdk-runner/sdk-runner.m
 The hippocampus is the **working-memory** tier: it keeps the character's diary coherent and
 bounded so context windows don't grow unbounded. Working memory = the diary + cull; long-term
 memory = the append-only vector store reached via the `memory` CLI, a separate tier documented
-in [docs/MEMORY.md](../../../../../docs/MEMORY.md). Two passes
-run in the reflection phase (`core/orchestrator/planned-action.ts`, `runReflection`):
-`consolidate` rewrites, then `dream` culls.
-
-### consolidate.execute()
-
-`consolidate` (`consolidate.ts`) is the per-cycle, all-domains diary rewrite. It reads the
-current `DIARY.md` -- the prior diary plus this session's raw per-step appends -- and rewrites
-it into coherent narrative entries via `runTurn` (`noTools`, `model = resolveModel(models,
-"dinner", "smart")`, the role the old SpaceMolt "dinner" pass used). It may *grow* the file;
-the cull reins it back in next.
-
-**Dependencies:** `CharacterFs`, `CharacterLog` (plus the process runner / OAuth for the turn).
+in [docs/MEMORY.md](../../../../../docs/MEMORY.md). A **single unified** compression step runs
+in the reflection phase (`core/orchestrator/planned-action.ts`, `runReflection`):
+`dream.execute()` consolidates the diary, then culls it and secrets — one module, one
+`.execute()`, one runtime.
 
 ### dream.execute()
 
-`dream` (`dream.ts`) is the cull: it compresses a character's diary and secrets down toward
-`DIARY_TARGET_LINES = 150` (`dream.ts:16`). The dream type is probabilistic:
+`dream` (`dream.ts`) is the per-cycle, all-domains memory compression. It is one
+orchestrated operation with three sequential local-model turns; **every turn resolves the
+single `dreamCompression` role, which defaults to the local conscious-tier mlx model (opencode
+runtime) — Claude is never invoked in the reflection path.**
+
+1. **Consolidate** — read the current `DIARY.md` (prior diary plus this session's raw per-step
+   appends) and rewrite it into coherent narrative entries (`skills/consolidate.md` prompt,
+   `noTools`). May *grow* the file; the cull below reins it back in. A failed/blank turn keeps
+   the original diary untouched and is surfaced as a structured `kind:"error"` event.
+2. **Cull diary** — compress the (consolidated) diary down toward `DIARY_TARGET_LINES = 150`
+   (`dream.ts:16`), clamped to **never grow** the file.
+3. **Cull secrets** — same never-grows compression applied to `SECRETS.md`.
+
+The dream type (used for the cull prompts) is probabilistic:
 
 - **Normal** (most common) -- straightforward compression
 - **Good** (roll >= 94) -- optimistic tone
 - **Nightmare** (roll < secretsLines/6, max 15%) -- darker, more paranoid compression
 
 The probability of nightmares scales with the number of secrets a character has accumulated.
-Each dream type uses different prompt templates from `hippocampus/prompts/`.
+Each dream type uses different prompt templates from `hippocampus/prompts/`. Every cull turn
+is guarded by the same blank-turn / never-grows checks, so a timeout or bloated output keeps
+the original content rather than wiping or growing the file.
 
-`runReflection` runs `consolidate`, then triggers `dream` when the diary line count exceeds
-the threshold.
-
-**Dependencies:** `Claude`, `CharacterFs`, `CharacterLog`.
+**Dependencies:** `CharacterFs`, `CharacterLog` (plus the process runner / OAuth for the turns).
 
 ## Hindbrain Appraisal & Escalation -- the limbic drives
 
