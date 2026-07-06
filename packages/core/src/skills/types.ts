@@ -65,17 +65,22 @@ export interface WaitState {
 }
 
 /**
- * Result of the decide skill — what the agent chooses to do.
+ * Result of the decide skill — what the agent chooses to do. `skill` (spec §3)
+ * is an OPTIONAL agent-maintained skill the model chose to wear for this work,
+ * by name; the loop resolves it to a body injected into the step task. Kept a
+ * string-or-absent value by sanitizeDecideSkill (state.ts) against small-model
+ * junk. Orthogonal to the decision, so it is optional on every variant.
  */
 export type DecideResult =
   | {
       readonly decision: "plan"
       readonly reasoning: string
       readonly steps: ReadonlyArray<PlanStep>
+      readonly skill?: string
     }
-  | { readonly decision: "continue"; readonly reasoning: string }
-  | { readonly decision: "wait"; readonly reasoning: string; readonly wait: WaitState }
-  | { readonly decision: "terminate"; readonly reasoning: string; readonly summary: string }
+  | { readonly decision: "continue"; readonly reasoning: string; readonly skill?: string }
+  | { readonly decision: "wait"; readonly reasoning: string; readonly wait: WaitState; readonly skill?: string }
+  | { readonly decision: "terminate"; readonly reasoning: string; readonly summary: string; readonly skill?: string }
   | {
       readonly decision: "discover"
       readonly reasoning: string
@@ -84,6 +89,7 @@ export type DecideResult =
         readonly tier: "fast" | "smart"
         readonly timeoutTicks: number
       }
+      readonly skill?: string
     }
 
 /**

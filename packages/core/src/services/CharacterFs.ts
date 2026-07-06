@@ -3,15 +3,41 @@ import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
 import { TEMPLATE_DRIVES } from "../core/drives.js"
+import {
+  parseSkillFile,
+  serializeSkillFile,
+  slugify,
+  validateSkillWrite,
+  type SkillDoc,
+  type SkillMeta,
+} from "./skills-core.js"
+
+/** The bounded memory-index doc macro rewrites and orient injects (spec §4 macro). */
+export const SYNTHESIS_FILE = "SYNTHESIS.md"
 
 export interface Credentials {
   username: string
   password: string
 }
 
+/**
+ * Why a CharacterFs write failed. `"validation"` is a deterministic rejection —
+ * the input violated a cap/shape rule (writeSkill's validateSkillWrite) and will
+ * fail identically on every retry, so a caller should record it as a real
+ * rejection. `"io"` (the default) is a transient/environmental filesystem
+ * failure that a later cycle may succeed at, so a caller should NOT treat it as
+ * a rejection — it should leave the work pending for retry. The macro
+ * adjudication loop relies on this split (see hippocampus/macro.ts).
+ */
+export type CharacterFsErrorKind = "io" | "validation"
+
 export class CharacterFsError {
   readonly _tag = "CharacterFsError"
-  constructor(readonly message: string, readonly cause?: unknown) {}
+  constructor(
+    readonly message: string,
+    readonly cause?: unknown,
+    readonly kind: CharacterFsErrorKind = "io",
+  ) {}
   toString() { return this.message }
 }
 
@@ -33,6 +59,12 @@ export class CharacterFs extends Context.Tag("CharacterFs")<
     readonly readPalette: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly readDrives: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly characterExists: (char: CharacterConfig) => Effect.Effect<boolean, CharacterFsError>
+    readonly listSkills: (char: CharacterConfig) => Effect.Effect<SkillMeta[], CharacterFsError>
+    readonly readSkill: (char: CharacterConfig, name: string) => Effect.Effect<SkillDoc | null, CharacterFsError>
+    readonly writeSkill: (char: CharacterConfig, skill: SkillDoc) => Effect.Effect<void, CharacterFsError>
+    readonly readSynthesis: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
+    readonly writeSynthesis: (char: CharacterConfig, content: string) => Effect.Effect<void, CharacterFsError>
+    readonly deleteSkill: (char: CharacterConfig, name: string) => Effect.Effect<void, CharacterFsError>
   }
 >() {}
 
@@ -109,6 +141,95 @@ export const CharacterFsLive = Layer.effect(
         fs.exists(char.dir).pipe(
           Effect.mapError((e) => new CharacterFsError("Failed to check character dir", e)),
         ),
+
+      // ── Agent-maintained skills (spec §3) ──────────────────────
+      // players/<name>/me/skills/<slug>.md. Reads never fail (missing dir/file
+      // → []/null — the agent can delete files directly). writeSkill fails only
+      // on a cap violation or genuine IO error.
+      listSkills: (char) =>
+        Effect.gen(function* () {
+          const dir = path.join(char.dir, "skills")
+          const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))
+          if (!exists) return []
+          const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]))
+          const metas: SkillMeta[] = []
+          for (const entry of entries) {
+            if (!entry.endsWith(".md")) continue
+            const slug = entry.slice(0, -3)
+            const text = yield* fs.readFileString(path.join(dir, entry)).pipe(Effect.orElseSucceed(() => ""))
+            if (!text) continue
+            const d = parseSkillFile(slug, text)
+            metas.push({ slug: d.slug, name: d.name, description: d.description, whenToUse: d.whenToUse })
+          }
+          metas.sort((a, b) => a.slug.localeCompare(b.slug))
+          return metas
+        }),
+
+      readSkill: (char, name) =>
+        Effect.gen(function* () {
+          const slug = slugify(name)
+          const file = path.join(char.dir, "skills", `${slug}.md`)
+          const exists = yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))
+          if (!exists) return null
+          const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))
+          return text ? parseSkillFile(slug, text) : null
+        }),
+
+      writeSkill: (char, skill) =>
+        Effect.gen(function* () {
+          const dir = path.join(char.dir, "skills")
+          yield* fs.makeDirectory(dir, { recursive: true }).pipe(
+            Effect.mapError((e) => new CharacterFsError("Failed to make skills dir", e)),
+          )
+          const slug = slugify(skill.name)
+          const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]))
+          const slugs = entries.filter((e) => e.endsWith(".md")).map((e) => e.slice(0, -3))
+          const check = validateSkillWrite(slugs, slug, skill.body, {
+            name: skill.name,
+            description: skill.description,
+            whenToUse: skill.whenToUse,
+          })
+          // A cap/shape violation is a DETERMINISTIC rejection (kind:"validation")
+          // — it fails identically on retry, so the caller records it as rejected.
+          // The makeDirectory/writeFileString failures below stay kind:"io" (the
+          // default): transient, so the caller leaves the write pending for retry.
+          if (!check.ok) return yield* Effect.fail(new CharacterFsError(check.error, undefined, "validation"))
+          yield* fs
+            .writeFileString(path.join(dir, `${slug}.md`), serializeSkillFile({ ...skill, slug }))
+            .pipe(Effect.mapError((e) => new CharacterFsError("Failed to write skill", e)))
+        }),
+
+      // ── Self-model synthesis (spec §4 macro) ───────────────────
+      // me/SYNTHESIS.md — read like an identity file (missing → ""), written
+      // only by the macro cycle (bounded there). Injected into orient.
+      readSynthesis: (char) =>
+        readFileOr(path.join(char.dir, SYNTHESIS_FILE), ""),
+
+      writeSynthesis: (char, content) =>
+        Effect.gen(function* () {
+          // Unlike writeDiary/writeSecrets (identity files provisioned before
+          // the cortex loop ever runs), me/ may not yet exist when the macro
+          // cycle first fires — ensure it does, mirroring writeSkill's dir setup.
+          yield* fs.makeDirectory(char.dir, { recursive: true }).pipe(
+            Effect.mapError((e) => new CharacterFsError("Failed to make character dir", e)),
+          )
+          yield* fs.writeFileString(path.join(char.dir, SYNTHESIS_FILE), content).pipe(
+            Effect.mapError((e) => new CharacterFsError("Failed to write synthesis", e)),
+          )
+        }),
+
+      // The sanctioned macro retire path: remove me/skills/<slug>.md. A missing
+      // file is a no-op (idempotent) — the agent may already have deleted it
+      // directly. Only ever targets a file under me/skills/ (slug-derived).
+      deleteSkill: (char, name) =>
+        Effect.gen(function* () {
+          const file = path.join(char.dir, "skills", `${slugify(name)}.md`)
+          const exists = yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))
+          if (!exists) return
+          yield* fs.remove(file).pipe(
+            Effect.mapError((e) => new CharacterFsError("Failed to delete skill", e)),
+          )
+        }),
     })
   }),
 )
