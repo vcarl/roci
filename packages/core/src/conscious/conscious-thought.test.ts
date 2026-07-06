@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { Effect, Layer } from "effect"
 import { CommandExecutor } from "@effect/platform"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, existsSync, readFileSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import nodePath from "node:path"
 import { ConsciousThought, ConsciousThoughtTest, ConsciousThoughtLive } from "./conscious-thought.js"
@@ -223,4 +223,53 @@ describe("ConsciousThought.provision writes the frontier CLI", () => {
   // eagerly at container startup in apps/roci/src/orchestrator.ts, so the former
   // "execs the memory CLI AS ROOT" / "logs a structured error on memory failure"
   // cases moved out of conscious-thought's responsibility and were removed here.
+
+  it("provisions the working-memory injection: opencode.json + seeded wm files", async () => {
+    const StubDockerOk = Layer.succeed(
+      Docker,
+      Docker.of({ exec: () => Effect.succeed("") } as unknown as typeof Docker.Service),
+    )
+    const tempDir = mkdtempSync(nodePath.join(tmpdir(), "roci-wm-provision-"))
+    const charDir = nodePath.join(tempDir, "players", "ada", "me")
+    const program = Effect.gen(function* () {
+      const ct = yield* ConsciousThought
+      yield* ct.provision({ ...provisionOpts(tempDir), char: { name: "ada", dir: charDir } })
+    })
+    await Effect.runPromise(
+      Effect.provide(program, Layer.mergeAll(ConsciousThoughtLive, StubDockerOk, StubCharacterLog)),
+    )
+    // Project-local opencode config: instructions → me/WM.md.
+    const config = JSON.parse(
+      readFileSync(nodePath.join(tempDir, "players", "ada", "opencode.json"), "utf8"),
+    )
+    expect(config.instructions).toEqual(["me/WM.md"])
+    // The instruction file itself is seeded so it exists from the first request.
+    expect(readFileSync(nodePath.join(charDir, "WM.md"), "utf8")).toContain("# Working memory")
+    expect(existsSync(nodePath.join(charDir, "wm.json"))).toBe(true)
+  })
+
+  it("seeds the two starter skills (editing-skills, learning) idempotently", async () => {
+    const StubDockerOk = Layer.succeed(
+      Docker,
+      Docker.of({ exec: () => Effect.succeed("") } as unknown as typeof Docker.Service),
+    )
+    const tempDir = mkdtempSync(nodePath.join(tmpdir(), "roci-skill-provision-"))
+    const charDir = nodePath.join(tempDir, "players", "ada", "me")
+    const provision = () =>
+      Effect.provide(
+        Effect.flatMap(ConsciousThought, (ct) =>
+          ct.provision({ ...provisionOpts(tempDir), char: { name: "ada", dir: charDir } }),
+        ),
+        Layer.mergeAll(ConsciousThoughtLive, StubDockerOk, StubCharacterLog),
+      )
+    await Effect.runPromise(provision())
+    const skillsDir = nodePath.join(charDir, "skills")
+    expect(readdirSync(skillsDir).sort()).toEqual(["editing-skills.md", "learning.md"])
+    expect(readFileSync(nodePath.join(skillsDir, "editing-skills.md"), "utf8")).toContain("name: editing-skills")
+
+    // Idempotent: a re-provision leaves an agent-revised skill untouched.
+    require("node:fs").writeFileSync(nodePath.join(skillsDir, "learning.md"), "REVISED")
+    await Effect.runPromise(provision())
+    expect(readFileSync(nodePath.join(skillsDir, "learning.md"), "utf8")).toBe("REVISED")
+  })
 })

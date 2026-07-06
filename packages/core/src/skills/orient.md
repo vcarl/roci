@@ -32,9 +32,16 @@ You are the situation synthesizer for an autonomous agent. Your job is to take a
 ### Recent Diary
 {{diary}}
 
+### Memory Index (synthesis)
+{{synthesis}}
+
 ## Emotional Weight from Observations
 
 {{emotionalWeight}}
+
+## Working Memory (open todos)
+
+{{workingMemory}}
 
 ## Instructions
 
@@ -43,7 +50,7 @@ Synthesize a situation assessment. You are an attention mechanism — your most 
 Consider:
 - What changed since the last orientation? Focus on meaningful deltas, not noise.
 - Are there patterns across accumulated events that individually seemed minor but together paint a concerning (or encouraging) picture? If so, amplify the emotional state.
-- What context from the agent's identity (background, values, diary) is relevant right now? Don't surface everything — surface what matters for the current situation.
+- What context from the agent's identity (background, values, diary, memory index) is relevant right now? Don't surface everything — surface what matters for the current situation.
 - What metrics or quantitative signals would help the decision-maker calibrate?
 
 Assess not just the world but the agent's own footing in it. If it doesn't yet know its tools, the world's affordances, or the paths open to it, say so — surface those gaps as an optional **"Open questions"** entry inside `sections[]` — and set `confidence` accordingly. A cold start (little grounding in the live world) is normally **low** confidence.

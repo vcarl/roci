@@ -11,11 +11,14 @@ import { Docker } from "../services/Docker.js"
 import {
   provisionConsciousProvider,
   writeCharacterAgentFile,
+  writeCharacterOpencodeConfig,
   consciousModelLabel,
   CONSCIOUS_AGENT_NAME,
 } from "./opencode-config.js"
 import type { AnyModel } from "../core/limbic/hypothalamus/runtime.js"
 import { provisionFrontierCli } from "./frontier-cli.js"
+import { ensureWmFiles } from "./wm-store.js"
+import { ensureSeedSkills } from "../services/skills-core.js"
 
 /** Config for a single conscious-tier OpenCode turn. */
 export interface ConsciousTurnConfig {
@@ -92,6 +95,22 @@ const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker |
         modelLabel: consciousModelLabel(opts.handle),
       }),
     )
+    // Working memory (spec §2 Injection): the project-local opencode.json
+    // points `instructions` at me/WM.md, and the wm files are seeded so the
+    // instruction file exists from the first request. Runs once before the
+    // first tick — provisioning, not a lazy in-loop load (the `wm` CLI itself
+    // is provisioned eagerly at container startup in orchestrator.ts).
+    yield* Effect.try(() =>
+      writeCharacterOpencodeConfig({
+        playersDir: path.resolve(opts.char.dir, "../.."),
+        playerName: opts.char.name,
+      }),
+    )
+    yield* ensureWmFiles(opts.char)
+    // Skills (spec §3 Seeding): seed editing-skills + learning idempotently
+    // before the first tick — provisioning, not a lazy in-loop load. Never
+    // clobbers an existing (agent- or macro-revised) skill file.
+    yield* ensureSeedSkills(opts.char)
     // Provision the global in-container provider config (requires Docker).
     yield* provisionConsciousProvider(opts.containerId, opts.handle)
     // Provision the frontier CLI (heavy-lifting delegation tool) into the container.
