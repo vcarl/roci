@@ -26,6 +26,8 @@ import { validateAndStart } from "./setup/validate-and-start.js"
 import { OAuthTokenLive } from "@roci/core/services/OAuthToken.js"
 import {
   DEFAULT_MODEL_CONFIG,
+  assertValidModelConfig,
+  ModelConfigError,
   type ModelConfig,
   type Tier,
 } from "@roci/core/core/model-config.js"
@@ -48,8 +50,14 @@ const modelServiceLayer = ModelServiceLive.pipe(Layer.provide(modelBackendLayer)
 /**
  * Load .roci/models.json if present and merge with defaults + CLI overrides.
  * CLI overrides take precedence over the file; the file takes precedence over defaults.
+ *
+ * Fails closed: after merging, every tier/role model string is validated against
+ * the single source of truth for runtime dispatch (`assertValidModelConfig` →
+ * `modelRuntime`). A legal-but-unrecognized override (e.g. a typo'd model, or a
+ * bare provider-less name) throws {@link ModelConfigError} here at load rather than
+ * silently misrouting a turn to the wrong runtime later.
  */
-function loadModelConfig(opts: {
+export function loadModelConfig(opts: {
   tierFast: Option.Option<string>
   tierSmart: Option.Option<string>
   tierReasoning: Option.Option<string>
@@ -75,8 +83,24 @@ function loadModelConfig(opts: {
   if (Option.isSome(opts.tierReasoning)) cliTiers.reasoning = opts.tierReasoning.value
   tiers = { ...tiers, ...cliTiers }
 
-  return { tiers, roles }
+  const config: ModelConfig = { tiers, roles }
+  // Fail closed: one authoritative model→runtime check shared with dispatch.
+  assertValidModelConfig(config)
+  return config
 }
+
+/**
+ * `loadModelConfig` as a typed Effect for the command handlers: a
+ * {@link ModelConfigError} surfaces as a clean typed failure (actionable message,
+ * no defect stack trace) instead of a thrown defect inside Effect.gen.
+ */
+const loadModelConfigEffect = (
+  opts: Parameters<typeof loadModelConfig>[0],
+): Effect.Effect<ModelConfig, ModelConfigError> =>
+  Effect.try({
+    try: () => loadModelConfig(opts),
+    catch: (e) => (e instanceof ModelConfigError ? e : new ModelConfigError(String(e))),
+  })
 
 // Shared options
 const tickInterval = Options.integer("tick-interval").pipe(
@@ -102,7 +126,7 @@ const startCommand = Command.make("start", { characters: startCharacters, tickIn
   Effect.gen(function* () {
     const domains = [...args.domain]
     const characters = [...args.characters]
-    const models = loadModelConfig({
+    const models = yield* loadModelConfigEffect({
       tierFast: args.tierFast,
       tierSmart: args.tierSmart,
       tierReasoning: args.tierReasoning,
@@ -648,7 +672,7 @@ const runAutoDetect = (args: {
       return
     }
 
-    const models = loadModelConfig({
+    const models = yield* loadModelConfigEffect({
       tierFast: args.tierFast,
       tierSmart: args.tierSmart,
       tierReasoning: args.tierReasoning,

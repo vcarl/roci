@@ -10,6 +10,7 @@ import { OAuthToken } from "@roci/core/services/OAuthToken.js"
 import type { ModelConfig } from "@roci/core/core/model-config.js"
 import { provisionConsciousProvider } from "@roci/core/conscious/opencode-config.js"
 import { provisionMemoryCli } from "@roci/core/conscious/memory-cli.js"
+import { provisionWmCli } from "@roci/core/conscious/wm-cli.js"
 import { DEFAULT_EMBED_BASE_URL } from "@roci/core/conscious/memory-embed.js"
 import { DEFAULT_CORTEX_MODELS } from "@roci/core/model/handles.js"
 import { launchEmbedServer, reapEmbedServers } from "./embed-server.js"
@@ -145,7 +146,7 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       yield* logBehavior("orchestrator", "main", "provision", { type: "provision", component: "container", status: "ready", detail: containerName })
 
       // Provision the local conscious-tier provider at startup so the `local`
-      // opencode provider exists before any dream (dreamCompression runs on it).
+      // opencode provider exists before any reflection (the `dreamCompression` role runs on it).
       // Idempotent; failure-tolerant — a provisioning failure only logs.
       yield* provisionConsciousProvider(containerId, DEFAULT_CORTEX_MODELS.conscious).pipe(
         Effect.tap(() => logBehavior("orchestrator", "main", "provision", { type: "provision", component: "conscious_provider", status: "ready" })),
@@ -171,6 +172,21 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
         Effect.catchAll((e) =>
           logToConsole("orchestrator", "main", `memory CLI provisioning failed (long-term memory unavailable): ${e}`, "warn").pipe(
             Effect.zipRight(logBehavior("orchestrator", "main", "provision", { type: "provision", component: "memory_cli", status: "failed", detail: String(e) })),
+          ),
+        ),
+      )
+
+      // Provision the in-container `wm` CLI EAGERLY at startup, alongside
+      // `memory` (spec §2: same no-lazy-provisioning rule — core character
+      // infrastructure must exist before any phase runs). Idempotent
+      // (overwrites the script); needs only a running container + root exec.
+      // Failure-tolerant: log loud and continue (working memory degrades to
+      // a read-only WM.md until the next start).
+      yield* provisionWmCli(containerId).pipe(
+        Effect.tap(() => logBehavior("orchestrator", "main", "provision", { type: "provision", component: "wm_cli", status: "ready" })),
+        Effect.catchAll((e) =>
+          logToConsole("orchestrator", "main", `wm CLI provisioning failed (working memory unavailable): ${e}`, "warn").pipe(
+            Effect.zipRight(logBehavior("orchestrator", "main", "provision", { type: "provision", component: "wm_cli", status: "failed", detail: String(e) })),
           ),
         ),
       )

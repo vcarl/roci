@@ -120,13 +120,13 @@ Sessions progress through a sequence of named phases. Each phase returns a `Phas
 #### SpaceMolt Phase Lifecycle
 
 ```
-startup --> active (cortex loop) --> social (dinner) --> reflection (dream) --> active
+startup --> active (cortex loop) --> social --> reflection (dream) --> active
 ```
 
 - **startup** -- Read credentials, connect via WebSocket, compress diary if over threshold
 - **active** -- `runCortex` with domain bundle. On interrupt: restart active. On completion: proceed to social
-- **social** -- Run `dinner.execute()` for social reflection
-- **reflection** -- Run `runReflection` to compress diary if over the `DIARY_TARGET_LINES` threshold (150 lines, `dream.ts:16`). Loop back to active
+- **social** -- A quiet wind-down boundary at the end of a session (the old `dinner.execute()` diary rewrite is now the domain-agnostic consolidate turn inside `runReflection`)
+- **reflection** -- Run `runReflection`, whose unified `dream.execute()` consolidates then culls the diary/secrets toward the `DIARY_TARGET_LINES` target (150 lines, `dream.ts:16`), all on the local model. Loop back to active
 
 #### GitHub Phase Lifecycle
 
@@ -328,7 +328,6 @@ All events are printed type-tagged with timestamp and character name:
 | `src/interrupts.ts` | 10 interrupt rules across 4 priority levels |
 | `src/prompt-builder.ts` | Template-based prompt generation |
 | `src/session-system-prompt.md` | Domain system prompt template |
-| `src/dinner.ts` | Social/dinner phase implementation |
 
 ### CLI and orchestrator -- `apps/roci/` (roci)
 

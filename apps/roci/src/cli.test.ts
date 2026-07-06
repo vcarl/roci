@@ -9,7 +9,8 @@ import { Docker, DockerError, type ContainerInfo } from "@roci/core/services/Doc
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { CharacterFs } from "@roci/core/services/CharacterFs.js"
 import { ModelService, ModelBackendTag } from "@roci/core/services/ModelService.js"
-import { rociCommand, serviceLayer, resolveSetupDescription } from "./cli.js"
+import { ModelConfigError } from "@roci/core/core/model-config.js"
+import { rociCommand, serviceLayer, resolveSetupDescription, loadModelConfig } from "./cli.js"
 
 /**
  * Regression guard for the mlx cold-load bug.
@@ -105,6 +106,60 @@ describe("setup --description threading", () => {
     const result = resolveSetupDescription(Option.some("a grizzled void-trader"), 2)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatch(/single character/)
+  })
+})
+
+describe("loadModelConfig — model→runtime validation at load", () => {
+  // The load path is the one gate that turns a legal-but-wrong override into a
+  // loud failure instead of a silent runtime misroute. These cover the CLI-flag
+  // resolution branch (no .roci/models.json needed).
+
+  it("returns a config with the default tiers and roles when no overrides are given", () => {
+    const config = loadModelConfig({
+      tierFast: Option.none(),
+      tierSmart: Option.none(),
+      tierReasoning: Option.none(),
+    })
+    expect(config.tiers.fast).toBe("haiku")
+    expect(config.tiers.smart).toBe("sonnet")
+    expect(config.tiers.reasoning).toBe("opus")
+  })
+
+  it("accepts alias tier overrides", () => {
+    const config = loadModelConfig({
+      tierFast: Option.some("haiku"),
+      tierSmart: Option.some("sonnet"),
+      tierReasoning: Option.some("opus"),
+    })
+    expect(config.tiers.reasoning).toBe("opus")
+  })
+
+  it("accepts a fully-qualified claude-* id as a tier override", () => {
+    const config = loadModelConfig({
+      tierFast: Option.none(),
+      tierSmart: Option.none(),
+      tierReasoning: Option.some("claude-opus-4-6"),
+    })
+    expect(config.tiers.reasoning).toBe("claude-opus-4-6")
+  })
+
+  it("fails loudly with an actionable error for a garbage tier override (no silent misroute)", () => {
+    // This is the bug class: a legal `--tier-reasoning <garbage>` must fail at
+    // load, naming the offending key + accepted values — NOT quietly route the
+    // frontier-only macro turn to the local model at runtime.
+    let thrown: unknown
+    try {
+      loadModelConfig({
+        tierFast: Option.none(),
+        tierSmart: Option.none(),
+        tierReasoning: Option.some("not-a-real-model"),
+      })
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(ModelConfigError)
+    expect(String(thrown)).toContain("tiers.reasoning")
+    expect(String(thrown)).toContain("not-a-real-model")
   })
 })
 
