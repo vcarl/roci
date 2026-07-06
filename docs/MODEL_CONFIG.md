@@ -6,14 +6,23 @@ Roci runs **two distinct model systems**:
    servers (hindbrain / forebrain / conscious) back the cortex loop. This is where the
    bulk of model traffic goes. See [Cortex MLX Tiers](#cortex-mlx-tiers) below.
 2. **The legacy tier-based `resolveModel` system** — `fast`/`smart`/`reasoning` tiers
-   that a handful of role-based callers still resolve through. As of this writing only
-   **two** roles actually call `resolveModel` at runtime: `dreamCompression` and `dinner`
-   (both in the hippocampus). This system is documented here for those two roles.
+   that role-based callers resolve through. The live roles are the reflection-cycle
+   stages (hippocampus): see the table below.
 
-The `Role` type union in `model-config.ts` now lists only these two live roles. The former
-OODA/brain/scaffold roles (`brainPlan`/`brainInterrupt`/`brainEvaluate`, `diarySubagent`,
-`scaffold*`, `ooda*`) and the `timeoutSummary` role were removed along with the architectures
-that consumed them, so there are no other configurable role knobs.
+The `Role` type union in `model-config.ts` lists exactly the live roles:
+
+| Role | Stage | Default resolution |
+|------|-------|--------------------|
+| `dreamCompression` | per-cycle diary consolidate + cull (`dream.execute`) | the local conscious-tier mlx model (explicit `roles` entry in `DEFAULT_MODEL_CONFIG`) |
+| `retrospect` | per-cycle meso retrospect — skill proposals | `smart` tier (no `roles` entry) |
+| `synthesisBootstrap` | one-time SYNTHESIS.md self-model seed (fires only while the file is absent/empty) | `smart` tier (no `roles` entry) |
+| `macro` | every-Nth-cycle growth stimulation — adjudicate/synthesize/narrate | `reasoning` tier (no `roles` entry) |
+
+The former `dinner` (consolidate) role was collapsed into `dreamCompression` when the two memory
+passes were unified into one step, and the older OODA/brain/scaffold roles
+(`brainPlan`/`brainInterrupt`/`brainEvaluate`, `diarySubagent`, `scaffold*`, `ooda*`) and the
+`timeoutSummary` role were removed along with the architectures that consumed them, so there
+are no other configurable role knobs.
 
 ## Cortex MLX Tiers
 
@@ -51,7 +60,7 @@ modules.
 
 ## Legacy Tier-Based Resolution
 
-The two live `resolveModel` callers resolve a *role* to a concrete model string through a
+The one live `resolveModel` caller resolves a *role* to a concrete model string through a
 three-tier table.
 
 ### Tiers
@@ -62,21 +71,32 @@ three-tier table.
 | `smart` | `sonnet` | Tasks requiring judgment, ambiguity, complex reasoning |
 | `reasoning` | `opus` | Planning, evaluation, complex multi-step reasoning |
 
-### The two live roles
+### The live roles
 
 | Role | Resolution | Where it runs |
 |------|-----------|---------------|
-| `dreamCompression` | Defaults to the raw string `local/mlx-community/gemma-4-31b-it-8bit` (NOT a tier), set in `DEFAULT_MODEL_CONFIG.roles` (`model-config.ts:32`). Called with default tier `"smart"` as the fallback (`dream.ts:82`). | Memory compression in the hippocampus dream phase. Runs on the **opencode** runtime against the local conscious-tier mlx server (port 8083). The literal MUST equal `consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)`. On turn failure the dream phase degrades gracefully — it keeps the original diary/secrets and continues. |
-| `dinner` | No default override; resolves to the `"smart"` tier (`consolidate.ts:63`). | Social reflection / per-cycle diary consolidation in the hippocampus. |
+| `dreamCompression` | Defaults to the raw string `local/mlx-community/gemma-4-31b-it-8bit` (NOT a tier), set in `DEFAULT_MODEL_CONFIG.roles` (`model-config.ts`). Called with default tier `"smart"` as the fallback (`dream.ts`). | The unified per-cycle reflection memory compression in the hippocampus — consolidate + diary/secrets cull, all three turns on this one role. Runs on the **opencode** runtime against the local conscious-tier mlx server (port 8083); **Claude is never invoked in this path.** The literal MUST equal `consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)`. On turn failure the step degrades gracefully — it keeps the original diary/secrets and continues. |
+| `retrospect` | No `roles` entry — resolves to the `smart` tier (`retrospect.ts`). | The per-cycle meso retrospect (hippocampus): grades the just-ended cycle's episode streams against the skill index and appends skill create/revise/retire proposals. Tool-less; a failed turn proposes nothing and never fails the reflection. |
+| `synthesisBootstrap` | No `roles` entry — resolves to the `smart` tier (`synthesis-bootstrap.ts`). | The one-time SYNTHESIS.md self-model seed (hippocampus): fires only while the file is absent/blank, synthesizing an initial first-person self-model from background/values/diary. Gated on file content, so it never overwrites a real self-model; a failed turn writes nothing. |
+| `macro` | No `roles` entry — resolves to the `reasoning` tier (`macro.ts`). | The every-Nth-reflection growth stimulation (hippocampus): a tool-less frontier turn adjudicates accumulated skill proposals, rewrites the bounded SYNTHESIS.md, and appends a diary growth note; the harness applies the document. A failed turn leaves proposals pending for the next macro cycle. |
 
 ### Resolution
 
-`resolveModel(config, role, defaultTier)` (`model-config.ts:41`) resolves a role to a
-concrete model string:
+`resolveModel(config, role, defaultTier)` (`model-config.ts`) resolves a role to a
+concrete model string. A role override is a **tier name or model string**:
 
-1. If the role has an explicit override in `config.roles`, use it verbatim as a raw model
-   string (e.g. `"local/mlx-community/gemma-4-31b-it-8bit"`)
-2. Otherwise, look up `defaultTier` in `config.tiers`
+1. If the role has an explicit override in `config.roles`:
+   - an override that exactly matches a tier name (`"fast"` | `"smart"` | `"reasoning"`)
+     resolves to that tier's model (e.g. `roles: { macro: "reasoning" }` follows
+     whatever `tiers.reasoning` is set to);
+   - any other string is used verbatim as a raw model string
+     (e.g. `"local/mlx-community/gemma-4-31b-it-8bit"`).
+2. Otherwise, look up `defaultTier` in `config.tiers`.
+
+Validation follows resolution: `assertValidModelConfig` accepts a tier name in a role
+position (legal-by-design indirection) and validates what it resolves to — a tier-name
+role override pointing at a broken tier value fails on the `tiers.<tier>` entry, not
+the role.
 
 ### Configuration
 
@@ -112,22 +132,59 @@ objects:
 
 This allows partial overrides without specifying the full config.
 
-## Non-Claude Models
+## Model → runtime dispatch (single source of truth)
 
-The `AnyModel` type accepts any string, not just Claude model names. When the model string
-doesn't match a known Claude model pattern, `runtimeBinary()` selects the `opencode`
-runtime instead of `claude`, enabling use of alternative LLM providers. This is how
-`dreamCompression`'s `local/mlx-community/gemma-4-31b-it-8bit` string routes to the local
-mlx server.
+Which runtime binary a turn runs on — the frontier `claude` CLI or the local
+`opencode` runtime (mlx / other providers) — is decided by ONE authoritative
+function, `modelRuntime()` in
+`packages/core/src/core/limbic/hypothalamus/runtime.ts`. Both the dispatch path
+(`runtimeBinary` / `selectRuntime`) and config-load validation
+(`assertValidModelConfig` in `model-config.ts`) call it, so the two can never
+disagree. This closes the "two config sources of truth silently disagree" class of
+bug (a legal override routing a Claude-only turn to the local model, or vice-versa).
 
 ```typescript
 type AnyModel = ClaudeModel | (string & {})  // "opus" | "sonnet" | "haiku" | any string
 
-function runtimeBinary(model: AnyModel): AgentRuntime  // "claude" | "opencode"
+function modelRuntime(model: AnyModel): AgentRuntime | undefined  // "claude" | "opencode" | unknown
+function runtimeBinary(model: AnyModel): AgentRuntime             // throws on unknown
 ```
 
-Claude model shorthand (`"opus"`, `"sonnet"`, `"haiku"`) is resolved by the Claude CLI
-itself. Full model IDs (e.g., `"claude-opus-4-6"`) are also accepted and passed through.
+`modelRuntime` recognizes exactly three forms and returns `undefined` for anything
+else:
+
+| Model string form | Example | Runtime |
+|-------------------|---------|---------|
+| Claude tier alias | `opus`, `sonnet`, `haiku` | `claude` (the CLI resolves the alias itself) |
+| Fully-qualified `claude-*` id | `claude-opus-4-6` | `claude` |
+| Provider/model string (contains `/`) | `local/mlx-community/gemma-4-31b-it-8bit`, `openrouter/anthropic/claude-sonnet-4` | `opencode` |
+| **anything else** (bare, provider-less, non-Claude) | `gpt-4o`, `typo-model` | **unknown → config error** |
+
+**Fully-qualified `claude-*` ids are DELIBERATELY accepted and routed to the
+`claude` binary** (not rejected in favor of the three aliases). Rationale: a legal
+override such as `--tier-reasoning claude-opus-4-6` must run on frontier Claude as
+the operator intended, not silently fall to the local model. This is the exact
+misroute the single-source-of-truth mapping prevents.
+
+**No silent fallback.** A bare, provider-less non-Claude name (e.g. `gpt-4o`) is
+*unknown*, not "route it to opencode": opencode addresses models as
+`provider/model`, so such a name resolves to no local model and is not Claude
+either. To route a non-Claude provider model, give it its provider prefix
+(e.g. `openai/gpt-4o`). Unknown strings are rejected at config load (see below); if
+one ever reaches `runtimeBinary` at dispatch it throws (defense-in-depth) rather
+than misrouting.
+
+### Config-load validation
+
+`assertValidModelConfig(config)` runs inside `loadModelConfig`
+(`apps/roci/src/cli.ts`) after merging defaults → `.roci/models.json` → CLI flags.
+Every tier and every defined per-role override must resolve via `modelRuntime`;
+otherwise it throws `ModelConfigError` naming each offending key (`tiers.reasoning`,
+`roles.macro`, …), its value, and the accepted forms. So a mistyped or Claude-only
+override fails loudly at startup instead of misrouting a turn at runtime. This is
+how `dreamCompression`'s `local/mlx-community/gemma-4-31b-it-8bit` stays a valid,
+first-class local-model label while a typo like `local/…` misspelled or a bare
+`opus4` is caught immediately.
 
 ## Key Files
 
@@ -135,9 +192,9 @@ itself. Full model IDs (e.g., `"claude-opus-4-6"`) are also accepted and passed 
 |------|---------|
 | `packages/core/src/model/handles.ts` | `DEFAULT_CORTEX_MODELS` — the live cortex tier topology (model, provider, baseUrl, params per tier), plus `resolveHandle()` |
 | `packages/core/src/services/model-tier-spec.ts` | `MODEL_TIER_SPECS` — per-tier port, lifecycle, and spawn timeout, derived from `handles.ts` |
-| `packages/core/src/core/model-config.ts` | Legacy tier types and `resolveModel` |
-| `packages/core/src/core/model-config.test.ts` | Unit tests for `resolveModel` resolution |
-| `packages/core/src/core/limbic/hypothalamus/runtime.ts` | `runtimeBinary()` and `runtimeBaseArgs()` |
+| `packages/core/src/core/model-config.ts` | Legacy tier types, `resolveModel`, and `assertValidModelConfig` / `ModelConfigError` (load-time model→runtime validation) |
+| `packages/core/src/core/model-config.test.ts` | Unit tests for `resolveModel` resolution and `assertValidModelConfig` |
+| `packages/core/src/core/limbic/hypothalamus/runtime.ts` | `modelRuntime()` (single source of truth), `runtimeBinary()`, and `runtimeBaseArgs()` |
 | `.roci/models.json` | Per-project legacy model configuration (not checked in) |
 </content>
 </invoke>
