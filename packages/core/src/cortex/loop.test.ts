@@ -23,6 +23,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { setEpisodeLogRoot, resetEpisodeContext, setEpisodeStep, setEpisodeTick } from "../logging/episodes.js"
+import { parseWmFile } from "../conscious/wm-core.js"
+import { parseSkillFile, serializeSkillFile, slugify } from "../services/skills-core.js"
 
 // No-op ModelService: withTier is transparent (passes the effect through unchanged).
 const noopModelService = Layer.succeed(
@@ -150,6 +152,15 @@ const fakeDomain = Layer.mergeAll(
   ),
 )
 
+// Default CharacterFs stub: hardcoded [] / null, no disk access. The vast
+// majority of tests below pass a non-existent literal char.dir (e.g.
+// "/work/players/ada/me") purely as an opaque identity — they don't care
+// about skills at all. A REAL disk read keyed on that literal would only
+// coincidentally return [] / null because the path doesn't exist on this
+// host; on a host where /work happens to exist (e.g. inside this project's
+// own dev container), it would silently leak real files into these
+// unrelated tests. Only one test below actually exercises skill resolution
+// against real files on disk — see realSkillFs.
 const fakeFs = Layer.succeed(
   CharacterFs,
   CharacterFs.of({
@@ -163,10 +174,61 @@ const fakeFs = Layer.succeed(
     readPalette: () => Effect.succeed(""),
     readDrives: () => Effect.succeed(""),
     characterExists: () => Effect.succeed(true),
+    listSkills: () => Effect.succeed([]),
+    readSkill: () => Effect.succeed(null),
+    writeSkill: () => Effect.void,
+    readSynthesis: () => Effect.succeed(""),
+    writeSynthesis: () => Effect.void,
+    deleteSkill: () => Effect.void,
   }),
 )
 const fakeLog = Layer.succeed(CharacterLog, CharacterLog.of({ emit: () => Effect.void }))
 const fakeIo = Layer.mergeAll(fakeFs, fakeLog)
+
+// Real disk reads (mirrors CharacterFsLive), scoped to char.dir: used ONLY by
+// the "wears a chosen skill" test, which seeds an actual skill file under a
+// real tmpdir char.dir and asserts it gets read back and worn. Everything
+// else stays on the hermetic fakeFs stub above.
+const realSkillFs = Layer.succeed(
+  CharacterFs,
+  CharacterFs.of({
+    readDiary: () => Effect.succeed(""),
+    writeDiary: () => Effect.void,
+    readSecrets: () => Effect.succeed(""),
+    writeSecrets: () => Effect.void,
+    readCredentials: () => Effect.succeed({ username: "", password: "" }),
+    readBackground: () => Effect.succeed(""),
+    readValues: () => Effect.succeed(""),
+    readPalette: () => Effect.succeed(""),
+    readDrives: () => Effect.succeed(""),
+    characterExists: () => Effect.succeed(true),
+    listSkills: (char) =>
+      Effect.sync(() => {
+        const dir = path.join(char.dir, "skills")
+        if (!fs.existsSync(dir)) return []
+        return fs
+          .readdirSync(dir)
+          .filter((entry) => entry.endsWith(".md"))
+          .map((entry) => {
+            const slug = entry.slice(0, -3)
+            const doc = parseSkillFile(slug, fs.readFileSync(path.join(dir, entry), "utf8"))
+            return { slug: doc.slug, name: doc.name, description: doc.description, whenToUse: doc.whenToUse }
+          })
+      }),
+    readSkill: (char, name) =>
+      Effect.sync(() => {
+        const slug = slugify(name)
+        const file = path.join(char.dir, "skills", `${slug}.md`)
+        if (!fs.existsSync(file)) return null
+        return parseSkillFile(slug, fs.readFileSync(file, "utf8"))
+      }),
+    writeSkill: () => Effect.void,
+    readSynthesis: () => Effect.succeed(""),
+    writeSynthesis: () => Effect.void,
+    deleteSkill: () => Effect.void,
+  }),
+)
+const realSkillIo = Layer.mergeAll(realSkillFs, fakeLog)
 
 // Stubs for services declared in ConsciousThought's requirement channels.
 const StubCommandExecutor = Layer.succeed(
@@ -542,6 +604,12 @@ describe("runCortex (conscious-session executor)", () => {
         readPalette: () => Effect.succeed(""),
         readDrives: () => Effect.succeed(""),
         characterExists: () => Effect.succeed(true),
+        listSkills: () => Effect.succeed([]),
+        readSkill: () => Effect.succeed(null),
+        writeSkill: () => Effect.void,
+        readSynthesis: () => Effect.succeed(""),
+        writeSynthesis: () => Effect.void,
+        deleteSkill: () => Effect.void,
       }),
     )
     const diaryIo = Layer.mergeAll(capturingFs, fakeLog)
@@ -758,6 +826,12 @@ describe("runCortex (conscious-session executor)", () => {
         readPalette: () => Effect.succeed(""),
         readDrives: () => Effect.succeed(""),
         characterExists: () => Effect.succeed(true),
+        listSkills: () => Effect.succeed([]),
+        readSkill: () => Effect.succeed(null),
+        writeSkill: () => Effect.void,
+        readSynthesis: () => Effect.succeed(""),
+        writeSynthesis: () => Effect.void,
+        deleteSkill: () => Effect.void,
       }),
     )
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
@@ -895,7 +969,11 @@ describe("runCortex (conscious-session executor)", () => {
 
   it("criticals interrupt an in-flight conscious fiber", async () => {
     const interrupted = { value: false }
-    const tickRef = { n: 0 }
+    // Deterministic gate (robust to the async fork-landing tick, which now seeds
+    // the plan a tick or two later than the old synchronous inline path): fire the
+    // critical the first tick AFTER the conscious turn has actually started, so the
+    // interrupt is guaranteed to hit an IN-FLIGHT fiber regardless of scheduling jitter.
+    const turnStarted = { value: false }
     const interruptingDomain = Layer.mergeAll(
       Layer.succeed(EventProcessorTag, EventProcessorTag.of({ processEvent: () => ({}) })),
       Layer.succeed(
@@ -910,10 +988,7 @@ describe("runCortex (conscious-session executor)", () => {
           rules: [],
           evaluate: () => [],
           softAlerts: () => [],
-          criticals: () => {
-            tickRef.n++
-            return tickRef.n >= 2 ? [{ priority: "critical", message: "hull critical" }] : []
-          },
+          criticals: () => (turnStarted.value ? [{ priority: "critical", message: "hull critical" }] : []),
         }),
       ),
       Layer.succeed(
@@ -926,15 +1001,18 @@ describe("runCortex (conscious-session executor)", () => {
       ),
       Layer.succeed(PromptBuilderTag, PromptBuilderTag.of({ systemPrompt: () => "x" })),
     )
-    // Blocking conscious turn: never completes, records interruption.
+    // Blocking conscious turn: never completes, records interruption. Flags
+    // turnStarted so the amygdala fires its critical exactly once a turn is in flight.
     const blockingCt = Layer.succeed(
       ConsciousThought,
       ConsciousThought.of({
         provision: () => Effect.void as Effect.Effect<void, never, Docker>,
-        turn: () =>
-          Effect.never.pipe(
+        turn: () => {
+          turnStarted.value = true
+          return Effect.never.pipe(
             Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true })),
-          ) as Effect.Effect<{ result: TurnResult; sessionId: string }, never, never>,
+          ) as Effect.Effect<{ result: TurnResult; sessionId: string }, never, never>
+        },
       }),
     )
     const program = Effect.gen(function* () {
@@ -1420,7 +1498,7 @@ describe("runCortex (conscious-session executor)", () => {
     expect(count).toBe(1)
   }, 20_000)
 
-  it("emits step-start and step-end transition episodes (verdict, null skill/wm fields)", async () => {
+  it("emits step-start and step-end transition episodes (verdict, null skill field)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-loop-"))
     setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
@@ -1449,16 +1527,16 @@ describe("runCortex (conscious-session executor)", () => {
       const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
       const start = records.find((r) => r.type === "step-start")
       const end = records.find((r) => r.type === "step-end")
-      expect(start).toMatchObject({ task: "act", goal: "do the thing", skill: null, wmDeltas: null })
+      expect(start).toMatchObject({ task: "act", goal: "do the thing", skill: null })
       expect(typeof start.tick).toBe("number")
-      expect(start.stepId).toMatch(/^s\d+-0$/)
+      // Run-epoch-prefixed stepId: c<epoch>-s<tick>-<step> (unique across runs).
+      expect(start.stepId).toMatch(/^c\d+-s\d+-0$/)
       expect(end).toMatchObject({
         stepId: start.stepId,
         task: "act",
         verdict: "succeeded",
         transition: "terminate",
         skill: null,
-        wmDeltas: null,
       })
     } finally {
       setEpisodeLogRoot(null)
@@ -1502,10 +1580,308 @@ describe("runCortex (conscious-session executor)", () => {
       const firstTier = records.find((r) => r.type === "tier")
       const start = records.find((r) => r.type === "step-start")
       expect(firstTier).toBeDefined()
+      // Idle/plan path orient carries the plan discriminator (loop wiring).
+      expect(firstTier).toMatchObject({ phase: "orient", orientKind: "plan" })
+      // …and the run-epoch stamp (scan-invariant carrier), matching the run's stepIds.
+      expect(firstTier.epoch).toMatch(/^\d+$/)
       expect(firstTier.stepId).not.toBe("s99-9")
       expect(start).toBeDefined()
       expect(start.stepId).not.toBe("s99-9")
-      expect(start.stepId).toMatch(/^s\d+-0$/)
+      expect(start.stepId).toMatch(/^c\d+-s\d+-0$/)
+      expect(start.stepId).toBe(`c${firstTier.epoch}-s${start.tick}-0`)
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("wm lifecycle: decide seeds plan todos under a headline todo; evaluate marks done; deltas reach the episode log", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-loop-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    const charDir = path.join(root, "players", "ada", "me")
+    try {
+      const ctLayer = ConsciousThoughtTest((config) => ({
+        result: successTurnResult(config.prompt),
+        sessionId: "ses_wm",
+      }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+
+      // Store: headline todo (orient headline) + one child per plan step.
+      const wm = parseWmFile(fs.readFileSync(path.join(charDir, "wm.json"), "utf8"))
+      expect(wm.todos[0]).toMatchObject({ id: "t1", text: "act now", parent: null })
+      expect(wm.todos[1]).toMatchObject({ id: "t2", text: "act: do the thing", parent: "t1" })
+      // Evaluate marked the step done; the (single-step) plan closed → headline done too.
+      expect(wm.todos[1].state).toBe("done")
+      expect(wm.todos[0].state).toBe("done")
+      // WM.md was re-rendered by the harness mutations.
+      expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).toContain("- [x] t1 act now")
+
+      // Episodes: seeding recorded as a type:"wm" record; done deltas on the step-end.
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      const wmRec = records.find((r) => r.type === "wm")
+      expect(wmRec.deltas.map((d: { op: string; id: string }) => [d.op, d.id])).toEqual([
+        ["add", "t1"],
+        ["add", "t2"],
+      ])
+      const end = records.find((r) => r.type === "step-end")
+      expect(end.wmDeltas.map((d: { op: string; id: string }) => [d.op, d.id])).toEqual([
+        ["done", "t2"],
+        ["done", "t1"],
+      ])
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("threads the character's open todos into the decide prompt", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-prompt-"))
+    const charDir = path.join(root, "players", "ada", "me")
+    fs.mkdirSync(charDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(charDir, "wm.json"),
+      JSON.stringify({
+        version: 1,
+        nextId: 2,
+        // origin:"agent" — a deliberate free-standing CLI memory that survives
+        // the loop-entry dead-plan sweep (a harness-origin one would be swept).
+        todos: [{ id: "t1", text: "REMEMBER_THE_FUEL", parent: null, state: "open", origin: "agent", createdAt: "x", updatedAt: "x" }],
+        pendingDeltas: [],
+      }),
+    )
+    try {
+      let decidePrompt = ""
+      const capturingClient = Layer.succeed(
+        ModelClient,
+        ModelClient.of({
+          complete: (_h: ModelHandle, messages) =>
+            Effect.sync(() => {
+              const p = messages.map((m) => m.content).join(" ")
+              const lower = p.toLowerCase()
+              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
+              if (lower.includes("disposition") && !lower.includes("decision"))
+                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+              if (lower.includes("headline") && !lower.includes("judgment"))
+                return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
+              // decide
+              decidePrompt = p
+              return { text: '{"decision":"terminate","reasoning":"stop"}', raw: {} }
+            }),
+        }),
+      )
+      const ctLayer = ConsciousThoughtTest((config) => ({ result: successTurnResult(config.prompt), sessionId: "s" }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(capturingClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      await Effect.runPromise(program)
+      expect(decidePrompt).toContain("- t1 REMEMBER_THE_FUEL")
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("renders a non-blank skill index in the decide prompt when no skills exist yet", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-empty-index-"))
+    const charDir = path.join(root, "players", "ada", "me")
+    fs.mkdirSync(charDir, { recursive: true })
+    try {
+      let decidePrompt = ""
+      const capturingClient = Layer.succeed(
+        ModelClient,
+        ModelClient.of({
+          complete: (_h: ModelHandle, messages) =>
+            Effect.sync(() => {
+              const p = messages.map((m) => m.content).join(" ")
+              const lower = p.toLowerCase()
+              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
+              if (lower.includes("disposition") && !lower.includes("decision"))
+                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+              if (lower.includes("headline") && !lower.includes("judgment"))
+                return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
+              decidePrompt = p
+              return { text: '{"decision":"terminate","reasoning":"stop"}', raw: {} }
+            }),
+        }),
+      )
+      const ctLayer = ConsciousThoughtTest((config) => ({ result: successTurnResult(config.prompt), sessionId: "s" }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(capturingClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      await Effect.runPromise(program)
+      // An empty skill index must never render as a bare header — the small
+      // decide model never sees an empty "## Your Skills" section.
+      expect(decidePrompt).not.toMatch(/Your Skills\s*\n\s*\n\s*##/)
+      expect(decidePrompt.toLowerCase()).toContain("no skills yet")
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("wears a chosen skill: injects its body into the step task and records the name on step boundaries", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-worn-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    const charDir = path.join(root, "players", "ada", "me")
+    fs.mkdirSync(path.join(charDir, "skills"), { recursive: true })
+    fs.writeFileSync(
+      path.join(charDir, "skills", "securing-fuel.md"),
+      serializeSkillFile({ slug: "securing-fuel", name: "securing-fuel", description: "d", whenToUse: "w", body: "WORN_SKILL_BODY_MARKER" }),
+    )
+    try {
+      let stepPrompt = ""
+      const ctLayer = ConsciousThoughtTest((config) => {
+        stepPrompt = config.prompt
+        return { result: successTurnResult(config.prompt), sessionId: "s" }
+      })
+      const capturingClient = Layer.succeed(
+        ModelClient,
+        ModelClient.of({
+          complete: (_h: ModelHandle, messages) =>
+            Effect.sync(() => {
+              const p = messages.map((m) => m.content).join(" ")
+              const lower = p.toLowerCase()
+              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
+              if (lower.includes("disposition") && !lower.includes("decision"))
+                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+              if (lower.includes("headline") && !lower.includes("judgment"))
+                return { text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
+              // decide.md's tier descriptions also contain the word "judgment"
+              // (e.g. "tasks requiring judgment"), so exclude "headline" here —
+              // matches the mutual-exclusion pattern the file's other scripted
+              // clients use (see scriptedClient above) to disambiguate decide vs
+              // evaluate, both of which mention "judgment" somewhere.
+              if (lower.includes("judgment") && !lower.includes("headline"))
+                return { text: '{"judgment":"succeeded","reasoning":"ok","transition":{"transition":"terminate","summary":"done"}}', raw: {} }
+              // decide: plan one step, wearing securing-fuel.
+              return {
+                text: '{"decision":"plan","reasoning":"go","skill":"securing-fuel","steps":[{"task":"act","goal":"do the thing","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+                raw: {},
+              }
+            }),
+        }),
+      )
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(capturingClient, ctLayer, fakeDomain, realSkillIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+      // The worn skill's body reached the worker's step task.
+      expect(stepPrompt).toContain("## Skill in use")
+      expect(stepPrompt).toContain("WORN_SKILL_BODY_MARKER")
+      // The worn skill's NAME is stamped on both step boundary records.
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      expect(records.find((r) => r.type === "step-start").skill).toBe("securing-fuel")
+      expect(records.find((r) => r.type === "step-end").skill).toBe("securing-fuel")
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("degrades to a plain step task when the chosen skill does not exist (never fails the step)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-missing-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    const charDir = path.join(root, "players", "ada", "me")
+    try {
+      let stepPrompt = ""
+      const ctLayer = ConsciousThoughtTest((config) => {
+        stepPrompt = config.prompt
+        return { result: successTurnResult(config.prompt), sessionId: "s" }
+      })
+      const capturingClient = Layer.succeed(
+        ModelClient,
+        ModelClient.of({
+          complete: (_h: ModelHandle, messages) =>
+            Effect.sync(() => {
+              const p = messages.map((m) => m.content).join(" ")
+              const lower = p.toLowerCase()
+              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
+              if (lower.includes("disposition") && !lower.includes("decision"))
+                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+              if (lower.includes("headline") && !lower.includes("judgment"))
+                return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
+              // decide.md's tier descriptions also contain the word "judgment"
+              // (e.g. "tasks requiring judgment"), so exclude "headline" here —
+              // matches the mutual-exclusion pattern the file's other scripted
+              // clients use (see scriptedClient above) to disambiguate decide vs
+              // evaluate, both of which mention "judgment" somewhere.
+              if (lower.includes("judgment") && !lower.includes("headline"))
+                return { text: '{"judgment":"succeeded","reasoning":"ok","transition":{"transition":"terminate","summary":"done"}}', raw: {} }
+              return {
+                text: '{"decision":"plan","reasoning":"go","skill":"no-such-skill","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+                raw: {},
+              }
+            }),
+        }),
+      )
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(capturingClient, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed") // step ran fine
+      expect(stepPrompt).not.toContain("## Skill in use")
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      expect(records.find((r) => r.type === "step-start").skill).toBeNull()
+      expect(records.find((r) => r.type === "step-end").skill).toBeNull()
     } finally {
       setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
@@ -1710,6 +2086,354 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
     expect(decideCount).toBeGreaterThanOrEqual(2)
   }, 20_000)
 
+  it("reflexes stay live: a slow (blocking) deliberation does not freeze hindbrain triage / amygdala checks (Unit: fork)", async () => {
+    let observeCount = 0
+    const criticalsRef = { n: 0 }
+    // decide (the else branch) BLOCKS the fork forever; orient + observe complete normally.
+    const blockingDecideClient = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision) {
+            observeCount++
+            return Effect.succeed({ text: DISCARD, raw: {} })
+          }
+          if (hasHeadline && !hasJudgment)
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          // decide → never resolves: the deliberation fork is suspended here.
+          return Effect.never as never
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" }) // tick 1 escalates → forks the (blocking) deliberation
+      // Deterministic mid-deliberation event (no wall-clock race). The amygdala
+      // criticals() callback runs exactly once per tick (§2), so it doubles as a
+      // tick clock we fully control. Offering "later" on the FIRST call (tick 1,
+      // whose §2 runs before the fork is spawned in §5 that same tick) makes it
+      // arrive in the queue for tick 2's drain — strictly WHILE the deliberation
+      // fork is suspended on the blocked decide — so tick-2 hindbrain triage MUST
+      // observe it. The critical only fires on the 4th call (tick 4), two ticks
+      // later, so both observes are guaranteed to have run before the loop exits.
+      const domain = domainWith([], () => {
+        criticalsRef.n++
+        if (criticalsRef.n === 1) Queue.unsafeOffer(events, { type: "later" })
+        return criticalsRef.n >= 4 ? [{ priority: "critical" as const, message: "hull critical" }] : []
+      })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(blockingDecideClient, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    // The loop kept ticking through the blocked deliberation and reached the critical.
+    expect(result._tag).toBe("Interrupted")
+    // Deterministic (exact, not a race): the tick-1 seed observe PLUS the tick-2
+    // mid-deliberation observe both ran before the tick-4 critical — hindbrain
+    // triage stayed live the whole time the deliberation fork was blocked.
+    expect(observeCount).toBe(2)
+  }, 20_000)
+
+  it("mutual exclusion: never forks a second deliberation while one is in flight", async () => {
+    let orientCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
+          if (hasHeadline && !hasJudgment) {
+            orientCount++
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          }
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          return Effect.never as never // decide blocks → deliberation stays in flight
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" })
+      const fiber = yield* Effect.fork(
+        runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
+      )
+      yield* Effect.sleep("60 millis") // ~60 ticks; forceOrient every tick would re-fork if not mutually excluded
+      yield* Fiber.interrupt(fiber)
+      return orientCount
+    })
+    const count = await Effect.runPromise(program)
+    // Exactly one deliberation ever forked despite ~60 escalating ticks.
+    expect(count).toBe(1)
+  }, 20_000)
+
+  it("reorient closes the abandoned in-flight step with a replan step-end (no verdict, no double-emit)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-abandon-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    try {
+      const client = limbicClient({
+        observe: (p) =>
+          p.includes("termination-60s")
+            ? '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"account termination in 60s"}'
+            : DISCARD,
+        decide: (() => {
+          let n = 0
+          return () => {
+            n++
+            return n === 1
+              ? '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}'
+              : '{"decision":"terminate","reasoning":"reoriented"}'
+          }
+        })(),
+      })
+      // Non-blocking turn with NO done-marker: the step stays in flight.
+      const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "working...", timedOut: false, durationMs: 1 }, sessionId: "ses_ab" }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "plan-seed" })
+        yield* Effect.forkDaemon(
+          Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
+        )
+        return yield* runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      const starts = records.filter((r) => r.type === "step-start")
+      const ends = records.filter((r) => r.type === "step-end")
+      // Exactly one step ran, was abandoned, and was closed exactly once.
+      expect(starts).toHaveLength(1)
+      expect(ends).toHaveLength(1)
+      expect(ends[0]).toMatchObject({ stepId: starts[0].stepId, task: "act", transition: "replan", skill: null })
+      expect(ends[0].verdict).toBeUndefined()
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("wm lifecycle: a reorient discards the dropped plan's seeded orphans, recorded on the abandoned step-end", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-orphan-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    const charDir = path.join(root, "players", "ada", "me")
+    try {
+      const client = limbicClient({
+        observe: (p) =>
+          p.includes("termination-60s")
+            ? '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"emergency"}'
+            : DISCARD,
+        decide: (() => {
+          let n = 0
+          return () => {
+            n++
+            return n === 1
+              ? '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}'
+              : '{"decision":"terminate","reasoning":"reoriented"}'
+          }
+        })(),
+      })
+      const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "working...", timedOut: false, durationMs: 1 }, sessionId: "ses_or" }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "plan-seed" })
+        yield* Effect.forkDaemon(
+          Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
+        )
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+
+      // The abandoned plan's seeded todos (headline t1 + step t2) are DISCARDED —
+      // retained in wm.json, hidden from WM.md.
+      const wm = parseWmFile(fs.readFileSync(path.join(charDir, "wm.json"), "utf8"))
+      expect(wm.todos.map((t) => [t.id, t.state])).toEqual([
+        ["t1", "discarded"],
+        ["t2", "discarded"],
+      ])
+      expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).not.toContain("t1")
+
+      // The discard deltas ride the abandoned step's replan step-end.
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      const end = records.find((r) => r.type === "step-end")
+      expect(end.transition).toBe("replan")
+      expect(end.wmDeltas.map((d: { op: string; id: string }) => [d.op, d.id])).toEqual([
+        ["discard", "t2"],
+        ["discard", "t1"],
+      ])
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("wm lifecycle: a critical interrupt discards the in-flight plan's seeded orphans (final review fix)", async () => {
+    // Pre-fix, the amygdala critical-interrupt exit (`return { _tag:
+    // "Interrupted", ... }`) skipped resetPlanState/discardPlanOrphans
+    // entirely, permanently leaking the abandoned plan's seeded todos into
+    // WM.md (uncapped, injected forever — the loop never runs again for this
+    // session to clean them up).
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-critical-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    const charDir = path.join(root, "players", "ada", "me")
+    try {
+      const client = limbicClient({
+        observe: () => DISCARD,
+        decide: () =>
+          '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+      })
+      const ctLayer = ConsciousThoughtTest((_c, _r) => ({
+        result: { output: "working...", timedOut: false, durationMs: 1 },
+        sessionId: "ses_crit",
+      }))
+      // Tick 1 forks the idle deliberation; it lands + seeds the plan (t1 headline
+      // + t2 step) — and writes wm.json — on a LATER tick's poll. Unlike the other
+      // timing-coupled tests, this one's fork does real episode-log disk I/O
+      // (setEpisodeLogRoot above), so its landing can span a couple of ticks — a
+      // fixed +1 tick threshold would race the write. Fire the critical
+      // DETERMINISTICALLY the first tick AFTER wm.json exists (i.e. the plan is truly
+      // in-flight), so the interrupt always has an active plan whose orphans to discard.
+      const criticalDomain = domainWith(["plan-seed"], () =>
+        fs.existsSync(path.join(charDir, "wm.json"))
+          ? [{ priority: "critical" as const, message: "hull critical" }]
+          : [],
+      )
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "plan-seed" })
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, criticalDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Interrupted")
+
+      // The abandoned plan's seeded todos (headline t1 + step t2) are
+      // DISCARDED — retained in wm.json, hidden from WM.md.
+      const wm = parseWmFile(fs.readFileSync(path.join(charDir, "wm.json"), "utf8"))
+      expect(wm.todos.map((t) => [t.id, t.state])).toEqual([
+        ["t1", "discarded"],
+        ["t2", "discarded"],
+      ])
+      expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).not.toContain("t1")
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("wm lifecycle: loop entry sweeps a prior dead session's open plan orphans, sparing agent memory", async () => {
+    // A previous session seeded plan todos (harness) then died, leaving them
+    // open forever — the in-loop discardPlanOrphans only knew that session's
+    // plan ids. At the NEXT session's loop entry, discardDeadPlanTodos sweeps
+    // them; a free-standing agent (CLI) todo is deliberate memory and survives.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-crosssession-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    const charDir = path.join(root, "players", "ada", "me")
+    fs.mkdirSync(charDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(charDir, "wm.json"),
+      JSON.stringify({
+        version: 1,
+        nextId: 4,
+        todos: [
+          { id: "t1", text: "DEAD_PLAN_HEADLINE", parent: null, state: "open", origin: "harness", createdAt: "x", updatedAt: "x" },
+          { id: "t2", text: "dead plan step", parent: "t1", state: "open", origin: "harness", createdAt: "x", updatedAt: "x" },
+          { id: "t3", text: "AGENT_MEMORY_KEEP", parent: null, state: "open", origin: "agent", createdAt: "x", updatedAt: "x" },
+        ],
+        pendingDeltas: [],
+      }),
+    )
+    try {
+      const client = limbicClient({ observe: () => DISCARD, decide: () => '{"decision":"terminate","reasoning":"done"}' })
+      const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "ses_x" }))
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "wake" })
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+
+      const wm = parseWmFile(fs.readFileSync(path.join(charDir, "wm.json"), "utf8"))
+      expect(wm.todos.find((t) => t.id === "t1")?.state).toBe("discarded")
+      expect(wm.todos.find((t) => t.id === "t2")?.state).toBe("discarded")
+      // Agent memory untouched, still open and rendered.
+      expect(wm.todos.find((t) => t.id === "t3")).toMatchObject({ state: "open", origin: "agent" })
+      const md = fs.readFileSync(path.join(charDir, "WM.md"), "utf8")
+      expect(md).not.toContain("DEAD_PLAN_HEADLINE")
+      expect(md).toContain("AGENT_MEMORY_KEEP")
+
+      // The sweep is recorded as a type:"wm" transition, before any step-start.
+      const recFile = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const records = fs.readFileSync(recFile, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      const sweep = records.find((r) => r.type === "wm")
+      expect(sweep.deltas.map((d: { op: string; id: string }) => [d.op, d.id])).toEqual([
+        ["discard", "t1"],
+        ["discard", "t2"],
+      ])
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
   it("steer rung: a weight-4 in-session event (no escalate disposition) drives a priority steer directive (Unit 7)", async () => {
     const capturedDirectives: string[] = []
     let turnCount = 0
@@ -1815,7 +2539,11 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
   // "a weight-4 steers".
   it("Nit 2: bypassSteerCadence fires a steer-rung event within DEFAULT_STEER_CADENCE_TICKS of the prior steer", async () => {
     const captured: string[] = []
-    const tickRef = { n: 0 }
+    // Deterministic bound anchored to session-open (not an absolute tick): sinceOpen
+    // counts ticks after the conscious session opens, robust to the async fork-landing
+    // tick that now seeds the plan a tick or two later than the old sync path.
+    const sinceOpen = { n: 0 }
+    const sessionOpened = { value: false }
     const STEER =
       '{"disposition":"accumulate","emotionalWeight":"😟","drive":"sustenance","weight":4,"interrupt":false,"reason":"salient"}'
     const client = limbicClient({
@@ -1829,9 +2557,12 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       let resumeCount = 0
       const ctLayer = ConsciousThoughtTest(
         (_c, resume) => {
-          // turn 1 enqueues steer-evt #1; the FIRST steer turn enqueues steer-evt #2.
-          if (!resume) Queue.unsafeOffer(events, { type: "steer-evt" })
-          else {
+          // turn 1 enqueues steer-evt #1 and marks the session open (anchors the
+          // deterministic bound below); the FIRST steer turn enqueues steer-evt #2.
+          if (!resume) {
+            Queue.unsafeOffer(events, { type: "steer-evt" })
+            sessionOpened.value = true
+          } else {
             resumeCount++
             if (resumeCount === 1) Queue.unsafeOffer(events, { type: "steer-evt" })
           }
@@ -1840,9 +2571,13 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         (d) => captured.push(d),
       )
       yield* Queue.offer(events, { type: "plan-seed" })
+      // Bound the loop exactly 3 ticks after the session opens (sync path: open tick 1,
+      // bound tick 4 = open+3). Anchoring to session-open — not an absolute tick —
+      // preserves that identical two-steer window no matter which tick the fork lands
+      // on: WITH bypass both steers fire before the bound; WITHOUT it, only one fits.
       const domain = domainWith([], () => {
-        tickRef.n++
-        return tickRef.n >= 4 ? [{ priority: "critical" as const, message: "bound" }] : []
+        if (sessionOpened.value) sinceOpen.n++
+        return sinceOpen.n >= 3 ? [{ priority: "critical" as const, message: "bound" }] : []
       })
       return yield* runCortex({
         char: { name: "ada", dir: "/work/players/ada/me" },
@@ -1858,5 +2593,602 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
     // Both steers fired within the 4-tick bound: the second short-circuited the
     // throttle. Without the bypass, only one fires before the critical exits.
     expect(captured.length).toBeGreaterThanOrEqual(2)
+  }, 20_000)
+
+  it("ladder governs the in-flight deliberation: a reorient-rung event interrupts the fiber and re-orients (Unit: fork ladder)", async () => {
+    const interrupted = { value: false }
+    let decideCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision)
+            return Effect.succeed({
+              text: p.includes("termination-60s")
+                ? '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"account termination in 60s"}'
+                : DISCARD,
+              raw: {},
+            })
+          if (hasHeadline && !hasJudgment)
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          // decide: #1 blocks (deliberation in flight); #2 (post-reorient) terminates.
+          decideCount++
+          if (decideCount === 1)
+            return Effect.never.pipe(
+              Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true })),
+            ) as never
+          return Effect.succeed({ text: '{"decision":"terminate","reasoning":"reoriented"}', raw: {} })
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" }) // tick 1 → fork deliberation (decide #1 blocks)
+      yield* Effect.forkDaemon(Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))))
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The reorient-rung event interrupted the in-flight deliberation…
+    expect(interrupted.value).toBe(true)
+    // …and re-oriented: a second decide cycle ran after the interrupt.
+    expect(decideCount).toBeGreaterThanOrEqual(2)
+  }, 20_000)
+
+  it("an amygdala critical during a deliberation interrupts the fiber and exits Interrupted (Unit: fork critical)", async () => {
+    const interrupted = { value: false }
+    const criticalsRef = { n: 0 }
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
+          if (hasHeadline && !hasJudgment)
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          return Effect.never.pipe(
+            Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true })),
+          ) as never // decide blocks → deliberation in flight when the critical fires
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const domain = domainWith([], () => {
+      criticalsRef.n++
+      return criticalsRef.n >= 3 ? [{ priority: "critical" as const, message: "hull critical" }] : []
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Interrupted")
+    expect(interrupted.value).toBe(true)
+  }, 20_000)
+
+  it("landed reconciliation: applies a fresh plan and drains ONLY the snapshot events (retains mid-deliberation events)", async () => {
+    const orientPrompts: string[] = []
+    // decide #1 blocks until a mid-deliberation event lands, then completes with a plan.
+    let decideCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const raw = messages.map((m) => m.content).join(" ")
+          const p = raw.toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision)
+            // Both the seed event (pre-fork) and the mid-deliberation event (in-flight)
+            // are plain accumulates (weight 2, non-discard) — SEED_EVENT so it actually
+            // joins `accumulatedEvents` and rides the fork-time snapshot (making the
+            // slice-drain assertion below non-vacuous); MID_EVENT so it's retained, not
+            // stale, per the ladder.
+            // NB: checked against `raw` (not the lowercased `p`) — "SEED_EVENT"/"MID_EVENT"
+            // are uppercase in the event payload and `p` has already been lowercased.
+            return Effect.succeed({
+              text: raw.includes("MID_EVENT") || raw.includes("SEED_EVENT")
+                ? '{"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":2,"interrupt":false,"reason":"minor"}'
+                : DISCARD,
+              raw: {},
+            })
+          if (hasHeadline && !hasJudgment) {
+            orientPrompts.push(raw)
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          }
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          decideCount++
+          // decide #1 lands a real one-step plan (fresh — no reorient occurred).
+          if (decideCount === 1)
+            return Effect.succeed({ text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}', raw: {} })
+          return Effect.succeed({ text: '{"decision":"terminate","reasoning":"done"}', raw: {} })
+        },
+      }),
+    )
+    let turnCount = 0
+    // Flips once the FIRST body turn is forked — which can only happen once
+    // `currentPlan` is non-null, i.e. strictly after the tick-1 deliberation
+    // has already landed and applied. A shared, plain (non-Effect) signal so
+    // the domain's per-tick `criticals()` hook (below) can react to it.
+    const turnStarted = { value: false }
+    const ctLayer = ConsciousThoughtTest(
+      (_c, _r) => {
+        turnCount++
+        turnStarted.value = true
+        // Turn 2 (a steer turn) carries the in-session directive; end the step there.
+        return turnCount >= 2
+          ? { result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 1 }, sessionId: "s" }
+          : { result: { output: "working", timedOut: false, durationMs: 1 }, sessionId: "s" }
+      },
+      undefined,
+    )
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "SEED_EVENT" }) // snapshot event (drained on apply)
+      // Deterministic mid-deliberation event (no wall-clock race). A wall-clock
+      // sleep here would race the deliberation's own duration (which varies with
+      // however many real Effect steps — identity reads, memory recall, model
+      // calls — it takes to resolve): too short and MID_EVENT lands in the same
+      // fork-time snapshot as SEED_EVENT (making the drop assertion vacuous in
+      // the other direction); too long and it can land AFTER the plan lands but
+      // with no further hindbrain triage ever surfacing it in an orient (the
+      // assertion below would see `undefined`). Anchoring on `turnStarted`
+      // instead of a tick/time count is exact: a body turn cannot start before
+      // `currentPlan` is set, so gating the offer on it guarantees MID_EVENT is
+      // queued strictly after the snapshot was taken AND after the plan has
+      // already landed — so its own hindbrain triage tick is guaranteed to see
+      // `currentPlan !== null` and fire the in-session steer orient.
+      let midOffered = false
+      const domain = domainWith([], () => {
+        if (turnStarted.value && !midOffered) {
+          midOffered = true
+          Queue.unsafeOffer(events, { type: "MID_EVENT" })
+        }
+        return []
+      })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The fresh plan applied and its step ran (a body turn, then a steer turn, fired).
+    expect(turnCount).toBeGreaterThanOrEqual(1)
+    // Prerequisite check: SEED_EVENT genuinely ACCUMULATED before the deliberation
+    // forked — it rode the fork-time snapshot into the plan-forming orient. Without
+    // this, the drop assertion below would be vacuous (an implementation that never
+    // drains anything would pass trivially, since there'd be nothing to drain).
+    const seedOrient = orientPrompts.find((p) => p.includes("SEED_EVENT"))
+    expect(seedOrient).toBeDefined()
+    // Reconciliation drained the SNAPSHOT event but retained MID_EVENT: the post-apply
+    // in-session steer orient carries MID_EVENT and no longer carries the drained SEED_EVENT.
+    const steerOrient = orientPrompts.find((p) => p.includes("MID_EVENT"))
+    expect(steerOrient).toBeDefined()
+    expect(steerOrient!).not.toContain("SEED_EVENT")
+  }, 20_000)
+
+  it("never-fail degrade: a deliberation whose decide model errors seeds no plan and re-orients (no crash, no stall)", async () => {
+    let decideCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
+          if (hasHeadline && !hasJudgment)
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          // decide: #1 FAILS (model error) → fork degrades to no-plan; #2 (the self-driven
+          // re-orient, no new events) terminates → proves the quiet world did not stall.
+          decideCount++
+          if (decideCount === 1)
+            return Effect.fail(new ModelError({ tier: "conscious", model: "m", baseUrl: "u", reason: "decide boom" }))
+          return Effect.succeed({ text: '{"decision":"terminate","reasoning":"done"}', raw: {} })
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" }) // the ONLY event ever queued
+      const fiber = yield* Effect.fork(
+        runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
+      )
+      yield* Effect.sleep("150 millis")
+      const exit = yield* Fiber.poll(fiber)
+      yield* Fiber.interrupt(fiber)
+      return { count: decideCount, completed: Option.isSome(exit) }
+    })
+    const { count, completed } = await Effect.runPromise(program)
+    // The failed deliberation did not crash the loop; it re-oriented (a 2nd decide ran) and completed.
+    expect(count).toBeGreaterThanOrEqual(2)
+    expect(completed).toBe(true)
+  }, 20_000)
+
+  it("wait/hold land does NOT force a re-orient: a deliberate hold is not a busy re-deliberation loop", async () => {
+    // Sibling of the degrade test above. A deliberation that DECIDES wait/hold leaves
+    // currentPlan null (like a degrade) but is a DELIBERATE idle — it must NOT re-orient,
+    // or the hold turns into a per-tick orient→decide busy-loop. The degrade guard must
+    // fire ONLY on a genuinely-degraded no-plan land, never on a wait.
+    let decideCount = 0
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
+          if (hasHeadline && !hasJudgment)
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          // decide: waits/holds (deliberate idle). If the guard wrongly forces a re-orient,
+          // the next tick re-forks and decide runs AGAIN — decideCount climbs past 1 (the bug).
+          decideCount++
+          return Effect.succeed({
+            text: '{"decision":"wait","reasoning":"holding","wait":{"waitingFor":"signal","resolutionSignal":"sig","disposition":"hold"}}',
+            raw: {},
+          })
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" }) // the ONLY event ever queued
+      const fiber = yield* Effect.fork(
+        runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
+      )
+      yield* Effect.sleep("150 millis")
+      yield* Fiber.interrupt(fiber)
+      return decideCount
+    })
+    const count = await Effect.runPromise(program)
+    // The hold is respected: decide ran exactly once — the quiet world did not re-deliberate.
+    expect(count).toBe(1)
+  }, 20_000)
+})
+
+describe("identity/context assembly (single seam, honest empty blocks)", () => {
+  // Extract the "## Agent Identity" block (background/values/diary/synthesis) —
+  // the section fed by readIdentityContext.
+  const identityBlock = (prompt: string): string => {
+    const start = prompt.indexOf("## Agent Identity")
+    const end = prompt.indexOf("## Emotional Weight from Observations")
+    return prompt.slice(start, end)
+  }
+
+  it("idle-path orient prompt renders empty identity blocks as placeholders, never bare headers", async () => {
+    let orientPrompt = ""
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const raw = messages.map((m) => m.content).join(" ")
+            const p = raw.toLowerCase()
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (p.includes("disposition") && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return {
+                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment) {
+              orientPrompt = raw
+              return {
+                text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            }
+            return {
+              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":1}]}',
+              raw: {},
+            }
+          }),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
+      sessionId: "s",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    await Effect.runPromise(program)
+    expect(orientPrompt).not.toBe("")
+    // The synthesis memory-index header must never stand alone over a blank line.
+    expect(orientPrompt).not.toMatch(/Memory Index \(synthesis\)\s*\n\s*\n\s*##/)
+    // Every empty identity block reads as an explicit placeholder, not a bare header.
+    expect(orientPrompt).toContain("(no memory index yet)")
+    expect(orientPrompt).toContain("(no background recorded yet)")
+    expect(orientPrompt).toContain("(no values recorded yet)")
+    expect(orientPrompt).toContain("(no diary entries yet)")
+    // The recall block is self-guarding (formatRecall returns "" when empty and
+    // owns its own header inside the block) — an empty recall must NOT inject a
+    // stray floating placeholder line at the top of the prompt, nor a bare
+    // "## You recall" header.
+    expect(orientPrompt).not.toContain("(no relevant memories recalled)")
+    expect(orientPrompt).not.toContain("## You recall")
+  }, 20_000)
+
+  it("idle and steer paths render an identical identity block for the same state", async () => {
+    const orientPrompts: string[] = []
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const raw = messages.map((m) => m.content).join(" ")
+            const p = raw.toLowerCase()
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (p.includes("disposition") && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return {
+                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment) {
+              orientPrompts.push(raw)
+              return {
+                text: '{"headline":"focus","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            }
+            // decide: large budget so the step stays in-session until a steer turn lands.
+            return {
+              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+              raw: {},
+            }
+          }),
+      }),
+    )
+    let turnCount = 0
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => {
+      turnCount++
+      if (turnCount >= 2)
+        return { result: { output: `steered ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 }, sessionId: "s" }
+      return { result: { output: "working...", timedOut: false, durationMs: 5 }, sessionId: "s" }
+    })
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" }) // tick 1: idle orient → plan → turn 1
+      yield* Effect.forkDaemon(
+        Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "mid-session-update" }))),
+      )
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // Both an idle orient (plan formation) and a steer orient (mid-session) fired.
+    expect(orientPrompts.length).toBeGreaterThanOrEqual(2)
+    const blocks = orientPrompts.map(identityBlock)
+    // The identity block is byte-identical across every path for the same state.
+    for (const b of blocks) expect(b).toBe(blocks[0])
+    // And it is the honest placeholder form (not a bare header), on both paths.
+    expect(blocks[0]).toContain("(no memory index yet)")
+  }, 20_000)
+
+  it("idle and steer paths render identical identity, recall, and wm-tree content for a POPULATED character", async () => {
+    // The byte-identity claim actually rests on the populated case: non-empty
+    // background/values/diary/synthesis, recall hits present, and an open
+    // agent-authored wm todo. The char dir is made read-only after seeding
+    // wm.json so seedWmPlan's persist fails (best-effort, logged) and the wm
+    // state is genuinely THE SAME for both the idle-orient and steer-orient
+    // reads — otherwise plan-seeded todos would legitimately differ between them.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-populated-"))
+    const charDir = path.join(root, "players", "ada", "me")
+    fs.mkdirSync(charDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(charDir, "wm.json"),
+      JSON.stringify({
+        version: 1,
+        nextId: 2,
+        todos: [
+          {
+            id: "t1",
+            text: "WM_AGENT_TODO_MARKER",
+            parent: null,
+            state: "open",
+            origin: "agent", // survives the loop-entry dead-plan sweep
+            createdAt: "2026-07-03T00:00:00.000Z",
+            updatedAt: "2026-07-03T00:00:00.000Z",
+          },
+        ],
+        pendingDeltas: [],
+      }),
+    )
+    fs.chmodSync(charDir, 0o555)
+    const populatedFs = Layer.succeed(
+      CharacterFs,
+      CharacterFs.of({
+        readDiary: () => Effect.succeed("DIARY_MARKER day one"),
+        writeDiary: () => Effect.void,
+        readSecrets: () => Effect.succeed(""),
+        writeSecrets: () => Effect.void,
+        readCredentials: () => Effect.succeed({ username: "", password: "" }),
+        readBackground: () => Effect.succeed("BACKGROUND_MARKER born on Ceres"),
+        readValues: () => Effect.succeed("VALUES_MARKER honesty"),
+        readPalette: () => Effect.succeed(""),
+        readDrives: () => Effect.succeed(""),
+        characterExists: () => Effect.succeed(true),
+        listSkills: () => Effect.succeed([]),
+        readSkill: () => Effect.succeed(null),
+        writeSkill: () => Effect.void,
+        readSynthesis: () => Effect.succeed("SYNTHESIS_MARKER I am cautious"),
+        writeSynthesis: () => Effect.void,
+        deleteSkill: () => Effect.void,
+      }),
+    )
+    // Recall returns a fixed self-contained block for the orient-cadence label.
+    const populatedMemory = Layer.succeed(
+      MemoryGateway,
+      MemoryGateway.of({
+        remember: () => Effect.void,
+        recall: (_c, _ch, _q, opts) =>
+          Effect.succeed(opts.label === "You recall" ? "\n\n## You recall\n- RECALL_MARKER" : ""),
+      }),
+    )
+    const runtimeDeps = Layer.mergeAll(StubCommandExecutor, StubOAuthToken, StubDocker, populatedMemory)
+    const orientPrompts: string[] = []
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) =>
+          Effect.sync(() => {
+            const raw = messages.map((m) => m.content).join(" ")
+            const p = raw.toLowerCase()
+            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (p.includes("disposition") && !hasDecision)
+              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+            if (hasJudgment && !hasHeadline)
+              return {
+                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
+                raw: {},
+              }
+            if (hasHeadline && !hasJudgment) {
+              orientPrompts.push(raw)
+              return {
+                text: '{"headline":"focus","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
+                raw: {},
+              }
+            }
+            // decide: large budget so the step stays in-session until a steer turn lands.
+            return {
+              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+              raw: {},
+            }
+          }),
+      }),
+    )
+    let turnCount = 0
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => {
+      turnCount++
+      if (turnCount >= 2)
+        return { result: { output: `steered ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 }, sessionId: "s" }
+      return { result: { output: "working...", timedOut: false, durationMs: 5 }, sessionId: "s" }
+    })
+    try {
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" }) // tick 1: idle orient → plan → turn 1
+        yield* Effect.forkDaemon(
+          Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "mid-session-update" }))),
+        )
+        return yield* runCortex({
+          char: { name: "ada", dir: charDir },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(client, ctLayer, fakeDomain, Layer.mergeAll(populatedFs, fakeLog), runtimeDeps, noopModelService),
+          ),
+        )
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+      // Both an idle orient (plan formation) and a steer orient (mid-session) fired.
+      expect(orientPrompts.length).toBeGreaterThanOrEqual(2)
+      // The identity block (background/values/diary/synthesis) is byte-identical
+      // across the idle and steer paths, carrying the REAL content.
+      const blocks = orientPrompts.map(identityBlock)
+      for (const b of blocks) expect(b).toBe(blocks[0])
+      expect(blocks[0]).toContain("BACKGROUND_MARKER born on Ceres")
+      expect(blocks[0]).toContain("VALUES_MARKER honesty")
+      expect(blocks[0]).toContain("DIARY_MARKER day one")
+      expect(blocks[0]).toContain("SYNTHESIS_MARKER I am cautious")
+      // The wm-tree block (Working Memory → Instructions) is byte-identical too,
+      // and renders the live open todo (no "(no open todos)" placeholder).
+      const wmBlock = (prompt: string): string =>
+        prompt.slice(prompt.indexOf("## Working Memory (open todos)"), prompt.indexOf("## Instructions"))
+      const wmBlocks = orientPrompts.map(wmBlock)
+      for (const w of wmBlocks) expect(w).toBe(wmBlocks[0])
+      expect(wmBlocks[0]).toContain("WM_AGENT_TODO_MARKER")
+      expect(wmBlocks[0]).not.toContain("(no open todos)")
+      // The recall block renders its hits (own header, passed through raw) on BOTH paths.
+      for (const prompt of orientPrompts) {
+        expect(prompt).toContain("## You recall\n- RECALL_MARKER")
+      }
+    } finally {
+      fs.chmodSync(charDir, 0o755)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   }, 20_000)
 })

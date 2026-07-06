@@ -201,6 +201,36 @@ export function decideSteps(decide: DecideResult | null): readonly PlanStep[] {
 }
 
 /**
+ * Keep `DecideResult.skill` a string-or-absent value at the parse boundary
+ * (spec §3 Selection). A small conscious model can emit `skill` as a number,
+ * object, array, or empty string; keep it only when it is a non-empty trimmed
+ * string, drop it otherwise, so the loop reads either a real skill name or
+ * nothing. Mirrors normalizeTransition (tiers.ts) — pure; never throws.
+ *
+ * Also folds the two near-misses a model naturally produces: the `editing-skills`
+ * seed skill teaches that skills live as files at `me/skills/<slug>.md`, so the
+ * decider may name one by its filename or path ("securing-fuel.md",
+ * "me/skills/securing-fuel.md") rather than its bare name. readSkill's slugify
+ * folds case/spaces but would mangle a path or a `.md` suffix into a "-md" slug
+ * that never matches — a silent warn-drop. Strip any leading path and a trailing
+ * `.md` here so those resolve like the bare name; a value that reduces to empty
+ * is dropped like whitespace-only junk.
+ */
+export function sanitizeDecideSkill(decide: DecideResult): DecideResult {
+  const raw = (decide as { skill?: unknown }).skill
+  if (typeof raw === "string") {
+    const cleaned = raw
+      .trim()
+      .replace(/^.*[/\\]/, "") // drop any leading me/skills/-style path
+      .replace(/\.md$/i, "") // drop a copied-from-filename extension
+      .trim()
+    if (cleaned) return { ...decide, skill: cleaned }
+  }
+  const { skill: _drop, ...rest } = decide as DecideResult & { skill?: unknown }
+  return rest as DecideResult
+}
+
+/**
  * Returns true when a discover decision has a well-formed payload: a `discover`
  * object whose `questions` is a non-empty array.
  *
@@ -293,12 +323,28 @@ export function formatSteerDirective(orient: OrientResult): string {
 }
 
 /** The instructions handed to the conscious agent for one plan step. */
-export function formatStepTask(step: PlanStep, headline: string): string {
+export function formatStepTask(step: PlanStep, headline: string, skillBody?: string): string {
+  const skillSection =
+    skillBody && skillBody.trim() ? ["## Skill in use", skillBody.trim()].join("\n") : null
   return [
     `# Task: ${step.task}`,
     `Context: ${headline}`,
     `## Goal\n${step.goal}`,
     `## Success condition\n${step.successCondition}`,
+    // Worn skill (spec §3): the decide-chosen skill's body, injected for this
+    // step. Absent/unknown skill → no section (degrade-never-fail in the loop).
+    ...(skillSection ? [skillSection] : []),
+    // Working-memory verbs (spec §2: "formatStepTask documents the wm verbs
+    // to the agent"). This is the single doc site — WM.md itself (injected
+    // into every request via opencode instructions) stays pure data.
+    [
+      "## Working memory",
+      "Your open todos are always visible as WM.md in your context. Keep them current with the `wm` bash command:",
+      '- `wm todo "<text>" [--parent <id>]` — add a todo (prints its id)',
+      "- `wm done <id>` — mark it done",
+      "- `wm discard <id>` — drop it without doing it (kept for later review)",
+      "There is no `wm list` — WM.md is the list.",
+    ].join("\n"),
     `Do this work now. When finished, report concisely what you did and whether the success condition is met. When you have fully met the success condition, print exactly: ${STEP_DONE_MARKER}`,
   ].join("\n\n")
 }

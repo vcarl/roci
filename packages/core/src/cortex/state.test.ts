@@ -15,6 +15,7 @@ import {
   appraiseTick,
   emptyEscalation,
   DEFAULT_APPRAISAL_THRESHOLDS,
+  sanitizeDecideSkill,
 } from "./state.js"
 import type { DecideResult, ObserveResult, OrientResult } from "../skills/types.js"
 
@@ -272,6 +273,28 @@ describe("formatStepTask", () => {
     expect(task).toContain("review PR #12")
     expect(task).toContain("approved or changes requested")
   })
+
+  it("documents the wm verbs to the agent — and does NOT invent a wm list", () => {
+    const task = formatStepTask(
+      { task: "act", goal: "g", tier: "smart", successCondition: "s", timeoutTicks: 2 },
+      "headline",
+    )
+    expect(task).toContain('wm todo "<text>" [--parent <id>]')
+    expect(task).toContain("wm done <id>")
+    expect(task).toContain("wm discard <id>")
+    expect(task).toContain("no `wm list`")
+  })
+
+  it("injects the worn skill's body when provided, and omits the section otherwise", () => {
+    const step = { task: "act", goal: "g", tier: "smart" as const, successCondition: "s", timeoutTicks: 2 }
+    const withSkill = formatStepTask(step, "headline", "SKILL_BODY_MARKER: top up fuel early")
+    expect(withSkill).toContain("## Skill in use")
+    expect(withSkill).toContain("SKILL_BODY_MARKER: top up fuel early")
+    const withoutSkill = formatStepTask(step, "headline")
+    expect(withoutSkill).not.toContain("## Skill in use")
+    // Empty/whitespace body → no section.
+    expect(formatStepTask(step, "headline", "   ")).not.toContain("## Skill in use")
+  })
 })
 
 describe("planSteps", () => {
@@ -478,5 +501,44 @@ describe("isWellFormedDiscover — shape-safe discover guard", () => {
   it("returns false for non-discover decisions and null", () => {
     expect(isWellFormedDiscover({ decision: "continue", reasoning: "x" })).toBe(false)
     expect(isWellFormedDiscover(null)).toBe(false)
+  })
+})
+
+describe("sanitizeDecideSkill", () => {
+  it("keeps a non-empty string skill, trimmed", () => {
+    const d = sanitizeDecideSkill({ decision: "plan", reasoning: "r", steps: [], skill: "  securing-fuel " } as DecideResult)
+    expect((d as { skill?: string }).skill).toBe("securing-fuel")
+  })
+  it("drops a whitespace-only skill", () => {
+    const d = sanitizeDecideSkill({ decision: "continue", reasoning: "r", skill: "   " } as DecideResult)
+    expect("skill" in d).toBe(false)
+  })
+  it("drops a non-string junk skill (number/object/array) from a small model", () => {
+    for (const junk of [3, { a: 1 }, ["x"], true, null] as unknown[]) {
+      const d = sanitizeDecideSkill({ decision: "continue", reasoning: "r", skill: junk } as unknown as DecideResult)
+      expect("skill" in d).toBe(false)
+    }
+  })
+  it("leaves a skill-less decide untouched", () => {
+    const d = sanitizeDecideSkill({ decision: "terminate", reasoning: "r", summary: "s" } as DecideResult)
+    expect(d).toEqual({ decision: "terminate", reasoning: "r", summary: "s" })
+  })
+  it("strips a trailing .md the model copied from the skill's filename", () => {
+    for (const raw of ["securing-fuel.md", "securing-fuel.MD", "  securing-fuel.md "]) {
+      const d = sanitizeDecideSkill({ decision: "continue", reasoning: "r", skill: raw } as unknown as DecideResult)
+      expect((d as { skill?: string }).skill).toBe("securing-fuel")
+    }
+  })
+  it("strips a leading me/skills/ path the model may name a skill by", () => {
+    for (const raw of ["me/skills/securing-fuel.md", "skills/securing-fuel", "me\\skills\\securing-fuel.md"]) {
+      const d = sanitizeDecideSkill({ decision: "continue", reasoning: "r", skill: raw } as unknown as DecideResult)
+      expect((d as { skill?: string }).skill).toBe("securing-fuel")
+    }
+  })
+  it("drops a name that reduces to empty after stripping (e.g. bare '.md')", () => {
+    for (const raw of [".md", "me/skills/", "  .md  "]) {
+      const d = sanitizeDecideSkill({ decision: "continue", reasoning: "r", skill: raw } as unknown as DecideResult)
+      expect("skill" in d).toBe(false)
+    }
   })
 })

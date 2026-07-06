@@ -7,7 +7,7 @@ import { loadSkillSync } from "../skills/loader.js"
 import { getCadenceGuidance, type Cadence } from "../skills/cadence.js"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
 import { TEMPLATE_DRIVES, parseDriveNames } from "../core/drives.js"
-import { appraise } from "./state.js"
+import { appraise, sanitizeDecideSkill } from "./state.js"
 import type {
   ObserveResult,
   OrientResult,
@@ -21,7 +21,12 @@ import { extractJson, parseOr, tryParseJson, isPlainObject } from "./parse.js"
 import { ModelService } from "../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { CharacterLog, logToConsole, logExchange, logBehavior } from "../logging/log-writer.js"
-import { appendTransitionEpisode, episodeContext } from "../logging/episodes.js"
+import {
+  appendTransitionEpisode,
+  currentEpisodeEpoch,
+  episodeContext,
+  type EpisodeAttribution,
+} from "../logging/episodes.js"
 
 export { extractJson, parseOr }
 
@@ -129,14 +134,22 @@ const emitTier = (
   phase: "orient" | "decide" | "evaluate" | "diary",
   prompt: string,
   output: unknown,
+  orientKind?: "plan" | "steer",
+  attribution?: EpisodeAttribution,
 ): Effect.Effect<void> => {
-  const ctx = episodeContext(character)
+  const ctx = attribution ?? episodeContext(character)
+  const epoch = attribution ? attribution.epoch : currentEpisodeEpoch(character)
   return appendTransitionEpisode(character, {
     type: "tier",
     ts: new Date().toISOString(),
     tick: ctx.tick,
     stepId: ctx.stepId,
     phase,
+    // Only stamp orientKind on orient records — decide/evaluate/diary never set it.
+    ...(phase === "orient" && orientKind ? { orientKind } : {}),
+    // Run-epoch stamp (scan-invariant carrier — see TierTransitionEpisode.epoch).
+    // Absent outside a cortex run (no epoch begun).
+    ...(epoch !== null ? { epoch } : {}),
     prompt,
     output,
   })
@@ -205,9 +218,23 @@ export function runForebrain(
   config: CortexRunnerConfig,
   accumulatedEvents: string[],
   domainState: string,
-  identity: { background: string; values: string; diary: string },
+  identity: { background: string; values: string; diary: string; synthesis: string },
   emotionalWeight: string,
   recalledMemories = "",
+  workingMemory = "",
+  /**
+   * Which orient this is (spec §3, discriminator): the idle path produces a
+   * plan; the in-session steer path produces a directive, not a plan. Both run
+   * through this same tap, so the tier record needs this to tell them apart.
+   * Defaults to "plan" (the idle path) — the steer call site passes "steer".
+   */
+  orientKind: "plan" | "steer" = "plan",
+  /**
+   * Fork-time attribution capture (Task 1 mechanism; consumed once orient runs
+   * off the main fiber). When absent (the in-session path), emitTier reads the
+   * live module-level episode context unchanged.
+   */
+  attribution?: EpisodeAttribution,
 ): Effect.Effect<OrientResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.orient.render({
     cadence: config.cadence,
@@ -217,8 +244,10 @@ export function runForebrain(
     background: identity.background,
     values: identity.values,
     diary: identity.diary,
+    synthesis: identity.synthesis,
     emotionalWeight,
     recalledMemories,
+    workingMemory,
   })
   const fallback = orientFallback(emotionalWeight)
   return callTier(config, "forebrain", "orient", prompt).pipe(
@@ -253,7 +282,7 @@ export function runForebrain(
         Effect.as<OrientResult>(fallback),
       )
     }),
-    Effect.tap((result) => emitTier(config.char.name, "orient", prompt, result)),
+    Effect.tap((result) => emitTier(config.char.name, "orient", prompt, result, orientKind, attribution)),
   )
 }
 
@@ -264,6 +293,10 @@ export function runConsciousDecide(
   currentPlanState: string,
   availableActions: string,
   recalledMemories = "",
+  workingMemory = "",
+  skillIndex = "",
+  /** Fork-time attribution capture (see runForebrain); absent on the in-session path. */
+  attribution?: EpisodeAttribution,
 ): Effect.Effect<DecideResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.decide.render({
     cadence: config.cadence,
@@ -282,12 +315,16 @@ export function runConsciousDecide(
     currentPlanState,
     availableSkills: availableActions,
     recalledMemories,
+    workingMemory,
+    skillIndex,
   })
   return callTier(config, "conscious", "decide", prompt).pipe(
     Effect.map((text) =>
-      parseOr<DecideResult>(text, { decision: "continue", reasoning: "parse failure — defaulting to continue" }),
+      sanitizeDecideSkill(
+        parseOr<DecideResult>(text, { decision: "continue", reasoning: "parse failure — defaulting to continue" }),
+      ),
     ),
-    Effect.tap((result) => emitTier(config.char.name, "decide", prompt, result)),
+    Effect.tap((result) => emitTier(config.char.name, "decide", prompt, result, undefined, attribution)),
   )
 }
 

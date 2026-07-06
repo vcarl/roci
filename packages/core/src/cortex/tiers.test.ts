@@ -21,7 +21,7 @@ import type { OrientResult } from "../skills/types.js"
 import { ModelService } from "../services/ModelService.js"
 import { CharacterLog } from "../logging/log-writer.js"
 import type { UnifiedEvent } from "../logging/events.js"
-import { setEpisodeLogRoot, setEpisodeTick, resetEpisodeContext } from "../logging/episodes.js"
+import { setEpisodeLogRoot, setEpisodeTick, setEpisodeStep, resetEpisodeContext, beginEpisodeEpoch, captureEpisodeAttribution } from "../logging/episodes.js"
 
 // A CharacterLog that records every emitted event's message, so tests can
 // assert the raw forebrain text surfaced on a parse failure.
@@ -180,7 +180,7 @@ describe("runForebrain", () => {
   it("parses a headline", async () => {
     const out = await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
         Layer.mergeAll(
           fixedClient('{"headline":"Two PRs need review","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}'),
           recordingService([]),
@@ -195,7 +195,7 @@ describe("runForebrain", () => {
     const logs: UnifiedEvent[] = []
     const out = await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
         Layer.mergeAll(
           fixedClient(
             'Here is the situation:\n{"headline":"Build is red","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}\nLet me know.',
@@ -215,7 +215,7 @@ describe("runForebrain", () => {
     const raw = "the forebrain rambled and never produced JSON"
     const out = await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
         Layer.mergeAll(fixedClient(raw), recordingService([]), recordingLog(logs)),
       ),
     )
@@ -233,7 +233,7 @@ describe("runForebrain", () => {
   it("fills confidence from the fallback when the model omits it (merge default = low)", async () => {
     const out = await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
         Layer.mergeAll(
           fixedClient('{"headline":"x","sections":[],"whatChanged":"y","emotionalState":"😐","metrics":{}}'),
           recordingService([]),
@@ -257,7 +257,7 @@ describe("runForebrain — shape safety (live crash regression)", () => {
   const runWith = (raw: string) =>
     Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
         Layer.mergeAll(fixedClient(raw), recordingService([]), silentLog),
       ),
     )
@@ -449,7 +449,7 @@ describe("runForebrain — full (untruncated) raw output on parse failure", () =
     const raw = "NO-JSON " + "Q".repeat(3000) // > old RAW_FOREBRAIN_LOG_LIMIT
     await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "" }, "😐"),
+        runForebrain(config, ["e1"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
         Layer.mergeAll(fixedClient(raw), recordingService([]), recordingLog(logs)),
       ),
     )
@@ -487,7 +487,7 @@ describe("transition episodes — OODA tier calls", () => {
   it("orient appends a full-fidelity tier record: rendered prompt, parsed output, tick", async () => {
     await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["combat happened"], "{}", { background: "", values: "", diary: "" }, "😰"),
+        runForebrain(config, ["combat happened"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😰"),
         Layer.mergeAll(
           fixedClient('{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","confidence":"high","metrics":{}}'),
           recordingService([]),
@@ -499,6 +499,41 @@ describe("transition episodes — OODA tier calls", () => {
     expect(rec).toMatchObject({ type: "tier", phase: "orient", tick: 7, stepId: null })
     expect(rec.prompt).toContain("combat happened")
     expect(rec.output.headline).toBe("act now")
+    // Default orient is the idle/plan path.
+    expect(rec.orientKind).toBe("plan")
+    // No run begun in this fixture → no epoch stamp on the record.
+    expect(rec).not.toHaveProperty("epoch")
+  })
+
+  it("stamps the current run epoch on every tier record once a run has begun (scan-invariant carrier)", async () => {
+    const epoch = beginEpisodeEpoch("ada") // clears the context…
+    setEpisodeTick("ada", 7) // …so restamp the tick
+    await Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
+        Layer.mergeAll(
+          fixedClient('{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}'),
+          recordingService([]),
+          silentLog,
+        ),
+      ),
+    )
+    const [rec] = readTransitions()
+    expect(rec).toMatchObject({ type: "tier", phase: "orient", epoch })
+  })
+
+  it("stamps the orientKind discriminator: plan (default) vs steer", async () => {
+    const layersFor = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
+    const okOrient = '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}'
+    // Steer path: the in-session orient produces a directive, not a plan.
+    await Effect.runPromise(
+      Effect.provide(
+        runForebrain(config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐", "", "", "steer"),
+        layersFor(okOrient),
+      ),
+    )
+    const [rec] = readTransitions()
+    expect(rec).toMatchObject({ type: "tier", phase: "orient", orientKind: "steer" })
   })
 
   it("decide, evaluate, and diary each append their phase; observe never does", async () => {
@@ -537,5 +572,158 @@ describe("transition episodes — OODA tier calls", () => {
     expect(phases).toEqual(["decide", "evaluate", "diary"])
     const diary = readTransitions()[2]
     expect(diary.output).toBe("Dear diary, it went fine.")
+  })
+
+  it("stamps a forked deliberation's tier record with the CAPTURED attribution, not the live context", async () => {
+    const epoch = beginEpisodeEpoch("ada") // clears + issues the run epoch
+    setEpisodeTick("ada", 5)
+    setEpisodeStep("ada", null)
+    const captured = captureEpisodeAttribution("ada") // { tick: 5, stepId: null, epoch }
+    // The fast loop advances the live module-level context while the fork is in flight:
+    setEpisodeTick("ada", 9)
+    await Effect.runPromise(
+      Effect.provide(
+        runForebrain(
+          config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" },
+          "😐", "", "", "plan", captured,
+        ),
+        Layer.mergeAll(
+          fixedClient('{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}'),
+          recordingService([]), silentLog,
+        ),
+      ),
+    )
+    const [rec] = readTransitions()
+    // Without the fix, emitTier reads the live tick (9); the capture must win.
+    expect(rec).toMatchObject({ type: "tier", phase: "orient", tick: 5, epoch })
+  })
+})
+
+describe("working-memory prompt variable (spec §2)", () => {
+  const layers = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
+  const wmOrientFixture: OrientResult = {
+    headline: "h",
+    sections: [],
+    whatChanged: "w",
+    emotionalState: "😐",
+    confidence: "low",
+    metrics: {},
+  }
+
+  it("orient renders the open-todo tree into the prompt", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-tiers-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    try {
+      await Effect.runPromise(
+        Effect.provide(
+          runForebrain(config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐", "", "- t1 WM_ORIENT_MARKER"),
+          layers('{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}'),
+        ),
+      )
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      expect(rec.prompt).toContain("Working Memory")
+      expect(rec.prompt).toContain("- t1 WM_ORIENT_MARKER")
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("decide renders the open-todo tree into the prompt", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-tiers-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    try {
+      await Effect.runPromise(
+        Effect.provide(
+          runConsciousDecide(config, wmOrientFixture, "No active plan.", "actions", "", "- t2 WM_DECIDE_MARKER"),
+          layers('{"decision":"continue","reasoning":"r"}'),
+        ),
+      )
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      expect(rec.prompt).toContain("- t2 WM_DECIDE_MARKER")
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("memory-index prompt variable (synthesis)", () => {
+  const layers = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
+
+  it("renders the SYNTHESIS memory-index block into the orient prompt", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "synthesis-tiers-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    try {
+      await Effect.runPromise(
+        Effect.provide(
+          runForebrain(
+            config,
+            ["evt"],
+            "{}",
+            { background: "", values: "", diary: "", synthesis: "SYNTH_SELF_MODEL" },
+            "😐",
+          ),
+          layers('{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}'),
+        ),
+      )
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      expect(rec.prompt).toContain("Memory Index")
+      expect(rec.prompt).toContain("SYNTH_SELF_MODEL")
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("decide skill selection (spec §3)", () => {
+  const layers = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
+  const orientFixture: OrientResult = {
+    headline: "h", sections: [], whatChanged: "w", emotionalState: "😐", confidence: "low", metrics: {},
+  }
+
+  it("renders the skill index into the decide prompt", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-idx-"))
+    setEpisodeLogRoot(root)
+    resetEpisodeContext("ada")
+    try {
+      await Effect.runPromise(
+        Effect.provide(
+          runConsciousDecide(config, orientFixture, "No active plan.", "actions", "", "", "- learning — SKILL_INDEX_MARKER"),
+          layers('{"decision":"continue","reasoning":"r"}'),
+        ),
+      )
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      expect(rec.prompt).toContain("SKILL_INDEX_MARKER")
+    } finally {
+      setEpisodeLogRoot(null)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps a valid skill on the parsed result and drops junk", async () => {
+    const good = await Effect.runPromise(
+      Effect.provide(
+        runConsciousDecide(config, orientFixture, "No active plan.", "actions"),
+        layers('{"decision":"plan","reasoning":"r","steps":[],"skill":" securing-fuel "}'),
+      ),
+    )
+    expect((good as { skill?: string }).skill).toBe("securing-fuel")
+
+    const junk = await Effect.runPromise(
+      Effect.provide(
+        runConsciousDecide(config, orientFixture, "No active plan.", "actions"),
+        layers('{"decision":"continue","reasoning":"r","skill":42}'),
+      ),
+    )
+    expect("skill" in junk).toBe(false)
   })
 })
