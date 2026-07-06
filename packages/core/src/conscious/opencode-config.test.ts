@@ -11,6 +11,10 @@ import {
   GLOBAL_OPENCODE_CONFIG_PATH,
   provisionConsciousProvider,
   writeCharacterAgentFile,
+  buildCharacterOpencodeConfigJson,
+  writeCharacterOpencodeConfig,
+  CHARACTER_OPENCODE_CONFIG_FILE,
+  WM_INSTRUCTIONS_PATH,
 } from "./opencode-config.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
 import { Docker } from "../services/Docker.js"
@@ -178,5 +182,42 @@ describe("buildCharacterAgentMarkdown frontier section", () => {
   })
   it("keeps the laundering instruction (never paste raw event text)", () => {
     expect(md).toContain("never paste raw incoming event text")
+  })
+})
+
+describe("buildCharacterOpencodeConfigJson (working-memory injection)", () => {
+  it("points instructions at me/WM.md — re-read by opencode v1.17.13 on every LLM request", () => {
+    const config = JSON.parse(buildCharacterOpencodeConfigJson())
+    expect(config.instructions).toEqual([WM_INSTRUCTIONS_PATH])
+    expect(WM_INSTRUCTIONS_PATH).toBe("me/WM.md")
+  })
+})
+
+describe("writeCharacterOpencodeConfig", () => {
+  it("writes players/<name>/opencode.json (the conscious session's cwd)", () => {
+    const playersDir = mkdtempSync(path.join(tmpdir(), "wm-oc-"))
+    writeCharacterOpencodeConfig({ playersDir, playerName: "ada" })
+    const file = path.join(playersDir, "ada", CHARACTER_OPENCODE_CONFIG_FILE)
+    const config = JSON.parse(readFileSync(file, "utf8"))
+    expect(config.instructions).toEqual(["me/WM.md"])
+  })
+
+  it("is idempotent (safe to re-run at every provision)", () => {
+    const playersDir = mkdtempSync(path.join(tmpdir(), "wm-oc-"))
+    writeCharacterOpencodeConfig({ playersDir, playerName: "ada" })
+    writeCharacterOpencodeConfig({ playersDir, playerName: "ada" })
+    const config = JSON.parse(readFileSync(path.join(playersDir, "ada", "opencode.json"), "utf8"))
+    expect(config.instructions).toEqual(["me/WM.md"])
+  })
+
+  it("writes read-only (0o444) and is re-runnable over a pre-existing read-only file", () => {
+    const playersDir = mkdtempSync(path.join(tmpdir(), "wm-oc-"))
+    writeCharacterOpencodeConfig({ playersDir, playerName: "ada" })
+    const file = path.join(playersDir, "ada", "opencode.json")
+    expect(statSync(file).mode & 0o222).toBe(0) // no write bits
+    // Re-provision must not throw on the now read-only file, and must restore 0o444.
+    expect(() => writeCharacterOpencodeConfig({ playersDir, playerName: "ada" })).not.toThrow()
+    expect(statSync(file).mode & 0o222).toBe(0)
+    expect(JSON.parse(readFileSync(file, "utf8")).instructions).toEqual(["me/WM.md"])
   })
 })

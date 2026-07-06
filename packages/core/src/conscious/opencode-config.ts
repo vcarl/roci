@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
 import * as path from "node:path"
 import type { ModelHandle } from "../model/handles.js"
 import { Docker } from "../services/Docker.js"
@@ -142,5 +142,56 @@ export function writeCharacterAgentFile(opts: {
   const file = path.join(dir, `${CONSCIOUS_AGENT_NAME}.md`)
   if (existsSync(file)) chmodSync(file, 0o644) // restore write to allow re-write
   writeFileSync(file, buildCharacterAgentMarkdown({ systemPrompt: opts.systemPrompt, modelLabel: opts.modelLabel }))
+  chmodSync(file, 0o444)
+}
+
+/** Per-character project-local OpenCode config filename (in players/<name>/). */
+export const CHARACTER_OPENCODE_CONFIG_FILE = "opencode.json"
+/** The working-memory instructions file, relative to players/<name>/ (wm-store's WM.md). */
+export const WM_INSTRUCTIONS_PATH = "me/WM.md"
+
+/**
+ * Per-character project-local OpenCode config: `instructions` points at the
+ * character's WM.md (agent-cognition Stage 2, spec §2 Injection).
+ *
+ * Verified against OpenCode v1.17.13: files listed in `instructions` are
+ * re-read from disk on EVERY LLM request (session/instruction.ts, uncached,
+ * inside the per-step loop) and injected into the system prompt as
+ * "Instructions from: <path>" — so a wm mutation is visible to the very next
+ * request, even mid-turn, with no transcript accumulation. The relative path
+ * resolves against this config's project dir: the conscious session runs with
+ * cwd /work/players/<name> (process-runner.ts buildExecArgs), where this file
+ * lives. Trade accepted per spec: the churning system prompt invalidates the
+ * provider prompt cache — fine, the conscious model is local MLX.
+ *
+ * This is separate from the GLOBAL per-container config (provider/permissions,
+ * GLOBAL_OPENCODE_CONFIG_PATH) because the global file is shared by every
+ * character in the container; the instructions entry must be per-character.
+ */
+export function buildCharacterOpencodeConfigJson(): string {
+  return JSON.stringify(
+    {
+      $schema: "https://opencode.ai/config.json",
+      instructions: [WM_INSTRUCTIONS_PATH],
+    },
+    null,
+    2,
+  )
+}
+
+/**
+ * Write the project-local config host-side (bind-mounted players dir). Idempotent.
+ * Atomic (write-tmp + rename, so the per-request opencode instruction loader never
+ * reads a torn file) and read-only (0o444) — parity with writeCharacterAgentFile:
+ * restore write on a pre-existing read-only file before replacing it, then re-lock.
+ */
+export function writeCharacterOpencodeConfig(opts: { playersDir: string; playerName: string }): void {
+  const dir = path.join(opts.playersDir, opts.playerName)
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, CHARACTER_OPENCODE_CONFIG_FILE)
+  const tmp = `${file}.tmp`
+  writeFileSync(tmp, buildCharacterOpencodeConfigJson())
+  if (existsSync(file)) chmodSync(file, 0o644) // allow the rename to replace a locked file
+  renameSync(tmp, file)
   chmodSync(file, 0o444)
 }
