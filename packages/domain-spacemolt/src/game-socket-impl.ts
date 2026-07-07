@@ -5,7 +5,7 @@ import type { WebSocketCtor } from "@spacemolt/client-v2"
 import type { GameState, PlayerState, ShipState, SystemState, PoiState } from "./types.js"
 import type { GameEvent, LoggedInPayload } from "./ws-types.js"
 import { FULL_STATE_FRAME } from "./ws-types.js"
-import { readPlayerCredentials, spaceMoltSocketBaseUrl } from "./session.js"
+import { readPlayerCredentials, spaceMoltSocketBaseUrl, spaceMoltUserAgent } from "./session.js"
 import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import type { CharacterConfig } from "@roci/core/services/CharacterFs.js"
@@ -124,6 +124,9 @@ export const makeGameSocketLive = () =>
                 baseUrl: spaceMoltSocketBaseUrl(),
                 endpoint: "v1",
                 WebSocketImpl: WebSocketImpl as unknown as WebSocketCtor,
+                // Identify the connection as roci on the WS handshake. client-v2
+                // prepends this to its own UA token (`roci @spacemolt/client-v2/x`).
+                wsOptions: { headers: { "User-Agent": spaceMoltUserAgent() } },
               }),
             catch: (e) => new GameSocketError("Failed to open game socket", e),
           })

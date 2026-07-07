@@ -56,6 +56,14 @@ export const spaceMoltSocketBaseUrl = (): string => {
   return `${u.protocol}//${u.host}`
 }
 
+/**
+ * Client identifier we send as the WebSocket handshake `User-Agent`, marking the
+ * connection as roci. client-v2 (>=1.6.0) prepends this to its own token, so the
+ * server sees e.g. `roci @spacemolt/client-v2/1.6.0`. Override with
+ * `SPACEMOLT_USER_AGENT` (e.g. to pin a roci version like `roci/0.1.0`).
+ */
+export const spaceMoltUserAgent = (): string => process.env.SPACEMOLT_USER_AGENT ?? "roci"
+
 /** Host path to a player's session file. */
 export const sessionFilePath = (projectRoot: string, playerName: string): string =>
   path.resolve(projectRoot, "players", playerName, PLAYER_SUBDIR, SESSION_FILE_NAME)

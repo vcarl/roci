@@ -28,25 +28,34 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
   }
 }
 
-describe("spaceMoltEventProcessor — combat_update", () => {
+describe("spaceMoltEventProcessor — battle_update", () => {
+  // client-v2 1.6.0: `combat_update` (per-hit) became `battle_update` (periodic
+  // battle-state snapshot). No attacker/damage fields on the WS stream anymore.
   const combatEvent = {
-    type: "combat_update",
+    type: "battle_update",
     payload: {
+      auto_pilot: false,
+      battle_id: "b-1",
       tick: 42,
-      attacker: "EvilPirate",
-      target: "player",
-      damage: 50,
-      damage_type: "laser",
-      shield_hit: 30,
-      hull_hit: 20,
-      destroyed: false,
+      your_side_id: 0,
+      your_stance: "aggressive",
+      your_zone: "orbit",
+      participants: [
+        { player_id: "me", username: "Pilot", side_id: 0, zone: "orbit" },
+        { player_id: "foe", username: "EvilPirate", side_id: 1, zone: "orbit" },
+      ],
+      sides: [
+        { side_id: 0, player_count: 1 },
+        { side_id: 1, player_count: 1 },
+      ],
     },
   }
 
-  it("returns an alert with the attacker name when combat is engaged", () => {
+  it("returns an alert summarizing the standing battle", () => {
     const result = spaceMoltEventProcessor.processEvent(combatEvent, {})
     expect(result.alert).toBeDefined()
-    expect(result.alert).toContain("EvilPirate")
+    expect(result.alert).toContain("1 hostile")
+    expect(result.alert).toContain("aggressive")
   })
 
   it("stateUpdate sets inCombat true and refreshes tick", () => {

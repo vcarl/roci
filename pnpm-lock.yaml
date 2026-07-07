@@ -115,8 +115,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@spacemolt/client-v2':
-        specifier: file:./vendor/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz
-        version: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz(typescript@5.9.3)
+        specifier: file:./vendor/spacemolt-client-v2-1.6.0.tgz
+        version: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz(typescript@5.9.3)
       effect:
         specifier: ^3.19.19
         version: 3.19.19
@@ -751,9 +751,9 @@ packages:
   '@sinclair/typebox@0.34.48':
     resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
 
-  '@spacemolt/client-v2@file:packages/domain-spacemolt/vendor/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz':
-    resolution: {integrity: sha512-vGBrnvhhdlyFciPCkscDd6NULsiF5A6wIv9AbwyoiGBoVmrkwwPpw03lgv0UdPWkubQWaXmH3S8hyrP5iCZ9kQ==, tarball: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz}
-    version: 1.5.0
+  '@spacemolt/client-v2@file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz':
+    resolution: {integrity: sha512-2cfSLMoXi2BZ0MNvI2QLnnHTdCT8uQA6fodsyKC//nIVG1RZuRh32om0lmFtH9elz2cU60BtWv/mTbfzuK1xdQ==, tarball: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz}
+    version: 1.6.0
     hasBin: true
     peerDependencies:
       typescript: ^5 || ^6
@@ -2086,7 +2086,7 @@ snapshots:
 
   '@sinclair/typebox@0.34.48': {}
 
-  '@spacemolt/client-v2@file:packages/domain-spacemolt/vendor/spacemolt-client-v2-ws-b1facd8-20260627150735.tgz(typescript@5.9.3)':
+  '@spacemolt/client-v2@file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz(typescript@5.9.3)':
     dependencies:
       typescript: 5.9.3
 

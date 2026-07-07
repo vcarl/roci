@@ -19,7 +19,7 @@ import type { ServerEvent } from "@spacemolt/client-v2"
  * The domain's event type. Identical to the client-v2 `ServerEvent` closed
  * discriminated union: control frames (`welcome`, `logged_in`, `registered`,
  * `ok`, `result`, `error`, `action_result`, `action_error`) plus notifications
- * (`combat_update`, `player_died`, `scan_result`, `scan_detected`,
+ * (`battle_update`, `player_died`, `scan_detected`,
  * `pilotless_ship`, `reconnected`, `mining_yield`, `chat_message`,
  * `trade_offer_received`, `skill_level_up`, `market_update`,
  * `observation_update`, `crafting_update`).
@@ -43,13 +43,12 @@ export type {
 // Notification payload types (generated from the OpenAPI spec), re-exported for
 // the event-processor's per-frame handlers.
 export type {
-  NotificationCombatUpdate,
+  NotificationBattleUpdate,
   NotificationObservationUpdate,
   NotificationMiningYield,
   NotificationPlayerDied,
   NotificationChatMessage,
   NotificationMarketUpdate,
-  NotificationScanResult,
   NotificationScanDetected,
   NotificationSkillLevelUp,
   NotificationTradeOfferReceived,

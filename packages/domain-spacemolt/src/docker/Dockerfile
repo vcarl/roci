@@ -91,11 +91,11 @@ ARG OPENCODE_VERSION=latest
 RUN npm install -g opencode-ai@${OPENCODE_VERSION}
 
 # Install the pinned, unpublished SpaceMolt client-v2 CLI (`spacemolt` bin) from a
-# VENDORED tarball. This build (@spacemolt/client-v2, ws variant b1facd8) is NOT on
+# VENDORED tarball. This build (@spacemolt/client-v2 v1.6.0) is NOT on
 # npm, so it is committed into the docker build context and installed from disk.
 # Still USER node with NPM_CONFIG_PREFIX=/usr/local/share/npm-global in effect, so
 # the bin lands on PATH at /usr/local/share/npm-global/bin.
-COPY --chown=node:node spacemolt-client-v2-ws-b1facd8-20260627150735.tgz /tmp/spacemolt-client-v2.tgz
+COPY --chown=node:node spacemolt-client-v2-1.6.0.tgz /tmp/spacemolt-client-v2.tgz
 RUN npm install -g /tmp/spacemolt-client-v2.tgz && rm /tmp/spacemolt-client-v2.tgz
 # Verify the bin is on PATH WITHOUT hitting the network (`spacemolt --version` calls
 # the game API, so use a PATH lookup instead).

@@ -7,6 +7,7 @@ import {
   SESSION_FILE_NAME,
   spaceMoltUrl,
   spaceMoltSocketBaseUrl,
+  spaceMoltUserAgent,
   sessionFilePath,
   containerSessionPath,
   validateSessionFile,
@@ -49,6 +50,24 @@ describe("SPACEMOLT_URL wiring", () => {
   it("derives the socket origin without the /api/v2 path", () => {
     delete process.env.SPACEMOLT_URL
     expect(spaceMoltSocketBaseUrl()).toBe("https://game.spacemolt.com")
+  })
+})
+
+describe("SPACEMOLT_USER_AGENT wiring", () => {
+  const prev = process.env.SPACEMOLT_USER_AGENT
+  afterEach(() => {
+    if (prev === undefined) delete process.env.SPACEMOLT_USER_AGENT
+    else process.env.SPACEMOLT_USER_AGENT = prev
+  })
+
+  it("defaults to the roci client identifier", () => {
+    delete process.env.SPACEMOLT_USER_AGENT
+    expect(spaceMoltUserAgent()).toBe("roci")
+  })
+
+  it("honors the env override", () => {
+    process.env.SPACEMOLT_USER_AGENT = "roci/0.1.0"
+    expect(spaceMoltUserAgent()).toBe("roci/0.1.0")
   })
 })
 
