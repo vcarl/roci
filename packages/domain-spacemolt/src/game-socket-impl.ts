@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Queue, Scope, Fiber, Ref } from "effect"
+import { Context, Effect, Layer, Queue, Scope, Fiber } from "effect"
 import * as path from "node:path"
 import { createSocket } from "@spacemolt/client-v2"
 import type { WebSocketCtor } from "@spacemolt/client-v2"
@@ -6,6 +6,7 @@ import type { GameState, PlayerState, ShipState, SystemState, PoiState } from ".
 import type { GameEvent, LoggedInPayload } from "./ws-types.js"
 import { FULL_STATE_FRAME, schemaGapNote } from "./ws-types.js"
 import { readPlayerCredentials, spaceMoltSocketBaseUrl, spaceMoltUserAgent } from "./session.js"
+import { makeStateRefreshLoop } from "./state-refresh.js"
 import { CharacterLog, logBehavior } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import type { CharacterConfig } from "@roci/core/services/CharacterFs.js"
@@ -22,6 +23,21 @@ const QUEUE_CAPACITY = 500
 const STATE_REFRESH_INTERVAL_MS = 45_000
 /** Bound each get_state request so a stuck refresh can't wedge the refresh loop. */
 const STATE_REFRESH_TIMEOUT_MS = 15_000
+
+/**
+ * Staleness ceiling for the refresh watchdog: if no SUCCESSFUL full-state
+ * refresh lands within this window, the watchdog escalates loudly and forces a
+ * recovery (the refresh flow has silently wedged). Default 3 intervals (135s);
+ * overridable via `ROCI_SM_STATE_STALE_CEILING_MS`. Invalid / non-positive
+ * values fall back to the default (mirrors ModelService.resolveMaxRestarts).
+ */
+const DEFAULT_STATE_STALE_CEILING_MS = 3 * STATE_REFRESH_INTERVAL_MS
+export function resolveStateStaleCeilingMs(): number {
+  const raw = process.env.ROCI_SM_STATE_STALE_CEILING_MS
+  if (raw === undefined) return DEFAULT_STATE_STALE_CEILING_MS
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_STATE_STALE_CEILING_MS
+}
 
 export class GameSocketError {
   readonly _tag = "GameSocketError"
@@ -219,8 +235,11 @@ export const makeGameSocketLive = () =>
           // `socket.request()` correlates by request_id inside the library's own
           // message handler, independent of the iterator the forwarding fiber
           // drains — so draining `it` does not steal the response.
-          const refreshInFlight = yield* Ref.make(false)
-          const doRefresh = Effect.gen(function* () {
+          // ONE get_state refresh. Resolves `true` when a fresh full_state frame
+          // was enqueued, `false` on a terminal error frame (keep last snapshot).
+          // Self-handles all failures so it never fails the effect — the
+          // supervision loop only needs the success/failure boolean.
+          const performRefresh = Effect.gen(function* () {
             const resp = yield* Effect.tryPromise({
               try: () => socket.request({ type: "get_state" }, { timeoutMs: STATE_REFRESH_TIMEOUT_MS }),
               catch: (e) => new GameSocketError("get_state refresh failed", e),
@@ -231,26 +250,37 @@ export const makeGameSocketLive = () =>
                 "error",
                 `get_state refresh error: ${(resp.payload as { message?: string })?.message ?? resp.type}`,
               )
-            } else {
-              // Synthetic host frame (outside the ServerEvent union) — cast to enqueue.
-              const frame = {
-                type: FULL_STATE_FRAME,
-                payload: (resp as { payload?: Record<string, unknown> }).payload ?? {},
-              } as unknown as GameEvent
-              yield* Queue.offer(events, frame).pipe(
-                Effect.catchAll(() => emitWs("error", "Event queue full — dropping full_state refresh")),
-              )
+              return false
             }
+            // Synthetic host frame (outside the ServerEvent union) — cast to enqueue.
+            const frame = {
+              type: FULL_STATE_FRAME,
+              payload: (resp as { payload?: Record<string, unknown> }).payload ?? {},
+            } as unknown as GameEvent
+            const offered = yield* Queue.offer(events, frame).pipe(Effect.as(true)).pipe(
+              Effect.catchAll(() =>
+                emitWs("error", "Event queue full — dropping full_state refresh").pipe(Effect.as(false)),
+              ),
+            )
+            return offered
           }).pipe(
             // A failed refresh must never zero state — log and keep the last snapshot.
-            Effect.catchAll((e) => emitWs("error", `State refresh failed: ${String(e)}`)),
+            Effect.catchAll((e) =>
+              emitWs("error", `State refresh failed: ${String(e)}`).pipe(Effect.as(false)),
+            ),
           )
-          // Skip-if-busy guard: a slow refresh never overlaps the next trigger.
-          const refreshOnce = Effect.gen(function* () {
-            const busy = yield* Ref.getAndSet(refreshInFlight, true)
-            if (busy) return
-            yield* doRefresh.pipe(Effect.ensuring(Ref.set(refreshInFlight, false)))
+
+          // Supervise refresh timing, the skip-if-busy latch, and staleness. The
+          // logic lives in state-refresh.ts with injected deps so it's unit-tested.
+          const refreshLoop = yield* makeStateRefreshLoop({
+            performRefresh,
+            emit: emitWs,
+            status: () => socket.status,
+            intervalMs: STATE_REFRESH_INTERVAL_MS,
+            timeoutMs: STATE_REFRESH_TIMEOUT_MS,
+            staleCeilingMs: resolveStateStaleCeilingMs(),
           })
+          const refreshOnce = refreshLoop.refreshOnce
 
           // --- Forwarding fiber: pump live frames into the Queue. ---
           const forwardFiber = yield* Effect.gen(function* () {
@@ -270,10 +300,11 @@ export const makeGameSocketLive = () =>
             Effect.forkScoped,
           )
 
-          // --- Periodic refresh fiber (scoped: interrupted on connection close). ---
-          yield* Effect.forever(
-            Effect.sleep(`${STATE_REFRESH_INTERVAL_MS} millis`).pipe(Effect.zipRight(refreshOnce)),
-          ).pipe(Effect.forkScoped)
+          // --- Periodic refresh + staleness watchdog (scoped: interrupted on
+          // connection close). runPeriodic pulls fresh state on a cadence;
+          // runWatchdog notices if that flow silently wedges and forces recovery. ---
+          yield* refreshLoop.runPeriodic.pipe(Effect.forkScoped)
+          yield* refreshLoop.runWatchdog.pipe(Effect.forkScoped)
 
           // Scope finalizer: stop forwarding, close the socket, drain the Queue.
           yield* Scope.addFinalizer(
