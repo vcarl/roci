@@ -6,6 +6,7 @@ import type {
   LoggedInPayload,
   NotificationChatMessage,
   NotificationBattleUpdate,
+  NotificationBattleDamage,
   NotificationMiningYield,
   NotificationObservationUpdate,
   NotificationScanDetected,
@@ -242,14 +243,27 @@ function handleObservationUpdate(payload: NotificationObservationUpdate): EventR
 }
 
 function handleBattleUpdate(payload: NotificationBattleUpdate): EventResult {
-  // client-v2 1.6.0 replaced the per-hit `combat_update` frame with a periodic
-  // battle-state snapshot: no attacker/damage fields on the WS stream anymore
-  // (per-hit damage now arrives only via the REST `battle_damage` notification).
-  // We still drive `inCombat`/`tick` from it and summarize the standing fight.
+  // client-v2 1.6.0 split combat into a periodic `battle_update` snapshot (this
+  // handler: standing-fight summary, no per-hit fields) plus separate per-hit
+  // `battle_damage` push frames (see handleBattleDamage). We drive `inCombat`/
+  // `tick` from the snapshot and summarize the standing fight.
   const hostiles = payload.participants.filter((p) => p.side_id !== payload.your_side_id).length
   return {
     category: { _tag: "StateChange" },
     alert: `Battle in progress (stance: ${payload.your_stance}) — ${hostiles} hostile${hostiles === 1 ? "" : "s"} engaged in ${payload.your_zone}.`,
+    stateUpdate: (prev) => {
+      const s = prev as GameState
+      return { ...s, inCombat: true, tick: payload.tick, timestamp: Date.now() }
+    },
+  }
+}
+
+function handleBattleDamage(payload: NotificationBattleDamage): EventResult {
+  const attacker = payload.attacker_name ?? payload.attacker_id
+  // faithful to the pre-1.6.0 per-hit combat alert style
+  return {
+    category: { _tag: "StateChange" },
+    alert: `Taking fire! ${attacker} hit you for ${payload.total_damage} ${payload.damage_type} damage (shield: ${payload.shield_hit}, hull: ${payload.hull_hit}).`,
     stateUpdate: (prev) => {
       const s = prev as GameState
       return { ...s, inCombat: true, tick: payload.tick, timestamp: Date.now() }
@@ -315,6 +329,9 @@ export const spaceMoltEventProcessor: EventProcessor = {
 
       case "battle_update":
         return handleBattleUpdate(smEvent.payload)
+
+      case "battle_damage":
+        return handleBattleDamage(smEvent.payload)
 
       case "player_died":
         return {

@@ -4,9 +4,9 @@ import { createSocket } from "@spacemolt/client-v2"
 import type { WebSocketCtor } from "@spacemolt/client-v2"
 import type { GameState, PlayerState, ShipState, SystemState, PoiState } from "./types.js"
 import type { GameEvent, LoggedInPayload } from "./ws-types.js"
-import { FULL_STATE_FRAME } from "./ws-types.js"
+import { FULL_STATE_FRAME, schemaGapNote } from "./ws-types.js"
 import { readPlayerCredentials, spaceMoltSocketBaseUrl, spaceMoltUserAgent } from "./session.js"
-import { CharacterLog } from "@roci/core/logging/log-writer.js"
+import { CharacterLog, logBehavior } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import type { CharacterConfig } from "@roci/core/services/CharacterFs.js"
 
@@ -107,6 +107,23 @@ export const makeGameSocketLive = () =>
 
           const events = yield* Queue.bounded<GameEvent>(QUEUE_CAPACITY)
 
+          // Forward one frame into the event queue, first tripping schema-gap
+          // discovery: any frame whose `type` isn't a member of the lib's
+          // `ServerEvent` union emits a `note` behavior (no dedup) so QA/dev can
+          // reconcile the gap into the client-v2/OpenAPI schema upstream.
+          const forwardFrame = (frame: GameEvent) =>
+            Effect.gen(function* () {
+              const note = schemaGapNote(frame)
+              if (note) {
+                yield* logBehavior(char.name, "orchestrator", "ws", note)
+              }
+              yield* Queue.offer(events, frame).pipe(
+                Effect.catchAll(() =>
+                  emitWs("error", `Event queue full — dropping ${frame.type} event`),
+                ),
+              )
+            })
+
           yield* emitWs("system", `Connecting to ${spaceMoltSocketBaseUrl()} as ${creds.username}...`)
 
           // The `ws` package supplies the Node WebSocket implementation.
@@ -171,16 +188,7 @@ export const makeGameSocketLive = () =>
 
           // Forward the buffered handshake frames so the event-processor /
           // hindbrain observe them in order before any live frame.
-          yield* Effect.forEach(
-            handshake.buffered,
-            (frame) =>
-              Queue.offer(events, frame).pipe(
-                Effect.catchAll(() =>
-                  emitWs("error", `Event queue full — dropping ${frame.type} event`),
-                ),
-              ),
-            { discard: true },
-          )
+          yield* Effect.forEach(handshake.buffered, forwardFrame, { discard: true })
 
           const { initialState, tickIntervalSec, initialTick } = handshake
 
@@ -249,11 +257,7 @@ export const makeGameSocketLive = () =>
             for (;;) {
               const next = yield* Effect.tryPromise(() => it.next())
               if (next.done) break
-              yield* Queue.offer(events, next.value).pipe(
-                Effect.catchAll(() =>
-                  emitWs("error", `Event queue full — dropping ${next.value.type} event`),
-                ),
-              )
+              yield* forwardFrame(next.value)
               // The library reconnects transparently and does NOT re-emit
               // logged_in, so refresh full state on `reconnected`. Fork so
               // forwarding never blocks on the request round-trip.

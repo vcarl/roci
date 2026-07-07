@@ -66,6 +66,41 @@ describe("spaceMoltEventProcessor — battle_update", () => {
   })
 })
 
+describe("spaceMoltEventProcessor — battle_damage", () => {
+  // `battle_damage` is a per-hit combat frame the lib's ServerEvent union omits;
+  // GameEvent bridges it so this fixture typechecks and the processor handles it.
+  const damageEvent = {
+    type: "battle_damage" as const,
+    payload: {
+      attacker_id: "foe",
+      attacker_name: "EvilPirate",
+      damage_type: "laser",
+      hit_success: true,
+      hull_hit: 20,
+      shield_hit: 30,
+      target_id: "me",
+      target_name: "Pilot",
+      tick: 42,
+      total_damage: 50,
+      weapons_fired: [],
+    },
+  }
+
+  it("returns an alert naming the attacker and total damage", () => {
+    const result = spaceMoltEventProcessor.processEvent(damageEvent, {})
+    expect(result.alert).toBeDefined()
+    expect(result.alert).toContain("EvilPirate")
+    expect(result.alert).toContain("50")
+  })
+
+  it("stateUpdate sets inCombat true and refreshes tick", () => {
+    const result = spaceMoltEventProcessor.processEvent(damageEvent, {})
+    const next = result.stateUpdate!(makeState({ inCombat: false, tick: 1 })) as GameState
+    expect(next.inCombat).toBe(true)
+    expect(next.tick).toBe(42)
+  })
+})
+
 describe("spaceMoltEventProcessor — non-handled events", () => {
   it("does not return an alert for an unknown 'tick' frame", () => {
     const result = spaceMoltEventProcessor.processEvent({ type: "tick", payload: { tick: 1 } }, {})
