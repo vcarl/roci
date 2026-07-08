@@ -15,7 +15,7 @@
 import { Effect, Stream } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "../../transport/types.js"
-import { buildExecArgs } from "../../transport/process-runner.js"
+import { buildExecArgs } from "#brain/transport/process-runner.js"
 import { buildOpenCodeSessionCommand, openCodeBodyEnv, wrapWithTimeout } from "../../transport/payload.js"
 import { runTransport } from "../../transport/transport.js"
 import { ClaudeError } from "../../../services/Claude.js"
