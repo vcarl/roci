@@ -20,5 +20,97 @@
 	},
 	"files": {
 		"includes": ["**/*.ts", "**/*.json", "!!**/.nx", "!!**/node_modules", "!!**/dist"]
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["packages/core/src/brain/limbic/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [{ "group": ["#brain/cortex/**"] }, { "group": ["**/cortex/**"] }]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["packages/core/src/brain/cortex/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [{ "group": ["#brain/limbic/**"] }, { "group": ["**/limbic/**"] }]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["packages/core/src/brain/transport/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [{ "group": ["#brain/cortex/**"] }, { "group": ["**/cortex/**"] }]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["packages/core/src/services/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [{ "group": ["#brain/cortex/**"] }, { "group": ["**/cortex/**"] }]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["packages/core/src/model/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [{ "group": ["#brain/cortex/**"] }, { "group": ["**/cortex/**"] }]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["packages/core/src/core/**", "!packages/core/src/core/orchestrator/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [{ "group": ["#brain/cortex/**"] }, { "group": ["**/cortex/**"] }]
+							}
+						}
+					}
+				}
+			}
+		}
+	]
 }
