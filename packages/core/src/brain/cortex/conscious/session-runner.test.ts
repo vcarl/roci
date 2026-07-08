@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest"
 import { runOpenCodeSessionTurn, firstSessionId, sessionNotFoundMessage } from "./session-runner.js"
-import { buildExecArgs } from "../../transport/process-runner.js"
-import { openCodeBodyEnv } from "../../transport/payload.js"
-import type { TurnConfig } from "../../transport/types.js"
+import { buildExecArgs } from "#brain/transport/process-runner.js"
+import { openCodeBodyEnv } from "#brain/transport/payload.js"
+import type { TurnConfig } from "#brain/transport/types.js"
 
 const base: TurnConfig = {
   containerId: "cabc",

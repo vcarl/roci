@@ -26,7 +26,7 @@ import {
 	type EventProcessor,
 	EventProcessorTag,
 	type EventResult,
-} from "../brain/limbic/thalamus/event-processor.js";
+} from "#brain/limbic/thalamus/event-processor.js";
 import type { TemplateEvent, TemplateState, TodoItem } from "./types.js";
 
 /**

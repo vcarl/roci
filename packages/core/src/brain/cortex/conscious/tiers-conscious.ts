@@ -7,10 +7,10 @@ import type { SpawnError, ReadinessError } from "../../../services/model-backend
 import type { CharacterLog } from "../../../logging/log-writer.js"
 import type { EpisodeAttribution } from "../../../logging/episodes.js"
 import { loadSkillSync } from "../../../skills/loader.js"
-import { sanitizeDecideSkill } from "../../loop/state.js"
-import { parseOr, isPlainObject } from "../../loop/parse.js"
+import { sanitizeDecideSkill } from "#brain/loop/state.js"
+import { parseOr, isPlainObject } from "#brain/loop/parse.js"
 import type { DecideResult, EvaluateResult, EvaluateTransition, OrientResult } from "../../../skills/types.js"
-import { callTier, emitTier, getCadenceGuidance, type CortexRunnerConfig } from "../../loop/tier-config.js"
+import { callTier, emitTier, getCadenceGuidance, type CortexRunnerConfig } from "#brain/loop/tier-config.js"
 
 const SKILLS_DIR = path.resolve(import.meta.dirname, "prompts")
 const skills = {

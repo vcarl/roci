@@ -11,7 +11,7 @@ import { OAuthToken } from "../../../services/OAuthToken.js"
 import { Docker } from "../../../services/Docker.js"
 import { DEFAULT_CORTEX_MODELS } from "../../../model/handles.js"
 import * as core from "../../../index.js"
-import type { TurnResult } from "../../transport/types.js"
+import type { TurnResult } from "#brain/transport/types.js"
 
 // Minimal stubs — ConsciousThoughtTest never calls the real transport.
 const StubCommandExecutor = Layer.succeed(

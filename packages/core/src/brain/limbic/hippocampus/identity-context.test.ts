@@ -5,7 +5,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { CharacterFs } from "../../../services/CharacterFs.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
-import { MemoryGateway } from "./memory/memory-gateway.js"
+import { MemoryGateway } from "#brain/limbic/hippocampus/memory/memory-gateway.js"
 import { readIdentityContext, IDENTITY_PLACEHOLDERS } from "./identity-context.js"
 
 const silentLog = Layer.succeed(CharacterLog, CharacterLog.of({ emit: () => Effect.void }))

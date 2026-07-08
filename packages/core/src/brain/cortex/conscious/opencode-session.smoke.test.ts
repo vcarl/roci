@@ -6,14 +6,14 @@ import {
   provisionConsciousProvider,
   writeCharacterAgentFile,
 } from "./opencode-config.js"
-import { CONSCIOUS_AGENT_NAME } from "../../transport/consts.js"
+import { CONSCIOUS_AGENT_NAME } from "#brain/transport/consts.js"
 import { consciousModelLabel } from "../../../model/conscious-label.js"
 import { DockerLive } from "../../../services/Docker.js"
 import { DEFAULT_CORTEX_MODELS } from "../../../model/handles.js"
 import { CharacterLogLive } from "../../../logging/log-writer.js"
 import { OAuthTokenLive } from "../../../services/OAuthToken.js"
 import { ProjectRoot } from "../../../services/ProjectRoot.js"
-import type { TurnConfig } from "../../transport/types.js"
+import type { TurnConfig } from "#brain/transport/types.js"
 
 // Prereqs: a host llama-server on the conscious port, and a roci container:
 //   ROCI_OPENCODE_SESSION_CONTAINER=<id> ROCI_OPENCODE_SESSION_PLAYER=<name> \

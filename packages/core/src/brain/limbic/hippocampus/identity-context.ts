@@ -2,8 +2,8 @@ import { Effect } from "effect"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
 import { CharacterFs } from "../../../services/CharacterFs.js"
 import { CharacterLog, logError } from "../../../logging/log-writer.js"
-import { MemoryGateway, orientQuery } from "./memory/memory-gateway.js"
-import { readWm, renderOpenTodoTree } from "../wm/wm-store.js"
+import { MemoryGateway, orientQuery } from "#brain/limbic/hippocampus/memory/memory-gateway.js"
+import { readWm, renderOpenTodoTree } from "#brain/limbic/wm/wm-store.js"
 
 /**
  * IDENTITY / CONTEXT INJECTION — the single seam.

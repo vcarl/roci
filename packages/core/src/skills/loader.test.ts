@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { loadSkillSync, type LoadedSkill } from "./loader.js"
-import { getCadenceGuidance } from "../brain/limbic/autonomic/cadence.js"
+import { getCadenceGuidance } from "#brain/limbic/autonomic/cadence.js"
 import * as path from "node:path"
 
 // observe/orient are limbic-tier prompts; decide/evaluate are cortex/conscious-tier

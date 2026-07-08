@@ -4,7 +4,7 @@ import { CharacterFs, type CharacterConfig } from "../../../services/CharacterFs
 import { CharacterLog, logToConsole, logError } from "../../../logging/log-writer.js"
 import { eventBase } from "../../../logging/events.js"
 import { loadTemplate, renderTemplate } from "../../../core/template.js"
-import { runTurn } from "../../../brain/transport/process-runner.js"
+import { runTurn } from "#brain/transport/process-runner.js"
 import type { ModelConfig } from "../../../core/model-config.js"
 import { resolveModel } from "../../../core/model-config.js"
 

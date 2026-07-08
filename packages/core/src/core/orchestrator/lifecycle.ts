@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import type { Plan, PlanStep, StepCompletionResult } from "../types.js"
-import type { SituationSummary } from "../../brain/limbic/thalamus/situation-classifier.js"
+import type { SituationSummary } from "#brain/limbic/thalamus/situation-classifier.js"
 
 /**
  * Context passed to the beforePlan hook.

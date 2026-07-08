@@ -10,12 +10,12 @@ const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
 vi.mock("../../../brain/transport/process-runner.js", () => ({ runTurn: runTurnMock }))
 
 import { macro, buildMacroPrompt, defaultGrowthNote, renderMemoryHits, MAX_SYNTHESIS_CHARS } from "./macro.js"
-import type { MemoryHit } from "./memory/longterm-store.js"
+import type { MemoryHit } from "#brain/limbic/hippocampus/memory/longterm-store.js"
 import { CharacterFs, CharacterFsError } from "../../../services/CharacterFs.js"
 import type { SkillDoc } from "../../../services/skills-core.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
-import { LongtermStore } from "./memory/longterm-store.js"
+import { LongtermStore } from "#brain/limbic/hippocampus/memory/longterm-store.js"
 import { DEFAULT_MODEL_CONFIG } from "../../../core/model-config.js"
 import { setEpisodeLogRoot, appendToolEpisode, appendTransitionEpisode } from "../../../logging/episodes.js"
 import {

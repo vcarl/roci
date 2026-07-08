@@ -3,7 +3,7 @@ import { Context, Effect, Layer } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import type { ModelHandle } from "../../../model/handles.js"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
-import type { TurnConfig, TurnResult } from "../../transport/types.js"
+import type { TurnConfig, TurnResult } from "#brain/transport/types.js"
 import { runOpenCodeSessionTurn } from "./session-runner.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
@@ -13,7 +13,7 @@ import {
   writeCharacterAgentFile,
   writeCharacterOpencodeConfig,
 } from "./opencode-config.js"
-import { CONSCIOUS_AGENT_NAME } from "../../transport/consts.js"
+import { CONSCIOUS_AGENT_NAME } from "#brain/transport/consts.js"
 import { consciousModelLabel } from "../../../model/conscious-label.js"
 import type { AnyModel } from "../../../model/runtime.js"
 import { provisionFrontierCli } from "./frontier-cli.js"

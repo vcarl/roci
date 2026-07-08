@@ -6,21 +6,21 @@ import { ModelService } from "../../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../../services/model-backend.js"
 import { CharacterLog, logToConsole, logError, logBehavior } from "../../logging/log-writer.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
-import { EventProcessorTag } from "../limbic/thalamus/event-processor.js"
-import { SituationClassifierTag } from "../limbic/thalamus/situation-classifier.js"
-import { InterruptRegistryTag } from "../limbic/amygdala/interrupt.js"
+import { EventProcessorTag } from "#brain/limbic/thalamus/event-processor.js"
+import { SituationClassifierTag } from "#brain/limbic/thalamus/situation-classifier.js"
+import { InterruptRegistryTag } from "#brain/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
-import { ConsciousThought } from "../cortex/conscious/conscious-thought.js"
+import { ConsciousThought } from "#brain/cortex/conscious/conscious-thought.js"
 import { consciousModelLabel } from "../../model/conscious-label.js"
-import type { TurnResult } from "../transport/types.js"
+import type { TurnResult } from "#brain/transport/types.js"
 import { ModelClient } from "../../model/client.js"
 import type { ModelError } from "../../model/errors.js"
 import { DEFAULT_CORTEX_MODELS, resolveHandle, type CortexModelConfig } from "../../model/handles.js"
 import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "../../core/model-config.js"
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
-import { TEMPLATE_DRIVES } from "../limbic/autonomic/drives.js"
-import type { Cadence } from "../limbic/autonomic/cadence.js"
+import { TEMPLATE_DRIVES } from "#brain/limbic/autonomic/drives.js"
+import type { Cadence } from "#brain/limbic/autonomic/cadence.js"
 import type { Alert } from "../../core/types.js"
 import type { ObserveResult, OrientResult, DecideResult } from "../../skills/types.js"
 import { Docker } from "../../services/Docker.js"
@@ -32,9 +32,9 @@ import {
   evaluateMemories,
   decideQuery,
   evaluateQuery,
-} from "../limbic/hippocampus/memory/memory-gateway.js"
-import { runHindbrain, runForebrain } from "../limbic/tiers-limbic.js"
-import { runConsciousDecide, runConsciousEvaluate, runDiaryTurn } from "../cortex/conscious/tiers-conscious.js"
+} from "#brain/limbic/hippocampus/memory/memory-gateway.js"
+import { runHindbrain, runForebrain } from "#brain/limbic/tiers-limbic.js"
+import { runConsciousDecide, runConsciousEvaluate, runDiaryTurn } from "#brain/cortex/conscious/tiers-conscious.js"
 import type { CortexRunnerConfig } from "./tier-config.js"
 import {
   freshCortexState,
@@ -69,10 +69,10 @@ import {
   drainWmDeltas,
   mutateWm,
   seedWmPlan,
-} from "../limbic/wm/wm-store.js"
-import type { WmDelta } from "../limbic/wm/wm-core.js"
+} from "#brain/limbic/wm/wm-store.js"
+import type { WmDelta } from "#brain/limbic/wm/wm-core.js"
 import { renderSkillIndex, type SkillMeta } from "../../services/skills-core.js"
-import { readIdentityContext } from "../limbic/hippocampus/identity-context.js"
+import { readIdentityContext } from "#brain/limbic/hippocampus/identity-context.js"
 
 export interface CortexLoopConfig {
   char: CharacterConfig
