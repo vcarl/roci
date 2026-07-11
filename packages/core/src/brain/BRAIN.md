@@ -83,7 +83,12 @@ the limbic memory turns and the conscious executor. It never imports up into eit
 1. **Limbic and cortex NEVER import each other.** The `brain/loop` mediates the orient→decide
    handoff. That handoff runs as a **forked, loop-owned** `runDeliberation` → `applyDeliberation`
    fiber (`brain/loop/loop.ts`), so a slow conscious/forebrain call cannot freeze the tick loop.
-   (The reflexive hindbrain triage still runs inline on the hot path.)
+   The reflexive hindbrain triage is likewise **forked off the hot path** by a limbic-owned
+   reflex scheduler (`brain/limbic/reflex-scheduler.ts`): the loop *submits* each state-changing
+   event's appraisal and *drains* the ones that have landed into the tick's escalation reduce, so
+   a slow 2B reflex cannot freeze the conductor either. Ordering contract: a reflex not ready by
+   its own tick's reduce is consumed on the tick it lands (escalations queue, never drop); the
+   amygdala critical-interrupt path stays synchronous, so a "cut-the-line" is never deferred.
 
 2. **The limbic→cortex boundary IS the orient→decide seam.** Observe and orient are
    pre-conscious (limbic tier runners); decide, evaluate, and execute are conscious (cortex tier

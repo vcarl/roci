@@ -87,9 +87,14 @@ Each iteration of the loop runs a fixed sequence of numbered steps
    so, append its output to the step report and set `stepDoneSignaled` when `detectCompletion`
    sees the done-marker.
 4. **Hindbrain per-event triage.** Each state-changing event is appraised once by the 2B
-   hindbrain; inert events are fast-pathed. The per-event `ObserveResult`s are reduced into
-   one `HindbrainEscalation` via `appraiseTick` (see the escalation ladder in LIMBIC.md §3),
-   surfaced on `cortex.escalation`.
+   hindbrain; inert events are fast-pathed. The appraisal is **forked off the hot path** by a
+   limbic-owned reflex scheduler (`brain/limbic/reflex-scheduler.ts`): the loop *submits* each
+   event and *drains* the appraisals that have landed (this tick's fast reflexes plus any
+   earlier slow one) — so a slow 2B call never freezes the tick. The drained `ObserveResult`s
+   (plus this tick's deterministic inert ones) are reduced into one `HindbrainEscalation` via
+   `appraiseTick` (see the escalation ladder in LIMBIC.md §3). Ordering contract: a reflex not
+   ready by its own tick's reduce is consumed on the tick it lands (escalations queue, never
+   drop); the amygdala critical check in step 2 stays synchronous, never deferred.
 5. **Forebrain + deliberation.** Two disjoint call sites, never both in one tick:
    - *Idle path*: no active plan and an escalate trigger → `runForebrain` orient →
      deliberation (decide). The decision becomes a plan, a synthetic one-step discover plan
@@ -119,8 +124,11 @@ loop-owned deliberation fiber (`runDeliberation`, `brain/loop/loop.ts`) and late
 result back into loop state (`applyDeliberation`, `brain/loop/loop.ts`), which returns a
 `CortexResult` on terminate or `null` otherwise. This keeps a slow conscious/forebrain call
 from freezing the tick loop — the loop keeps draining events and honoring critical
-interrupts while a deliberation is in flight. (The reflexive hindbrain triage in step 4 still
-runs inline.)
+interrupts while a deliberation is in flight. The reflexive hindbrain triage in step 4 is
+**likewise forked** — off a limbic-owned reflex scheduler (`reflex-scheduler.ts`) — so a slow
+2B reflex no longer freezes the conductor either; its escalation is consumed on the tick it
+lands (LIMBIC.md §2). The only inline, synchronous safety-rail is the amygdala
+critical-interrupt check (step 2).
 
 ## 4. Plans, steps, and completion
 

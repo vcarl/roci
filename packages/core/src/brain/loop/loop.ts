@@ -26,14 +26,14 @@ import type { ObserveResult, OrientResult, DecideResult } from "../../skills/typ
 import { Docker } from "../../services/Docker.js"
 import {
   MemoryGateway,
-  observeMemories,
   orientMemories,
   decideMemories,
   evaluateMemories,
   decideQuery,
   evaluateQuery,
 } from "#brain/limbic/hippocampus/memory/memory-gateway.js"
-import { runHindbrain, runForebrain } from "#brain/limbic/tiers-limbic.js"
+import { runForebrain } from "#brain/limbic/tiers-limbic.js"
+import { makeReflexScheduler } from "#brain/limbic/reflex-scheduler.js"
 import { runConsciousDecide, runConsciousEvaluate, runDiaryTurn } from "#brain/cortex/conscious/tiers-conscious.js"
 import type { CortexRunnerConfig } from "./tier-config.js"
 import {
@@ -191,6 +191,14 @@ export const runCortex = (config: CortexLoopConfig) =>
       palette,
       drives,
     }
+
+    // Limbic-owned reflex scheduler (B2): forks per-event hindbrain appraisal
+    // (+ its memory write) off the conductor's hot path so a slow 2B reflex
+    // can't freeze the tick loop. The loop submits non-inert events and drains
+    // landed appraisals into the tick's escalation reduce; the reduce +
+    // escalation consumption stay loop-side. See reflex-scheduler.ts for the
+    // ordering contract (escalations queue, never drop; amygdala stays sync).
+    const reflex = makeReflexScheduler(runnerConfig, config.containerId)
 
     // Issue 1 (fail loud): read an identity/memory file, but never silently
     // swallow a read failure. On error, emit a structured kind:"error" event
@@ -590,6 +598,10 @@ export const runCortex = (config: CortexLoopConfig) =>
           yield* Fiber.interrupt(deliberationFiber)
           deliberationFiber = null
         }
+        // A dropped session's in-flight reflexes are moot — interrupt them so the
+        // amygdala "cut-the-line" exit leaves no orphaned 2B calls (mirrors the
+        // consciousFiber/deliberationFiber interrupts above).
+        yield* reflex.interruptAll()
         // wm (spec §2): this exit skips resetPlanState (unlike reorient/interrupt,
         // nothing continues afterward for this session), so an active plan's
         // seeded orphans must be discarded here too — otherwise they leak into
@@ -621,8 +633,15 @@ export const runCortex = (config: CortexLoopConfig) =>
 
       // 4. HINDBRAIN per-event triage — ungated: runs whenever there are events,
       // even mid-session. Each state-changing event is appraised once by the 2B;
-      // inert events are fast-pathed deterministically (no model call). The
-      // per-event results are aggregated into one HindbrainEscalation (§4.4).
+      // inert events are fast-pathed deterministically (no model call). Since B2
+      // the per-event appraisal is FORKED off the hot path (limbic reflex
+      // scheduler): the loop submits non-inert events (no await) and drains the
+      // appraisals that have LANDED — this tick's fast reflexes plus any earlier
+      // tick's slow reflex that only just finished. Inert events are appraised
+      // deterministically loop-side (no model call) and reduced immediately.
+      // Ordering contract (reflex-scheduler.ts): a reflex not ready by its own
+      // tick's reduce is consumed on the tick it lands; escalations queue, never
+      // drop; the amygdala critical path (§2 above) stays synchronous.
       let escalate = tick === 1
       if (forceOrientNext) {
         escalate = true
@@ -633,17 +652,17 @@ export const runCortex = (config: CortexLoopConfig) =>
         if (ev.inert) {
           appraisals.push({ event: ev.text, observe: INERT_APPRAISAL })
         } else {
-          const observe = yield* runHindbrain(runnerConfig, ev.text, cortex.waitState)
-          appraisals.push({ event: ev.text, observe })
-          for (const w of observeMemories(observe)) {
-            yield* memory.remember(config.containerId, config.char, w)
-          }
+          yield* reflex.submit(ev.text, cortex.waitState)
         }
       }
+      // Collect landed appraisals (this tick's + any earlier slow reflex). The
+      // remember write moved into the scheduler, so nothing here awaits the 2B.
+      const landed = yield* reflex.drainReady()
+      appraisals.push(...landed)
       const esc =
-        tickEvents.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
+        appraisals.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
       const nonDiscard = esc.accumulated.length > 0
-      if (tickEvents.length > 0) {
+      if (appraisals.length > 0) {
         yield* logBehavior(config.char.name, "cortex", "hindbrain", {
           type: "appraisal",
           disposition: esc.rung,

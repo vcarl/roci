@@ -177,6 +177,7 @@ const activePhase = {
         cadence: "real-time",
         workerModels: getModels(context),
         orientInterval: 3,
+        tickIntervalMs: conn.tickIntervalSec * 1000,
       }).pipe(Effect.provide(context.domainBundle!))
 
       if (result._tag === "Interrupted") {

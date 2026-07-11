@@ -248,6 +248,7 @@ const activePhase = {
         cadence: "planned-action",
         workerModels: getModels(context),
         orientInterval: 5,
+        tickIntervalMs: conn.tickIntervalSec * 1000,
       }).pipe(Effect.provide(context.domainBundle!))
 
       const updatedConnection = { ...conn, initialState: result.finalState }

@@ -38,7 +38,9 @@ A limbic concept documented here but physically hot-loop-resident — the **hind
 appraisal & escalation** (per-event drive tagging that feeds the loop's steering ladder) —
 has its own section below. Its reducer lives in `brain/loop/state.ts` for hot-loop
 locality, but it is conceptually the limbic appraisal layer, so it is documented here, its
-mental home.
+mental home. The per-event appraisal itself is now **forked off the hot path** by a
+limbic-owned reflex scheduler (`reflex-scheduler.ts`, §2) — the loop no longer blocks on a
+slow 2B call.
 
 ## Directory Structure
 
@@ -312,6 +314,31 @@ pure and never throws.
 deterministically by the `INERT_APPRAISAL` fast-path (`brain/loop/loop.ts:116`) --
 `discard`/weight-0, no model call (habituation to non-salient stimuli, so noise costs
 nothing). Only state-changing events are sent to the 2B observe.
+
+**The appraisal is forked off the hot path** (`reflex-scheduler.ts`). Each state-changing
+event's 2B observe -- plus its per-event `observeMemories → remember` write -- runs on a
+forked fiber, not inline on the tick. A slow 2B call (observed up to ~17.5 min) therefore
+never freezes the conductor: event draining and the synchronous amygdala critical-interrupt
+check keep running while the reflex is in flight. The scheduler's surface is minimal:
+
+- `submit(event, waitState)` -- fork one event's appraisal; returns immediately.
+- `drainReady()` -- non-blocking poll of the appraisals that have **landed**, in submission
+  order (FIFO). The loop merges these with this tick's deterministic inert appraisals and
+  feeds the combined set to `appraiseTick`.
+- `interruptAll()` -- interrupt every in-flight reflex; called on the amygdala critical exit
+  (a dropped session's reflexes are moot), mirroring the loop's `consciousFiber`/
+  `deliberationFiber` interrupts.
+
+**Ordering contract (load-bearing).** A reflex submitted on tick *T* that has not landed by
+*T*'s reduce is consumed on the tick it lands (*T+k*): escalations **queue and are consumed
+exactly once, never dropped and never reordered relative to each other**. The event's raw
+text likewise reaches `accumulatedEvents` (and the forebrain) one tick later than the old
+inline path -- a benign, documented lag. The **amygdala hard-interrupt** path (`interrupts.
+criticals`, evaluated synchronously in the loop) is NOT routed through the scheduler, so a
+critical "cut-the-line" is never deferred behind a pending reflex. A reflex whose 2B model
+call *fails* degrades to a non-escalating `accumulate` appraisal (mirroring `runHindbrain`'s
+own parse-miss default) rather than crashing the conductor -- off-hot-path robustness over
+deferred crash-loud.
 
 ### 3. The escalation ladder
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
-import { Effect, Layer, Queue, Fiber, Option } from "effect"
+import { Effect, Layer, Queue, Fiber, Option, Deferred } from "effect"
 import { CommandExecutor } from "@effect/platform"
-import { runCortex } from "./loop.js"
+import { runCortex, DEFAULT_STEER_CADENCE_TICKS } from "./loop.js"
 import { ModelClient } from "../../model/client.js"
 import { ModelError } from "../../model/errors.js"
 import type { ModelHandle } from "../../model/handles.js"
@@ -1438,6 +1438,13 @@ describe("runCortex (conscious-session executor)", () => {
     // Guard for the replan self-drive: a `wait` transition is deliberate idling and must
     // NOT set forceOrientNext. After the wait the loop idles indefinitely (no new events),
     // so only the initial plan's decide ever runs — decideCount stays 1.
+    // The sole event is a DISCARD (non-escalating): since B2 the hindbrain reflex is
+    // forked, an escalating event's appraisal would land a tick AFTER the tick-1
+    // auto-escalate deliberation already forked, driving a second (legitimate) orient
+    // and confounding this invariant. Making it discard isolates the invariant under
+    // test — the one plan comes purely from the tick-1 auto-escalate; the wait evaluate
+    // must add no further decide. (The deferred-escalation path is covered by the B2
+    // "ordering contract" test.)
     let decideCount = 0
     const client = Layer.succeed(
       ModelClient,
@@ -1450,7 +1457,7 @@ describe("runCortex (conscious-session executor)", () => {
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
+              return { text: '{"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"noise"}', raw: {} }
             if (hasJudgment && !hasHeadline)
               // evaluate → wait (deliberate idle; must NOT self-drive a re-orient).
               return {
@@ -2144,6 +2151,166 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
     expect(observeCount).toBe(2)
   }, 20_000)
 
+  // ── B2: the hindbrain reflex is FORKED off the hot path (finding G) ──────────
+  it("B2 finding G: a slow HINDBRAIN reflex does not freeze the loop — event drain + amygdala critical still fire while the reflex is blocked (Unit: reflex fork)", async () => {
+    let observeCount = 0
+    const criticalsRef = { n: 0 }
+    // observe (the hindbrain reflex) BLOCKS forever; orient + decide complete so
+    // the loop keeps ticking. Pre-B2 this blocked the tick inline at loop.ts:636
+    // and the loop never advanced past tick 1 (→ timeout RED). Post-B2 the reflex
+    // is forked, so the loop drains a 2nd event and reaches the critical.
+    const blockingObserveClient = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h: ModelHandle, messages) => {
+          const p = messages.map((m) => m.content).join(" ").toLowerCase()
+          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+          const hasDisposition = p.includes("disposition")
+          const hasDecision = p.includes("decision")
+          const hasHeadline = p.includes("headline")
+          const hasJudgment = p.includes("judgment")
+          if (hasDisposition && !hasDecision) {
+            observeCount++
+            return Effect.never as never // reflex fork suspends here — must NOT freeze the loop
+          }
+          if (hasHeadline && !hasJudgment)
+            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
+          if (hasJudgment && !hasHeadline)
+            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+          // decide → wait: no plan, the loop idles but keeps ticking toward the critical.
+          return Effect.succeed({ text: '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}', raw: {} })
+        },
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" }) // tick 1: submits the (blocking) reflex
+      // criticals() runs once per tick (a controllable tick clock). Offer "later"
+      // on tick 1 so it drains on tick 2 — a SECOND reflex is submitted while the
+      // first is still blocked. The critical fires on tick 4, after both submits.
+      const domain = domainWith([], () => {
+        criticalsRef.n++
+        if (criticalsRef.n === 1) Queue.unsafeOffer(events, { type: "later" })
+        return criticalsRef.n >= 4 ? [{ priority: "critical" as const, message: "hull critical" }] : []
+      })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(blockingObserveClient, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    // The loop kept ticking through the blocked reflex and reached the critical
+    // synchronously — finding G closed.
+    expect(result._tag).toBe("Interrupted")
+    // Both events were submitted (each invokes the observe branch once) while the
+    // first reflex was still suspended: the conductor never blocked on the reflex.
+    expect(observeCount).toBe(2)
+  }, 20_000)
+
+  it("B2 semantics preserved: each state-changing event's observe→remember still fires, now via the scheduler (Unit: reflex fork)", async () => {
+    let observeRemembers = 0
+    const countingMemory = Layer.succeed(
+      MemoryGateway,
+      MemoryGateway.of({
+        remember: (_cid, _char, w) =>
+          Effect.sync(() => {
+            if ((w as { source?: string }).source === "observe") observeRemembers++
+          }),
+        recall: () => Effect.succeed(""),
+      }),
+    )
+    // Non-discard observe with a reason → observeMemories yields one write per event.
+    const client = limbicClient({
+      observe: () => '{"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":1,"interrupt":false,"reason":"seen it"}',
+      decide: () => '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}',
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "a" })
+      yield* Queue.offer(events, { type: "b" })
+      const fiber = yield* Effect.fork(
+        runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1000, tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, StubCommandExecutor, StubOAuthToken, StubDocker, countingMemory, noopModelService))),
+      )
+      yield* Effect.sleep("80 millis") // ample ticks for both forked reflexes to land + remember
+      yield* Fiber.interrupt(fiber)
+      return observeRemembers
+    })
+    const count = await Effect.runPromise(program)
+    // Exactly one observe-remember per state-changing event — the per-event
+    // memory write moved INTO the scheduler but still happens once per event.
+    expect(count).toBe(2)
+  }, 20_000)
+
+  it("B2 ordering contract: a reflex that lands a later tick than it was submitted still drives its escalation exactly once (queue, never drop) (Unit: reflex fork)", async () => {
+    let orientCount = 0
+    const criticalsRef = { n: 0 }
+    // Flow: tick 1 auto-escalates (tick===1) → orient#1 + decide#1→wait (idle,
+    // no plan). The seed event's reorient reflex is submitted tick 1 but GATED on
+    // a Deferred opened only on tick 3. When it finally lands (a strictly later
+    // tick than submission), its reorient escalation must wake exactly one more
+    // orient (orient#2) → decide#2→terminate. Total orients == 2 proves the
+    // late-landing escalation was consumed once and never dropped.
+    const program = Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>()
+      let decideN = 0
+      const client = Layer.succeed(
+        ModelClient,
+        ModelClient.of({
+          complete: (_h: ModelHandle, messages) => {
+            const p = messages.map((m) => m.content).join(" ").toLowerCase()
+            if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
+            const hasDisposition = p.includes("disposition")
+            const hasDecision = p.includes("decision")
+            const hasHeadline = p.includes("headline")
+            const hasJudgment = p.includes("judgment")
+            if (hasDisposition && !hasDecision)
+              // Gate the reflex behind the Deferred, THEN return a reorient (w5) appraisal.
+              return Deferred.await(gate).pipe(
+                Effect.as({ text: '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"big"}', raw: {} }),
+              )
+            if (hasHeadline && !hasJudgment) {
+              orientCount++
+              return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😱","metrics":{}}', raw: {} })
+            }
+            if (hasJudgment && !hasHeadline)
+              return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
+            // decide#1 → wait (idle, keep ticking); decide#2 (reflex-driven) → terminate.
+            decideN++
+            return Effect.succeed({
+              text: decideN === 1 ? '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}' : '{"decision":"terminate","reasoning":"done"}',
+              raw: {},
+            })
+          },
+        }),
+      )
+      const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "seed" }) // tick 1: submits the gated reflex
+      // Open the gate on tick 3 (via the per-tick criticals clock). The reflex,
+      // submitted tick 1, cannot land until then — strictly a later tick.
+      const domain = domainWith([], () => {
+        criticalsRef.n++
+        if (criticalsRef.n === 3) Effect.runFork(Deferred.succeed(gate, undefined))
+        return []
+      })
+      return yield* runCortex({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 100, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    // The delayed reflex's reorient escalation was consumed exactly once when it
+    // landed: orient#1 (tick-1 auto) + orient#2 (reflex-driven) → terminate.
+    // Never dropped despite landing a later tick than it was submitted.
+    expect(result._tag).toBe("Completed")
+    expect(orientCount).toBe(2)
+  }, 20_000)
+
   it("mutual exclusion: never forks a second deliberation while one is in flight", async () => {
     let orientCount = 0
     const client = Layer.succeed(
@@ -2571,13 +2738,17 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         (d) => captured.push(d),
       )
       yield* Queue.offer(events, { type: "plan-seed" })
-      // Bound the loop exactly 3 ticks after the session opens (sync path: open tick 1,
-      // bound tick 4 = open+3). Anchoring to session-open — not an absolute tick —
-      // preserves that identical two-steer window no matter which tick the fork lands
-      // on: WITH bypass both steers fire before the bound; WITHOUT it, only one fits.
+      // Bound the loop a fixed number of ticks after the session opens. Anchoring
+      // to session-open — not an absolute tick — preserves the identical two-steer
+      // window regardless of which tick the deliberation fork lands on. Since B2
+      // the hindbrain reflex is ALSO forked, so each steer-evt's appraisal lands a
+      // tick later than the old sync path (the reflex-scheduler ordering contract);
+      // the bound is widened to open+5 to accommodate that extra fork-landing tick
+      // for BOTH steers. WITH bypass both steers still fire inside the window;
+      // WITHOUT it the second waits a full DEFAULT_STEER_CADENCE_TICKS and misses.
       const domain = domainWith([], () => {
         if (sessionOpened.value) sinceOpen.n++
-        return sinceOpen.n >= 3 ? [{ priority: "critical" as const, message: "bound" }] : []
+        return sinceOpen.n >= 5 ? [{ priority: "critical" as const, message: "bound" }] : []
       })
       return yield* runCortex({
         char: { name: "ada", dir: "/work/players/ada/me" },
@@ -2725,8 +2896,15 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
           if (hasJudgment && !hasHeadline)
             return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
           decideCount++
-          // decide #1 lands a real one-step plan (fresh — no reorient occurred).
+          // Since B2 the hindbrain reflex is forked, so SEED_EVENT's appraisal
+          // lands a tick AFTER it is submitted — it cannot ride the tick-1
+          // auto-escalate deliberation's (empty) snapshot. So decide #1 (tick-1,
+          // empty snapshot) lands a `wait`; SEED_EVENT then accumulates, and a
+          // later `forceOrient` fork (decide #2) carries it into the plan-forming
+          // orient — which is exactly the snapshot the slice-drain must drain.
           if (decideCount === 1)
+            return Effect.succeed({ text: '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}', raw: {} })
+          if (decideCount === 2)
             return Effect.succeed({ text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}', raw: {} })
           return Effect.succeed({ text: '{"decision":"terminate","reasoning":"done"}', raw: {} })
         },
@@ -2773,9 +2951,12 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         }
         return []
       })
+      // orientInterval:3 (not 1) so the post-idle `forceOrient` waits a few ticks
+      // after the empty tick-1 deliberation — giving SEED_EVENT's forked reflex
+      // time to land + accumulate before decide #2's fork captures its snapshot.
       return yield* runCortex({
         char: { name: "ada", dir: "/work/players/ada/me" },
-        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 3, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
     const result = await Effect.runPromise(program)
@@ -3191,4 +3372,78 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
+})
+
+// ── Phase 0 characterization — contracts the runCortex decomposition must preserve ──
+// These pin the observable behaviors the B/A/rename phases could silently break.
+// They deliberately do NOT duplicate contracts already pinned elsewhere in this file;
+// see .superpowers/sdd/phase-0-baseline.md for the test↔contract map. New here only
+// where no existing test pins the contract (tick-cadence source) or where a phase will
+// relocate a named exported knob (DEFAULT_STEER_CADENCE_TICKS).
+describe("runCortex — Phase 0 characterization (decomposition-invariant contracts)", () => {
+  it("tick cadence source: the inter-tick sleep is sourced from config.tickIntervalMs, defaulting to the 30s DEFAULT_TICK_MS when the caller passes none", async () => {
+    // Load-bearing for Phase B1: today the domains capture the connection's
+    // tickIntervalSec but pass NO tickIntervalMs, so the live loop silently paces on
+    // the 30s DEFAULT_TICK_MS. B1 will start threading the real cadence in. This test
+    // pins the CURRENT source-of-truth so a later phase can't accidentally change which
+    // knob governs pacing. Observed via wall clock: a scenario needing several ticks
+    // completes near-instantly at tickIntervalMs:1, but cannot make multi-tick progress
+    // within 250ms when the 30s default governs (250ms << 30_000ms — a 120x margin).
+    const ctLayer = () =>
+      ConsciousThoughtTest((config) => ({ result: successTurnResult(config.prompt), sessionId: "ses_cadence" }))
+
+    // (a) Configured fast cadence → the multi-tick scenario completes.
+    const fast = await Effect.runPromise(
+      Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runCortex({
+          char: { name: "ada", dir: "/work/players/ada/me" },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer(), fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService)))
+      }),
+    )
+    expect(fast._tag).toBe("Completed")
+
+    // (b) Default cadence (no tickIntervalMs) → after 250ms the loop is still on its
+    // first DEFAULT_TICK_MS (30s) sleep, so the same scenario has NOT completed.
+    const stillRunningOnDefault = await Effect.runPromise(
+      Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        yield* Queue.offer(events, { type: "combat" })
+        const fiber = yield* Effect.fork(
+          runCortex({
+            char: { name: "ada", dir: "/work/players/ada/me" },
+            containerId: "c1",
+            events,
+            initialState: {},
+            cadence: "real-time",
+            orientInterval: 1,
+            // NO tickIntervalMs → DEFAULT_TICK_MS (30_000ms) governs pacing.
+          }).pipe(Effect.provide(Layer.mergeAll(scriptedClient, ctLayer(), fakeDomain, fakeIo, fakeRuntimeDeps, noopModelService))),
+        )
+        yield* Effect.sleep("250 millis")
+        const exit = yield* Fiber.poll(fiber)
+        yield* Fiber.interrupt(fiber)
+        return Option.isNone(exit)
+      }),
+    )
+    expect(stillRunningOnDefault).toBe(true)
+  }, 20_000)
+
+  it("steer throttle knob: DEFAULT_STEER_CADENCE_TICKS pins the in-session steer cadence window (exported from the loop)", () => {
+    // §7 contract: a coalesced directive is pushed to the open session at most once
+    // every DEFAULT_STEER_CADENCE_TICKS ticks, unless a priority (steer-rung) event
+    // sets bypassSteerCadence. Functional behavior is covered by "cadence throttle:
+    // steer turn carries the latest coalesced directive" (coalescing/newest-wins) and
+    // "Nit 2: bypassSteerCadence fires ... within DEFAULT_STEER_CADENCE_TICKS". This
+    // guards the constant's VALUE and its export location so the rename/relocation
+    // phases keep the named knob stable rather than silently re-tuning the window.
+    expect(DEFAULT_STEER_CADENCE_TICKS).toBe(3)
+  })
 })
