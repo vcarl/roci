@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { loadSkillSync } from "./loader.js"
-import { getCadenceGuidance, type Cadence } from "#brain/limbic/autonomic/cadence.js"
+import { getCadenceGuidance, type Cadence } from "#brain/limbic/hypothalamus/cadence.js"
 import type {
   ObserveResult,
   OrientResult,

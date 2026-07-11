@@ -12,5 +12,5 @@ export type {
   EvaluateResult,
 } from "./types.js"
 
-export { getCadenceGuidance } from "#brain/limbic/autonomic/cadence.js"
-export type { Cadence } from "#brain/limbic/autonomic/cadence.js"
+export { getCadenceGuidance } from "#brain/limbic/hypothalamus/cadence.js"
+export type { Cadence } from "#brain/limbic/hypothalamus/cadence.js"

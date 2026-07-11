@@ -23,12 +23,12 @@ different job; the `brain/loop` conducts, and processing depth increases as work
 
 | Depth | Tier | ~Size | Where | Job |
 |---|---|---|---|---|
-| **Reflexive** | hindbrain | ~2B | `limbic/amygdala`, `limbic/autonomic` | Threat/interrupt safety-rail; per-event appraisal; pacing & innate drives |
+| **Reflexive** | hindbrain | ~2B | `limbic/amygdala`, `limbic/hypothalamus` | Threat/interrupt safety-rail; per-event appraisal; pacing & innate drives |
 | **Integrative** | forebrain | ~9B | `limbic/thalamus`, `limbic/hippocampus`, `limbic/wm` | Event relay & classification; situation orient; episodic/narrative + working memory |
 | **Deliberative** | conscious | ~31B | `cortex/conscious` | Decide / evaluate / execute tool-using work |
 
 - **Reflexive** work is fast and mostly stimulus-bound: the amygdala can cut the line
-  (critical interrupt) and the autonomic system sets the pacing frame — neither deliberates.
+  (critical interrupt) and the hypothalamus sets the pacing frame — neither deliberates.
 - **Integrative** work assembles a coherent picture: the thalamus relays and classifies
   events, the hippocampus forms/retrieves memory, working memory holds the current intent, and
   the forebrain *orients* on the accumulated situation.
@@ -58,7 +58,7 @@ tolerance.
 Everything up to and including **orient**. Sensing, classification, threat detection, pacing,
 and memory. Its tier runners are the reflexive `runHindbrain` and the integrative
 `runForebrain` (`limbic/tiers-limbic.ts`). Subsystems: `amygdala/` (interrupt safety-rail),
-`autonomic/` (tempo · cadence · drives), `thalamus/` (event relay · situation classifier),
+`hypothalamus/` (tempo · cadence · drives), `thalamus/` (event relay · situation classifier),
 `hippocampus/` (dream consolidate+cull, retrospect, growth, and the long-term vector store at
 `hippocampus/memory/`), and `wm/` (working / procedural-intent memory). Full reference:
 [limbic/LIMBIC.md](limbic/LIMBIC.md).
@@ -97,9 +97,9 @@ the limbic memory turns and the conscious executor. It never imports up into eit
 4. **Shared/neutral infra is imported DOWN by both layers; it never imports up.** `brain/transport`,
    `model/`, and `services/` know nothing about limbic or cortex. Documented lower→limbic
    exceptions (declarative reads, not runtime coupling): neutral character scaffolding
-   (`core/character-scaffold.ts`, `services/CharacterFs.ts`) reads `limbic/autonomic/drives`
+   (`core/character-scaffold.ts`, `services/CharacterFs.ts`) reads `limbic/hypothalamus/drives`
    templates as declarative config to render `DRIVES.md` at scaffold time; separately, the
-   `skills/index.ts` barrel re-exports `limbic/autonomic/cadence` (`getCadenceGuidance`), which
+   `skills/index.ts` barrel re-exports `limbic/hypothalamus/cadence` (`getCadenceGuidance`), which
    is unrelated to scaffolding or `DRIVES.md`.
 
 ## Not-yet-built: the layer facades

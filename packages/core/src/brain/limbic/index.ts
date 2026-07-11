@@ -10,7 +10,7 @@ export { InterruptRegistryTag, createInterruptRegistry } from "#brain/limbic/amy
 export type { Alert } from "../../core/types.js"
 
 // ── AUTONOMIC ── Homeostatic regulation: tempo, cadence, drives
-export type { TempoConfig, TempoBase, StateMachineTempo, PlannedActionTempo } from "#brain/limbic/autonomic/tempo.js"
+export type { TempoConfig, TempoBase, StateMachineTempo, PlannedActionTempo } from "#brain/limbic/hypothalamus/tempo.js"
 
 // ── HIPPOCAMPUS ── Memory: unified per-cycle consolidate + cull dream
 export type { DreamType, DreamInput, DreamOutput } from "#brain/limbic/hippocampus/index.js"

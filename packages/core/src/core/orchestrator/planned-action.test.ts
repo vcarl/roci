@@ -23,7 +23,7 @@ import { consciousModelLabel } from "../../model/conscious-label.js"
 import { EventProcessorTag } from "#brain/limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "#brain/limbic/thalamus/situation-classifier.js"
 import { InterruptRegistryTag } from "#brain/limbic/amygdala/interrupt.js"
-import type { PlannedActionTempo } from "#brain/limbic/autonomic/tempo.js"
+import type { PlannedActionTempo } from "#brain/limbic/hypothalamus/tempo.js"
 import { setEpisodeLogRoot, appendToolEpisode, appendTransitionEpisode } from "../../logging/episodes.js"
 import { readProposals, appendProposals, bumpMacroCount, adjudicationsJsonlPath } from "#brain/limbic/hippocampus/growth-store.js"
 

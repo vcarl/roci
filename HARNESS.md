@@ -70,7 +70,7 @@ Domain-agnostic subsystems live under `packages/core/src/brain/limbic/`, organiz
 packages/core/src/brain/limbic/
  +-- thalamus/         Sensory relay: event processing, situation classification (integrative)
  +-- amygdala/         Threat detection: interrupt safety-rail (reflexive)
- +-- autonomic/        Homeostatic regulation: tempo, cadence, innate drives (reflexive)
+ +-- hypothalamus/     Homeostatic regulation: tempo, cadence, innate drives (reflexive)
  +-- hippocampus/      Episodic/narrative memory: dream consolidate+cull, long-term vector store
  +-- wm/               Working (procedural/intent) memory: plan/todo state machine
 ```
@@ -303,7 +303,7 @@ All events are printed type-tagged with timestamp and character name:
 | `src/core/domain-bundle.ts` | DomainBundle (5 service layers) + DomainConfig |
 | `src/core/prompt-builder.ts` | PromptBuilder interface (`systemPrompt(mode, task)`) |
 | `src/core/state-renderer.ts` | StateRenderer interface (`richSnapshot`, `stateDiff`, `formatStateBar`) |
-| `src/brain/limbic/autonomic/drives.ts` | Innate drives (`TEMPLATE_DRIVES`, `CORE_DRIVE_NAMES`, `renderDriveLines`) |
+| `src/brain/limbic/hypothalamus/drives.ts` | Innate drives (`TEMPLATE_DRIVES`, `CORE_DRIVE_NAMES`, `renderDriveLines`) |
 | `src/core/model-config.ts` | Legacy tier-based model resolution (`fast`/`smart`/`reasoning`); see also `src/services/model-tier-spec.ts` |
 | `src/brain/limbic/prompts/`, `src/brain/cortex/conscious/prompts/` | Operating skill templates: observe/orient (pre-conscious) + decide/evaluate/diary (conscious) |
 | `src/skills/loader.ts` | Skill-template loader machinery (`loadSkillSync`) |

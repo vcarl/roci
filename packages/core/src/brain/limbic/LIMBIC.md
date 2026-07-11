@@ -16,19 +16,19 @@ service tags (`EventProcessorTag`, `SituationClassifierTag`, `InterruptRegistryT
 > infra (`brain/transport`, `model/`, `services/`) is imported *down* into this layer; it
 > never imports *up*. Documented lower→limbic exceptions (declarative reads, not runtime
 > coupling): neutral character scaffolding (`core/character-scaffold.ts`,
-> `services/CharacterFs.ts`) reads `autonomic/drives` templates to render `DRIVES.md` at
-> scaffold time; separately, the `skills/index.ts` barrel re-exports `autonomic/cadence`
+> `services/CharacterFs.ts`) reads `hypothalamus/drives` templates to render `DRIVES.md` at
+> scaffold time; separately, the `skills/index.ts` barrel re-exports `hypothalamus/cadence`
 > (`getCadenceGuidance`).
 
 The name comes from the biological limbic system. Each subsystem maps to a brain region
 that performs an analogous function: the thalamus relays sensory input, the amygdala
-detects threats, the autonomic system regulates pacing and drives, the hippocampus forms
+detects threats, the hypothalamus regulates pacing and drives, the hippocampus forms
 and consolidates episodic/narrative memory, and working memory (`wm/`) holds the
 procedural plan/intent state. These are metaphors for code organization, not a
 neuroscience simulation.
 
 **Processing depth.** The limbic layer spans two tiers of the reflexive → integrative →
-deliberative depth model. The *reflexive* subsystems (amygdala, autonomic) run on the
+deliberative depth model. The *reflexive* subsystems (amygdala, hypothalamus) run on the
 fast ~2B hindbrain and on pure deterministic code — no deliberation. The *integrative*
 subsystems (thalamus, hippocampus, wm) run on the ~9B forebrain and on the loop's
 state reducers. The *deliberative* tier (decide/evaluate/execute) belongs to the cortex,
@@ -57,7 +57,7 @@ brain/limbic/
   amygdala/                         REFLEXIVE -- Threat detection
     index.ts                        Barrel
     interrupt.ts                    InterruptRule, InterruptRegistry, createInterruptRegistry()
-  autonomic/                        REFLEXIVE -- Pacing, cadence, innate drives
+  hypothalamus/                     REFLEXIVE -- Pacing, cadence, innate drives
     tempo.ts                        TempoConfig discriminated union
     cadence.ts                      Cadence profile (tick pacing frame)
     drives.ts                       TEMPLATE_DRIVES, CORE_DRIVE_NAMES, renderDriveLines
@@ -175,9 +175,9 @@ it can factor them into its work.
 **Tag:** `InterruptRegistryTag`. Domains provide a `Layer` built from
 `createInterruptRegistry()`.
 
-## Autonomic -- Pacing, Cadence & Drives
+## Hypothalamus -- Pacing, Cadence & Drives
 
-The autonomic subsystem is the reflexive homeostatic layer: it does not react to any one
+The hypothalamus subsystem is the reflexive homeostatic layer: it does not react to any one
 event, it sets the *frame* the whole loop runs inside.
 
 - **`tempo.ts`** — the `TempoConfig` discriminated union (`TempoBase`, `StateMachineTempo`,
@@ -262,13 +262,13 @@ calmer sibling -- graded salience rather than binary threat), so it is documente
 mental home. Note, however, that the **reducer physically lives in `brain/loop/state.ts`**,
 not under `brain/limbic/`: the appraisal runs on the hot path every tick, so it is
 co-located with the loop state it mutates for locality. Only the drive *vocabulary*
-(`brain/limbic/autonomic/drives.ts`) sits in the autonomic subsystem. This section
+(`brain/limbic/hypothalamus/drives.ts`) sits in the hypothalamus subsystem. This section
 documents both, citing across that boundary.
 
 ### 1. Drives -- what the character cares about
 
 Drives are the reference frame the hindbrain weighs each event against. Three **innate,
-domain-agnostic** drives are defined verbatim in `brain/limbic/autonomic/drives.ts`
+domain-agnostic** drives are defined verbatim in `brain/limbic/hypothalamus/drives.ts`
 (`TEMPLATE_DRIVES`, severity order safety > sustenance > agency,
 `CORE_DRIVE_NAMES = ["safety","sustenance","agency"]`):
 
@@ -377,13 +377,13 @@ Exported surface by subsystem (verified against `brain/limbic/index.ts`):
 |-----------|-------|--------|
 | Thalamus | `EventProcessor`, `EventResult`, `EventCategory`, `DomainContext`, `SituationClassifier`, `SituationSummary` | `EventProcessorTag`, `SituationClassifierTag` |
 | Amygdala | `InterruptRule`, `InterruptRegistry`, `Alert` * | `InterruptRegistryTag`, `createInterruptRegistry` |
-| Autonomic | `TempoConfig`, `TempoBase`, `StateMachineTempo`, `PlannedActionTempo` | *(none)* |
+| Hypothalamus | `TempoConfig`, `TempoBase`, `StateMachineTempo`, `PlannedActionTempo` | *(none)* |
 | Hippocampus | `DreamType`, `DreamInput`, `DreamOutput` | `dream`, `DIARY_TARGET_LINES`, `REFLECTION_TURN_TIMEOUT_MS`, `CULL_TURN_TIMEOUT_MS`, `REFLECTION_CONTEXT_MAX` |
 
 \* `Alert` is re-exported by the barrel but is sourced from `core/types.ts` (`../../core/types.js`),
 not the amygdala module.
 
-The autonomic subsystem exports **only** the Tempo types through this barrel. The drive
+The hypothalamus subsystem exports **only** the Tempo types through this barrel. The drive
 vocabulary (`TEMPLATE_DRIVES` / `renderDriveLines` / …) and the tier runners
 (`runHindbrain` / `runForebrain`) are re-exported through the **package root** barrel
 (`packages/core/src/index.ts`), not the limbic barrel. Working-memory helpers

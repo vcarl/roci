@@ -4,7 +4,7 @@ Operating skills define how agents think at each stage of the decision loop. The
 
 ## Overview
 
-The skill system is the OODA prompt templates plus a type system, a loader, and a cadence guidance module. The templates live with the layer that renders them: the pre-conscious `observe.md` / `orient.md` in `packages/core/src/brain/limbic/prompts/`, and the deliberative `decide.md` / `evaluate.md` / `diary.md` in `packages/core/src/brain/cortex/conscious/prompts/`. The loader (`loadSkillSync`) and types remain in `packages/core/src/skills/`; cadence guidance moved to the autonomic subsystem (`packages/core/src/brain/limbic/autonomic/cadence.ts`).
+The skill system is the OODA prompt templates plus a type system, a loader, and a cadence guidance module. The templates live with the layer that renders them: the pre-conscious `observe.md` / `orient.md` in `packages/core/src/brain/limbic/prompts/`, and the deliberative `decide.md` / `evaluate.md` / `diary.md` in `packages/core/src/brain/cortex/conscious/prompts/`. The loader (`loadSkillSync`) and types remain in `packages/core/src/skills/`; cadence guidance moved to the hypothalamus subsystem (`packages/core/src/brain/limbic/hypothalamus/cadence.ts`).
 
 ```
 Incoming Event
