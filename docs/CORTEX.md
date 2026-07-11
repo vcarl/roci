@@ -81,11 +81,12 @@ Each iteration of the loop runs a fixed sequence of numbered steps
    loudly and treated as inert.
 2. **Classify + critical interrupts.** `SituationClassifier.summarize` produces the
    situation; the renderer logs the state bar; `InterruptRegistry.criticals` is the amygdala
-   cutting the line — if a critical fires, the in-flight conscious turn is interrupted and the
-   loop returns `Interrupted`, exiting to the domain's break/social phase.
-3. **Poll the in-flight conscious turn.** If a turn is running, check whether it finished; if
-   so, append its output to the step report and set `stepDoneSignaled` when `detectCompletion`
-   sees the done-marker.
+   cutting the line — if a critical fires, the in-flight conscious turn is interrupted
+   (`session.interrupt()`) and the loop returns `Interrupted`, exiting to the domain's
+   break/social phase.
+3. **Poll the in-flight conscious turn.** `session.poll()` (the conscious-session owner, §7):
+   if a turn is running, check whether it finished; if so, join it, append its output to the
+   step report, and set the done-signal when `detectCompletion` sees the done-marker.
 4. **Hindbrain per-event triage.** Each state-changing event is appraised once by the 2B
    hindbrain; inert events are fast-pathed. The appraisal is **forked off the hot path** by a
    limbic-owned reflex scheduler (`brain/limbic/reflex-scheduler.ts`): the loop *submits* each
@@ -104,8 +105,13 @@ Each iteration of the loop runs a fixed sequence of numbered steps
      `steer`/`accumulate` runs the forebrain and stores a coalesced steering directive — see §5).
 6. **Step execution.** When a plan is active and no turn is in flight: if the agent signaled
    done or the tick budget elapsed, evaluate the step (§4); otherwise fork the next conscious
-   turn — turn 1 opens the session, later turns push a coalesced steer directive into the open
-   session.
+   turn through the conscious-session owner (§7) — `session.openTurn(...)` on turn 1 opens the
+   session, `session.steer(tick)` on later turns pushes a coalesced steer directive into the
+   open session. The loop drives the surrounding wm/episode bookkeeping through named helpers
+   co-located with their owners — the plan-todo settlement in a limbic-owned tracker
+   (`limbic/wm/plan-todos.ts`: `seed`/`settleStep`/`discardOrphans`, returning the applied
+   deltas) and the step-start/step-end/wm record writers in `logging/episodes.ts` — pairing the
+   deltas with their episode records; only the turn/session mechanics live behind the owner.
 7. **Sleep one tick** — `Effect.sleep(tickMs)`.
 
 Loop constants:
@@ -144,25 +150,28 @@ instructs it to print the literal completion marker `[STEP_DONE]` (`STEP_DONE_MA
 tolerant of surrounding text. A step also carries a `timeoutTicks` budget: if the budget
 elapses with no done-signal, the loop runs a **salvage evaluate** rather than spinning forever.
 
-Either path runs `runConsciousEvaluate`, which yields a judgment and a transition. The
-transition is normalized at the parse boundary (`normalizeTransition`) into one of
-`next_step` / `replan` / `wait` / `terminate`. After the evaluate, a dedicated diary turn
-(`runDiaryTurn`) produces a short first-person reflection that is appended to the character's
-diary; it is bounded (30s) and best-effort — a timeout or model error degrades to an empty
-entry rather than stalling the loop.
+Either path runs `runConsciousEvaluate` — via `session.evaluate(...)`, the conscious-session
+owner (§7), which fills the execution report from its own accumulated turn transcript — and
+yields a judgment and a transition. The transition is normalized at the parse boundary
+(`normalizeTransition`) into one of `next_step` / `replan` / `wait` / `terminate`. After the
+evaluate, a dedicated diary turn (`session.diary(...)` → `runDiaryTurn`) produces a short
+first-person reflection that the loop appends to the character's diary; it is bounded (30s) and
+best-effort — a timeout or model error degrades to an empty entry rather than stalling the loop.
 
 ## 5. Steering
 
 When the world changes mid-plan, the loop steers the running session instead of restarting
-it. The in-session escalation arms run the forebrain and format its output into a directive
-with `formatSteerDirective` (`state.ts`), which only formats model-generated text — it never
-splices raw inbound event text into the prompt.
+it. The in-session escalation arms run the forebrain (loop-side) and format its output into a
+directive with `formatSteerDirective` (`state.ts`), which only formats model-generated text —
+it never splices raw inbound event text into the prompt. The loop then hands the laundered
+directive to the conscious-session owner via `session.stageDirective(directive, priority)` (§7).
 
-Steering uses a capacity-1 coalescing slot (`pendingDirective`): newest directive wins. The
-steer turn is throttled to at most one push every `DEFAULT_STEER_CADENCE_TICKS` ticks, except
-a `steer`-rung escalation sets `bypassSteerCadence` so a high-salience directive is pushed
-immediately (priority steer). The `reorient` and `interrupt` rungs instead drop the plan
-entirely via `resetPlanState`.
+The coalesce + cadence state lives in the session owner: a capacity-1 coalescing slot (newest
+directive wins), throttled to at most one push every `DEFAULT_STEER_CADENCE_TICKS` ticks, except
+a `steer`-rung escalation stages a priority directive that bypasses the throttle and is pushed
+on the next in-session tick. `session.steer(tick)` (tick step 6) enforces that gate and forks
+the resume turn. The `reorient` and `interrupt` rungs instead drop the plan entirely via
+`resetPlanState` (which resets the session via `session.reset()`).
 
 ## 6. Parse tolerance
 
@@ -212,6 +221,28 @@ Each plan step (and each steer) runs as one turn via `ConsciousThought.turn`, wh
 (`brain/transport/process-runner.ts`). Turn 1 opens a new OpenCode session; subsequent turns
 resume the same session by `sessionId`. A transport failure is converted to a failed-style
 result (`output` = error message) rather than crashing the loop.
+
+### The conscious-session owner
+
+`ConsciousThought` is the stateless transport service; the *session lifecycle* — the in-flight
+turn fiber, the OpenCode `sessionId`, the accumulated step report, the done-signal, and the
+steer coalesce/cadence state — is owned by the `ConsciousSession` the loop builds once per run
+(`makeConsciousSession`, `packages/core/src/brain/cortex/conscious/conscious-session.ts`). The
+loop used to spread all of this across its tick body; it now drives a narrow interface instead:
+`poll` (join a landed turn, adopt its sessionId, append to the report, set the done-signal),
+`openTurn` (turn 1 fork), `steer` (cadence-gated resume-turn fork), `stageDirective` (buffer a
+coalesced directive), `evaluate` / `diary` (the conscious model calls, which fill the execution
+report from the owner's own transcript), `interrupt` (kill the in-flight turn), and `reset`
+(clear per-step/plan session state), plus the synchronous pacing reads `turnInFlight` / `isOpen`
+/ `doneSignaled` the loop needs for its guards. This keeps the fiber-op ordering byte-for-byte
+identical to the old inline code (interrupt → poll → openTurn/steer in the same sequence), so
+there is no interrupt↔join race and no one-tick steer lag.
+
+Crucially the owner imports **no limbic code** — it is pure cortex + transport + a couple of
+loop helpers (`detectCompletion`, `formatExecutionReport`, `formatStepTask`). All wm / memory /
+episode bookkeeping stays loop-side (the loop is the only module allowed to touch both layers,
+BRAIN.md invariant #1): the loop gathers memory/wm context, hands it across the interface, and
+records the wm/episode consequences of the verdict the owner returns.
 
 ### The `frontier` delegation tool
 

@@ -66,10 +66,15 @@ and memory. Its tier runners are the reflexive `runHindbrain` and the integrativ
 ### `brain/cortex/conscious/` — the conscious layer
 
 The deliberative tier: `runConsciousDecide` / `runConsciousEvaluate` / `runDiaryTurn`
-(`cortex/conscious/tiers-conscious.ts`) plus the `ConsciousThought` executor that runs
-tool-using OpenCode sessions in the container, its `frontier` heavy-reasoning delegation CLI,
-the OpenCode/SDK payload plumbing, and the deliberative prompts (`decide.md`, `evaluate.md`,
-`diary.md`). Full reference: [../../../../docs/CORTEX.md](../../../../docs/CORTEX.md).
+(`cortex/conscious/tiers-conscious.ts`), the `ConsciousThought` executor that runs tool-using
+OpenCode sessions in the container, and the `ConsciousSession` owner
+(`cortex/conscious/conscious-session.ts`) that holds the conscious-session lifecycle behind a
+narrow interface (the in-flight turn fiber, sessionId, step report, done-signal, and steer
+coalesce/cadence state; the loop drives it via `poll`/`openTurn`/`steer`/`evaluate`/`diary`/
+`interrupt`/`reset`). Plus the `frontier` heavy-reasoning delegation CLI, the OpenCode/SDK
+payload plumbing, and the deliberative prompts (`decide.md`, `evaluate.md`, `diary.md`). The
+session owner imports **no limbic code** — all wm/memory/episode bookkeeping stays loop-side.
+Full reference: [../../../../docs/CORTEX.md](../../../../docs/CORTEX.md).
 
 ### `brain/transport/` — shared turn plumbing
 
@@ -89,6 +94,15 @@ the limbic memory turns and the conscious executor. It never imports up into eit
    a slow 2B reflex cannot freeze the conductor either. Ordering contract: a reflex not ready by
    its own tick's reduce is consumed on the tick it lands (escalations queue, never drop); the
    amygdala critical-interrupt path stays synchronous, so a "cut-the-line" is never deferred.
+   The conscious-session *lifecycle* (turn fiber, sessionId, step report, steer state) lives in
+   cortex (`cortex/conscious/conscious-session.ts`) behind a narrow interface, but its
+   wm/memory/episode *bookkeeping* stays loop-side — the owner imports no limbic code, so the
+   loop remains the only module that touches both layers. That bookkeeping is delegated to
+   named helpers co-located with their owners: the plan-todo seed/settle/discard composites to a
+   limbic-owned tracker (`limbic/wm/plan-todos.ts`, which composes only `wm-store` and returns
+   the applied deltas) and the step-start/step-end/wm record writers to `logging/episodes.ts`.
+   The loop drives both and is the single site that pairs the wm deltas with their episode
+   records — the tracker never imports `logging`/cortex, keeping the layer wall intact.
 
 2. **The limbic→cortex boundary IS the orient→decide seam.** Observe and orient are
    pre-conscious (limbic tier runners); decide, evaluate, and execute are conscious (cortex tier

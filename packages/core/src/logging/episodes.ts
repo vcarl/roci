@@ -372,6 +372,81 @@ export const appendTransitionEpisode = (
   record: TransitionEpisode,
 ): Effect.Effect<void> => append(character, TRANSITION_EPISODE_FILE, record)
 
+// ── Named transition-record writers (composite assembly) ─────
+// The cortex loop used to hand-assemble these three transition records inline
+// (the `type`/`ts`/`stepId` framing plus the `wmDeltas` empty→null guard). They
+// live here with the substrate that owns their shape, so the loop calls a named
+// writer instead of building the object literal. Same swallow-and-log discipline
+// as appendTransitionEpisode — never fails.
+
+/**
+ * A `type:"wm"` transition record for harness deltas that occur OUTSIDE an
+ * in-flight step window (decide-time seeding; orphan discards with no open
+ * step). Empty deltas are a no-op. `stepId` is read from the current episode
+ * context. (Was the loop's inline `emitWmRecord`.)
+ */
+export const appendWmDeltas = (
+  character: string,
+  tick: number,
+  deltas: readonly unknown[],
+): Effect.Effect<void> =>
+  deltas.length === 0
+    ? Effect.void
+    : appendTransitionEpisode(character, {
+        type: "wm",
+        ts: new Date().toISOString(),
+        tick,
+        stepId: episodeContext(character).stepId,
+        deltas: [...deltas],
+      })
+
+/** A `type:"step-start"` boundary record (turn-1 open; wmDeltas always null). */
+export const appendStepStart = (
+  character: string,
+  r: { tick: number; stepId: string; task: string; goal: string; skill: string | null },
+): Effect.Effect<void> =>
+  appendTransitionEpisode(character, {
+    type: "step-start",
+    ts: new Date().toISOString(),
+    tick: r.tick,
+    stepId: r.stepId,
+    task: r.task,
+    goal: r.goal,
+    skill: r.skill,
+    wmDeltas: null,
+  })
+
+/**
+ * A `type:"step-end"` boundary record. `verdict` is omitted on the reorient/
+ * interrupt replan close (nothing was evaluated); present on the 6a evaluate
+ * path. Owns the `wmDeltas` empty→null guard the loop applied at both sites.
+ */
+export const appendStepEnd = (
+  character: string,
+  r: {
+    tick: number
+    stepId: string
+    task: string
+    goal: string
+    verdict?: Judgment
+    transition: "next_step" | "replan" | "wait" | "terminate"
+    skill: string | null
+    wmDeltas: unknown[] | null
+  },
+): Effect.Effect<void> =>
+  appendTransitionEpisode(character, {
+    type: "step-end",
+    ts: new Date().toISOString(),
+    tick: r.tick,
+    stepId: r.stepId,
+    task: r.task,
+    goal: r.goal,
+    verdict: r.verdict,
+    transition: r.transition,
+    skill: r.skill,
+    wmDeltas: r.wmDeltas && r.wmDeltas.length > 0 ? r.wmDeltas : null,
+  })
+
 // ── Rotation: retain the last N reflection cycles ────────────
 function lineType(line: string): string | undefined {
   try {

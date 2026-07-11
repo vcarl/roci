@@ -12,8 +12,8 @@ import { InterruptRegistryTag } from "#brain/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
 import { ConsciousThought } from "#brain/cortex/conscious/conscious-thought.js"
+import { makeConsciousSession } from "#brain/cortex/conscious/conscious-session.js"
 import { consciousModelLabel } from "../../model/conscious-label.js"
-import type { TurnResult } from "#brain/transport/types.js"
 import { ModelClient } from "../../model/client.js"
 import type { ModelError } from "../../model/errors.js"
 import { DEFAULT_CORTEX_MODELS, resolveHandle, type CortexModelConfig } from "../../model/handles.js"
@@ -34,7 +34,7 @@ import {
 } from "#brain/limbic/hippocampus/memory/memory-gateway.js"
 import { runForebrain } from "#brain/limbic/tiers-limbic.js"
 import { makeReflexScheduler } from "#brain/limbic/reflex-scheduler.js"
-import { runConsciousDecide, runConsciousEvaluate, runDiaryTurn } from "#brain/cortex/conscious/tiers-conscious.js"
+import { runConsciousDecide } from "#brain/cortex/conscious/tiers-conscious.js"
 import type { CortexRunnerConfig } from "./tier-config.js"
 import {
   freshCortexState,
@@ -45,16 +45,16 @@ import {
   isWedgedEmptyPlan,
   isWellFormedDiscover,
   formatStepTask,
-  formatExecutionReport,
   formatSteerDirective,
-  detectCompletion,
   appraiseTick,
   emptyEscalation,
   DEFAULT_APPRAISAL_THRESHOLDS,
   STEP_DONE_MARKER,
 } from "./state.js"
 import {
-  appendTransitionEpisode,
+  appendStepEnd,
+  appendStepStart,
+  appendWmDeltas,
   beginEpisodeEpoch,
   captureEpisodeAttribution,
   episodeContext,
@@ -63,14 +63,8 @@ import {
   setEpisodeTick,
   type EpisodeAttribution,
 } from "../../logging/episodes.js"
-import {
-  closePlanTodos,
-  discardDeadPlanTodos,
-  drainWmDeltas,
-  mutateWm,
-  seedWmPlan,
-} from "#brain/limbic/wm/wm-store.js"
-import type { WmDelta } from "#brain/limbic/wm/wm-core.js"
+import { discardDeadPlanTodos, drainWmDeltas } from "#brain/limbic/wm/wm-store.js"
+import { makePlanTodoTracker } from "#brain/limbic/wm/plan-todos.js"
 import { renderSkillIndex, type SkillMeta } from "../../services/skills-core.js"
 import { readIdentityContext } from "#brain/limbic/hippocampus/identity-context.js"
 
@@ -101,11 +95,11 @@ const DEFAULT_ORIENT_INTERVAL = 5
 const DEFAULT_WORKER_TIMEOUT_MS = 60 * 60 * 1000
 
 /**
- * Push a `steer` line to the active session at most once every this-many ticks
- * (§7) — a knob alongside DEFAULT_ORIENT_INTERVAL. Exported so it is not an unused local.
- * Tunable per cadence profile (spec §11 open question).
+ * The in-session steer cadence throttle (§7) now lives with the conscious-session
+ * owner that enforces it (`cortex/conscious/conscious-session.ts`). Re-exported
+ * here so the loop's characterization test keeps its `./loop.js` import path.
  */
-export const DEFAULT_STEER_CADENCE_TICKS = 3
+export { DEFAULT_STEER_CADENCE_TICKS } from "#brain/cortex/conscious/conscious-session.js"
 
 /**
  * The deterministic appraisal for an INERT event — one that produced no
@@ -192,6 +186,13 @@ export const runCortex = (config: CortexLoopConfig) =>
       drives,
     }
 
+    // Conscious body-model handle + its `-m` label. Resolved once here (no side
+    // effects) so both the session owner (below) and provision (later) share it.
+    const handle = resolveHandle(runnerConfig.models, "conscious")
+    // `-m` label for body turns — the real mlx-served id. MUST match the agent file's
+    // frontmatter `model:` (written from the same handle at provision time).
+    const bodyModelLabel = consciousModelLabel(handle)
+
     // Limbic-owned reflex scheduler (B2): forks per-event hindbrain appraisal
     // (+ its memory write) off the conductor's hot path so a slow 2B reflex
     // can't freeze the tick loop. The loop submits non-inert events and drains
@@ -234,23 +235,27 @@ export const runCortex = (config: CortexLoopConfig) =>
     // annotated let assigned only inside a nested closure collapses to `never` at
     // outer read sites (TS CFA quirk). The `as` initializer keeps the union type live.
     let wornSkill = null as { name: string; body: string } | null
-    // Working memory (spec §2): ids of the harness-seeded plan todos — the
-    // headline todo plus one child per step (parallel to the plan's steps).
-    // "" marks a step whose seed was skipped (wm degraded); guarded below.
-    let planHeadlineTodoId: string | null = null
-    let planStepTodoIds: string[] = []
+    // Working memory (spec §2): the harness-seeded plan todos (headline + one
+    // child per step) are owned by a tracker that co-locates the seeded ids with
+    // the composite wm sequences that settle/discard them (limbic/wm/plan-todos).
+    // It returns the applied deltas; the loop records them on episode records.
+    const planTodos = makePlanTodoTracker(config.char)
 
-    // Conscious-session state (replaces delegationFiber / forkStep machinery).
-    let consciousFiber: Fiber.RuntimeFiber<{ result: TurnResult; sessionId: string }, never> | null = null
-    let sessionId: string | null = null
-    let stepReport = ""
-    let stepDoneSignaled = false
-    // Steering state: capacity-1 coalescing (overwrite = newest wins).
-    let pendingDirective: string | null = null
-    let lastSteerTick = 0
-    // Priority-steer flag: a `steer`-rung in-session escalation bypasses the
-    // DEFAULT_STEER_CADENCE_TICKS throttle so the directive is pushed immediately (§3.2).
-    let bypassSteerCadence = false
+    // Conscious-session lifecycle owner (Phase A1). Encapsulates the in-flight
+    // turn fiber, the OpenCode session id, the accumulated step report, the
+    // done-signal, and the steer coalesce/cadence state — the "Conscious-session
+    // state" the loop used to spread inline. The loop drives it via a narrow
+    // interface (poll/openTurn/steer/stageDirective/evaluate/diary/interrupt/reset)
+    // and keeps all wm/memory/episode bookkeeping loop-side; the owner imports NO
+    // limbic code. See conscious-session.ts for the fiber-ordering equivalence.
+    const session = makeConsciousSession({
+      consciousThought,
+      runnerConfig,
+      containerId: config.containerId,
+      char: config.char,
+      bodyModelLabel,
+      turnTimeoutMs: workerTimeoutMs,
+    })
 
     // Deliberation fork (spec: non-blocking idle path). Mirrors consciousFiber and is
     // mutually exclusive with it (a deliberation produces the plan; the body turn runs
@@ -260,40 +265,6 @@ export const runCortex = (config: CortexLoopConfig) =>
     let deliberationSnapshotCount = 0
     // Guards against forking a fresh deliberation on the same tick one just landed/discarded.
     let deliberationSettledThisTick = false
-
-    // Record harness wm deltas that occur OUTSIDE an in-flight step window
-    // (decide-time seeding; discards with no open step) as a type:"wm"
-    // transition record (spec §2: all wm mutations are recorded).
-    // appendTransitionEpisode is swallow-and-log — this never fails.
-    const emitWmRecord = (deltas: readonly WmDelta[]) =>
-      deltas.length === 0
-        ? Effect.void
-        : appendTransitionEpisode(config.char.name, {
-            type: "wm",
-            ts: new Date().toISOString(),
-            tick,
-            stepId: episodeContext(config.char.name).stepId,
-            deltas: [...deltas],
-          })
-
-    // Discard the seeded todos a dropped plan leaves behind (spec §2: "a
-    // replan discards orphaned todos"), headline included — the abandoned
-    // plan's intent stays visible to retrospectives but leaves the active
-    // render. Agent-authored todos are never touched. mutateWm skips ids the
-    // agent already closed (logged, not fatal).
-    const discardPlanOrphans = () =>
-      Effect.gen(function* () {
-        const headlineId = planHeadlineTodoId
-        const stepIds = planStepTodoIds.filter((id) => id !== "")
-        planHeadlineTodoId = null
-        planStepTodoIds = []
-        if (headlineId === null && stepIds.length === 0) return [] as WmDelta[]
-        // closePlanTodos discards still-open step children and settles the
-        // headline done-if-any-child-done / discarded-otherwise (spec §2:
-        // "a replan discards orphaned todos" — but a headline whose children
-        // partly completed reads more truthfully as done than discarded).
-        return yield* closePlanTodos(config.char, headlineId, stepIds)
-      })
 
     // Drop the active plan and clear all per-session steering state, so the loop
     // re-orients from a clean slate. Shared by the in-session `reorient` and
@@ -315,32 +286,25 @@ export const runCortex = (config: CortexLoopConfig) =>
         // wm (spec §2): the dropped plan's seeded todos are orphans — discard
         // them, and drain any agent-journaled deltas from the abandoned step,
         // so the abandoned step-end carries the full wm story.
-        const orphanDeltas = yield* discardPlanOrphans()
+        const orphanDeltas = yield* planTodos.discardOrphans()
         const agentDeltas = yield* drainWmDeltas(config.char)
         const wmDeltas = [...agentDeltas, ...orphanDeltas]
         if (ctx.stepId !== null && step) {
-          yield* appendTransitionEpisode(config.char.name, {
-            type: "step-end",
-            ts: new Date().toISOString(),
+          yield* appendStepEnd(config.char.name, {
             tick,
             stepId: ctx.stepId,
             task: step.task,
             goal: step.goal,
             transition: "replan",
             skill: wornSkill?.name ?? null,
-            wmDeltas: wmDeltas.length > 0 ? wmDeltas : null,
+            wmDeltas,
           })
         } else {
-          yield* emitWmRecord(wmDeltas)
+          yield* appendWmDeltas(config.char.name, tick, wmDeltas)
         }
         cortex.currentPlan = null
         cortex.lastOrientTick = 0
-        sessionId = null
-        stepReport = ""
-        stepDoneSignaled = false
-        pendingDirective = null
-        lastSteerTick = 0
-        bypassSteerCadence = false
+        session.reset()
         setEpisodeStep(config.char.name, null)
       })
 
@@ -468,10 +432,8 @@ export const runCortex = (config: CortexLoopConfig) =>
           // wm (spec §2): seed the plan's steps as todos under a headline
           // todo, so intent survives replans. Seeding is best-effort — a wm
           // failure yields empty ids and the plan proceeds regardless.
-          const seeded = yield* seedWmPlan(config.char, orient.headline, planSteps(cortex.currentPlan))
-          planHeadlineTodoId = seeded.headlineId
-          planStepTodoIds = seeded.stepIds
-          yield* emitWmRecord(seeded.deltas)
+          const seededDeltas = yield* planTodos.seed(orient.headline, planSteps(cortex.currentPlan))
+          yield* appendWmDeltas(config.char.name, tick, seededDeltas)
         } else if (decideSteps(decide).length > 0) {
           // decideSteps is array-safe: a parseable `{"decision":"plan"}` with
           // a missing/non-array/empty `steps` yields [] here (parseOr's
@@ -485,10 +447,8 @@ export const runCortex = (config: CortexLoopConfig) =>
           // wm (spec §2): seed the plan's steps as todos under a headline
           // todo, so intent survives replans. Seeding is best-effort — a wm
           // failure yields empty ids and the plan proceeds regardless.
-          const seeded = yield* seedWmPlan(config.char, orient.headline, planSteps(cortex.currentPlan))
-          planHeadlineTodoId = seeded.headlineId
-          planStepTodoIds = seeded.stepIds
-          yield* emitWmRecord(seeded.deltas)
+          const seededDeltas = yield* planTodos.seed(orient.headline, planSteps(cortex.currentPlan))
+          yield* appendWmDeltas(config.char.name, tick, seededDeltas)
         } else if (decide.decision === "plan") {
           // Issue 4 (fail loud): the model decided "plan" but produced no
           // actionable steps. The guard above correctly keeps it from going
@@ -505,11 +465,8 @@ export const runCortex = (config: CortexLoopConfig) =>
         return null
       })
 
-    // Provision the conscious agent once before the first tick.
-    const handle = resolveHandle(runnerConfig.models, "conscious")
-    // `-m` label for body turns — the real mlx-served id. MUST match the agent file's
-    // frontmatter `model:` (written from the same handle at provision time).
-    const bodyModelLabel = consciousModelLabel(handle)
+    // Provision the conscious agent once before the first tick. `handle` +
+    // `bodyModelLabel` were resolved above (shared with the session owner).
     const systemPrompt = promptBuilder.systemPrompt("select", "")
     yield* consciousThought.provision({
       containerId: config.containerId,
@@ -534,7 +491,7 @@ export const runCortex = (config: CortexLoopConfig) =>
         "cortex",
         `discarded ${sweptOrphans.length} stale plan todo(s) orphaned by a prior session`,
       ).pipe(Effect.catchAll(() => Effect.void))
-      yield* emitWmRecord(sweptOrphans)
+      yield* appendWmDeltas(config.char.name, tick, sweptOrphans)
     }
 
     while (true) {
@@ -593,7 +550,7 @@ export const runCortex = (config: CortexLoopConfig) =>
           severity: "warn",
           data: { messages: criticals.map((a) => a.message) },
         })
-        if (consciousFiber) yield* Fiber.interrupt(consciousFiber)
+        yield* session.interrupt()
         if (deliberationFiber) {
           yield* Fiber.interrupt(deliberationFiber)
           deliberationFiber = null
@@ -607,29 +564,17 @@ export const runCortex = (config: CortexLoopConfig) =>
         // seeded orphans must be discarded here too — otherwise they leak into
         // WM.md permanently (uncapped, injected on every request, forever).
         if (cortex.currentPlan !== null) {
-          const orphanDeltas = yield* discardPlanOrphans()
-          yield* emitWmRecord(orphanDeltas)
+          const orphanDeltas = yield* planTodos.discardOrphans()
+          yield* appendWmDeltas(config.char.name, tick, orphanDeltas)
         }
         return { _tag: "Interrupted" as const, finalState: state, criticals }
       }
 
-      // 3. If a conscious turn is in flight, check whether it finished.
-      if (consciousFiber) {
-        const done = yield* Fiber.poll(consciousFiber).pipe(Effect.map(Option.isSome))
-        if (done) {
-          const turnOutcome: { result: TurnResult; sessionId: string } = yield* Fiber.join(consciousFiber)
-          consciousFiber = null
-          sessionId = turnOutcome.sessionId
-          // Append turn output to the accumulated step report.
-          const turnOutput = turnOutcome.result.output ?? ""
-          stepReport = stepReport ? `${stepReport}\n${turnOutput}` : turnOutput
-          // Check whether the agent signaled completion.
-          if (detectCompletion(turnOutput)) {
-            stepDoneSignaled = true
-          }
-        }
-        // While a turn runs, fall through to triage the world, then sleep.
-      }
+      // 3. If a conscious turn is in flight, check whether it finished (session
+      // owner: join, adopt sessionId, append to the step report, set the
+      // done-signal on the completion marker). No-op when no turn is in flight.
+      // While a turn runs, fall through to triage the world, then sleep.
+      yield* session.poll()
 
       // 4. HINDBRAIN per-event triage — ungated: runs whenever there are events,
       // even mid-session. Each state-changing event is appraised once by the 2B;
@@ -723,11 +668,11 @@ export const runCortex = (config: CortexLoopConfig) =>
       // produced. Computed here so 5b can skip that ~9B call. (Meaningful only
       // when a plan is active + no turn is in flight; false otherwise.)
       let willEvaluate = false
-      if (cortex.currentPlan !== null && !consciousFiber && !isWedgedEmptyPlan(cortex.currentPlan)) {
+      if (cortex.currentPlan !== null && !session.turnInFlight() && !isWedgedEmptyPlan(cortex.currentPlan)) {
         const step = planSteps(cortex.currentPlan)[cortex.currentStepIndex]
         if (step) {
-          const budgetElapsed = sessionId !== null && tick - stepStartTick >= step.timeoutTicks
-          willEvaluate = stepDoneSignaled || budgetElapsed
+          const budgetElapsed = session.isOpen() && tick - stepStartTick >= step.timeoutTicks
+          willEvaluate = session.doneSignaled() || budgetElapsed
         }
       }
 
@@ -768,10 +713,7 @@ export const runCortex = (config: CortexLoopConfig) =>
               `hindbrain interrupt (in-session): ${esc.dominant?.reason ?? "drop-everything"}`,
               "warn",
             )
-            if (consciousFiber) {
-              yield* Fiber.interrupt(consciousFiber)
-              consciousFiber = null
-            }
+            yield* session.interrupt()
           } else {
             yield* logToConsole(
               config.char.name,
@@ -818,9 +760,10 @@ export const runCortex = (config: CortexLoopConfig) =>
             for (const w of orientMemories(orient)) {
               yield* memory.remember(config.containerId, config.char, w)
             }
-            // Laundered directive: formatSteerDirective formats model-generated forebrain output.
-            pendingDirective = formatSteerDirective(orient)
-            if (esc.rung === "steer") bypassSteerCadence = true
+            // Laundered directive: formatSteerDirective formats model-generated
+            // forebrain output. Buffer it on the session (coalesce = newest wins);
+            // a `steer`-rung escalation is a priority steer that bypasses cadence.
+            session.stageDirective(formatSteerDirective(orient), esc.rung === "steer")
           }
           cortex.accumulatedEvents = []
           cortex.lastOrientTick = tick
@@ -828,7 +771,7 @@ export const runCortex = (config: CortexLoopConfig) =>
       }
 
       // 6. Step execution — when a plan is active and no conscious turn is in flight.
-      if (cortex.currentPlan !== null && !consciousFiber) {
+      if (cortex.currentPlan !== null && !session.turnInFlight()) {
         const steps = planSteps(cortex.currentPlan)
         const step = steps[cortex.currentStepIndex]
         if (isWedgedEmptyPlan(cortex.currentPlan)) {
@@ -850,18 +793,19 @@ export const runCortex = (config: CortexLoopConfig) =>
           // first turn). Without this guard, a stale stepStartTick (e.g. a plan assigned
           // after a long idle) makes a brand-new step appear instantly elapsed and get
           // salvage-evaluated on the same tick it is assigned — its turn never forks.
-          const budgetElapsed = sessionId !== null && ticksConsumed >= step.timeoutTicks
+          const budgetElapsed = session.isOpen() && ticksConsumed >= step.timeoutTicks
+          const doneSignaled = session.doneSignaled()
 
           // 6a. Evaluate now if the agent signaled done OR the tick-budget expired.
-          if (stepDoneSignaled || budgetElapsed) {
-            if (stepDoneSignaled) {
+          if (doneSignaled || budgetElapsed) {
+            if (doneSignaled) {
               yield* logBehavior(config.char.name, "cortex", "step", { type: "step", phase: "done", task: step.task })
             } else {
               yield* logBehavior(config.char.name, "cortex", "step", { type: "step", phase: "salvage", task: step.task })
             }
             const after = renderer.richSnapshot(state as never)
             const stepIdx = cortex.currentStepIndex
-            const conditionCheck = stepDoneSignaled
+            const conditionCheck = doneSignaled
               ? `Agent signaled completion (${STEP_DONE_MARKER}) after ${ticksConsumed} ticks`
               : `Tick budget elapsed: ${ticksConsumed} ticks consumed of ${step.timeoutTicks} budgeted; no completion signal`
             const evalRecall = yield* memory.recall(
@@ -870,13 +814,14 @@ export const runCortex = (config: CortexLoopConfig) =>
               evaluateQuery(step.task, step.goal),
               { k: 5, label: "Relevant memories" },
             )
-            const evalResult = yield* runConsciousEvaluate(runnerConfig, {
+            // Model call behind the session owner; it fills executionReport from
+            // its own accumulated step report (the loop never touches the transcript).
+            const evalResult = yield* session.evaluate({
               task: step.task,
               goal: step.goal,
               successCondition: step.successCondition,
               ticksBudgeted: step.timeoutTicks,
               ticksConsumed,
-              executionReport: formatExecutionReport(stepReport),
               stateDiff: renderer.stateDiff(stepStartSnapshot, after),
               conditionCheck,
               emotionalState: cortex.emotionalWeight,
@@ -892,42 +837,21 @@ export const runCortex = (config: CortexLoopConfig) =>
               label: "evaluate",
               data: { judgment: evalResult.judgment, transition: evalResult.transition.transition },
             })
-            // wm (spec §2): evaluate marks the step's seeded todo done; a
-            // plan-dropping transition (replan/wait/terminate) discards the
-            // remaining OPEN step todos and settles the headline via
-            // closePlanTodos (done-if-any-child-done, discarded otherwise — so
-            // a plan that partly completed reads as done, not discarded, over
-            // its done children); a completed plan closes its headline done.
-            // Harness deltas + the drained agent journal ride the step-end
-            // record's wmDeltas. The `done stepTodoId` write below lands FIRST
-            // so closePlanTodos sees it on disk when weighing the headline.
-            const stepTodoId = planStepTodoIds[stepIdx] || null
-            const doneDeltas = stepTodoId
-              ? yield* mutateWm(config.char, [{ verb: "done", id: stepTodoId }])
-              : []
-            const tName = evalResult.transition.transition
-            let planCloseDeltas: WmDelta[] = []
-            if (tName === "replan" || tName === "wait" || tName === "terminate") {
-              const remaining = planStepTodoIds.filter((id) => id !== "" && id !== stepTodoId)
-              const headlineId = planHeadlineTodoId
-              planHeadlineTodoId = null
-              planStepTodoIds = []
-              planCloseDeltas = yield* closePlanTodos(config.char, headlineId, remaining)
-            } else if (stepIdx + 1 >= steps.length) {
-              // next_step off the end = plan complete: every step done → the
-              // headline settles done (closePlanTodos, no open children left).
-              const headlineId = planHeadlineTodoId
-              planHeadlineTodoId = null
-              planStepTodoIds = []
-              planCloseDeltas = yield* closePlanTodos(config.char, headlineId, [])
-            }
-            const agentDeltas = yield* drainWmDeltas(config.char)
-            const stepWmDeltas = [...agentDeltas, ...doneDeltas, ...planCloseDeltas]
+            // wm (spec §2): the tracker marks the step's seeded todo done FIRST,
+            // then — on a plan-dropping transition (replan/wait/terminate) or a
+            // completed plan (last step) — discards the remaining OPEN step todos
+            // and settles the headline (done-if-any-child-done, discarded else),
+            // and finally drains the agent journal. It returns the full step wm
+            // story (agent deltas + done + plan-close, in that order) to ride the
+            // step-end record's wmDeltas.
+            const stepWmDeltas = yield* planTodos.settleStep(
+              stepIdx,
+              evalResult.transition.transition,
+              steps.length,
+            )
             // Episode substrate (spec §1): step-end with the evaluate verdict.
             // skill is the worn skill's name (spec §3); wmDeltas is Stage 2's payload.
-            yield* appendTransitionEpisode(config.char.name, {
-              type: "step-end",
-              ts: new Date().toISOString(),
+            yield* appendStepEnd(config.char.name, {
               tick,
               stepId: episodeContext(config.char.name).stepId ?? mintStepId(runEpoch, stepStartTick, stepIdx),
               task: step.task,
@@ -935,7 +859,7 @@ export const runCortex = (config: CortexLoopConfig) =>
               verdict: evalResult.judgment,
               transition: evalResult.transition.transition,
               skill: wornSkill?.name ?? null,
-              wmDeltas: stepWmDeltas.length > 0 ? stepWmDeltas : null,
+              wmDeltas: stepWmDeltas,
             })
             for (const w of evaluateMemories(evalResult)) {
               yield* memory.remember(config.containerId, config.char, w)
@@ -950,13 +874,12 @@ export const runCortex = (config: CortexLoopConfig) =>
             // structured kind:"error" event (distinguishing the timeout tag from a
             // model error) before degrading to "". Losing one reflection is
             // tolerable; losing it invisibly is not.
-            const diaryEntry = yield* runDiaryTurn(runnerConfig, {
+            const diaryEntry = yield* session.diary({
               charName: config.char.name,
               task: step.task,
               goal: step.goal,
               judgment: evalResult.judgment,
               reasoning: evalResult.reasoning,
-              executionReport: formatExecutionReport(stepReport),
               emotionalState: cortex.emotionalWeight,
             }).pipe(
               Effect.timeout("30 seconds"),
@@ -1007,73 +930,35 @@ export const runCortex = (config: CortexLoopConfig) =>
               }
             }
             // Reset per-step session state for the next step (or next plan).
-            sessionId = null
-            stepReport = ""
-            stepDoneSignaled = false
-            pendingDirective = null
-            lastSteerTick = 0
-            bypassSteerCadence = false
+            session.reset()
             setEpisodeStep(config.char.name, null)
             stepStartTick = tick
             stepStartSnapshot = renderer.richSnapshot(state as never)
           } else {
             // 6b. Budget not elapsed, no done-signal — fork the next turn.
-            if (sessionId === null) {
-              // Turn 1: open the session.
+            if (!session.isOpen()) {
+              // Turn 1: emit the step-start episode + log (loop-owned bookkeeping),
+              // then open the session's first turn through the owner.
               stepStartTick = tick
               stepStartSnapshot = renderer.richSnapshot(state as never)
               const episodeStepId = mintStepId(runEpoch, tick, cortex.currentStepIndex)
               setEpisodeStep(config.char.name, episodeStepId)
-              yield* appendTransitionEpisode(config.char.name, {
-                type: "step-start",
-                ts: new Date().toISOString(),
+              yield* appendStepStart(config.char.name, {
                 tick,
                 stepId: episodeStepId,
                 task: step.task,
                 goal: step.goal,
                 skill: wornSkill?.name ?? null,
-                wmDeltas: null,
               })
               yield* logBehavior(config.char.name, "cortex", "step", { type: "step", phase: "start", turn: 1, task: step.task })
-              consciousFiber = yield* Effect.fork(
-                consciousThought.turn(
-                  {
-                    containerId: config.containerId,
-                    playerName: config.char.name,
-                    char: config.char,
-                    prompt: formatStepTask(step, planHeadline, wornSkill?.body),
-                    timeoutMs: workerTimeoutMs,
-                    modelLabel: bodyModelLabel,
-                  },
-                  // No resume on turn 1.
-                ),
-              )
-            } else if (
-              pendingDirective !== null &&
-              (bypassSteerCadence || tick - lastSteerTick >= DEFAULT_STEER_CADENCE_TICKS)
-            ) {
-              // Steer turn: send the latest coalesced directive to the existing session.
-              // A priority steer (steer rung) bypasses the cadence throttle.
-              const directive = pendingDirective
-              pendingDirective = null
-              lastSteerTick = tick
-              bypassSteerCadence = false
-              yield* logBehavior(config.char.name, "cortex", "conscious", { type: "note", label: "steer_turn", data: { sessionId } })
-              consciousFiber = yield* Effect.fork(
-                consciousThought.turn(
-                  {
-                    containerId: config.containerId,
-                    playerName: config.char.name,
-                    char: config.char,
-                    prompt: directive,
-                    timeoutMs: workerTimeoutMs,
-                    modelLabel: bodyModelLabel,
-                  },
-                  { sessionId },
-                ),
-              )
+              yield* session.openTurn(formatStepTask(step, planHeadline, wornSkill?.body))
+            } else {
+              // Steer turn: push the latest coalesced directive to the existing
+              // session if the cadence window is open (or a priority steer bypasses
+              // it). No-op otherwise — session is open, waiting for a turn result or
+              // the cadence window.
+              yield* session.steer(tick)
             }
-            // Otherwise: session is open, waiting for turn result or cadence window.
           }
         }
       }
