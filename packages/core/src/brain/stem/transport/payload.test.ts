@@ -10,7 +10,7 @@ import {
   CONTAINER_TIMEOUT_GRACE_SECONDS,
   CONTAINER_TIMEOUT_KILL_AFTER_SECONDS,
 } from "./payload.js"
-import { normalizeClaude, normalizeOpenCode } from "../../logging/stream-normalizer.js"
+import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import type { TurnConfig } from "./types.js"
 
 const base: TurnConfig = {

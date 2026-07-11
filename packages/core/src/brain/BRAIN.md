@@ -6,8 +6,8 @@ transport seam between them.
 
 ```
 brain/
-  loop/        The conductor -- runCortex tick engine, escalation reducer, parse-tolerance
-  transport/   SHARED docker-exec turn plumbing (imported by both layers)
+  stem/        The conductor -- runActivation tick engine, escalation reducer, parse-tolerance
+    transport/ SHARED docker-exec turn plumbing (imported by both layers)
   limbic/      PRE-CONSCIOUS layer  (reflexive + integrative)
   cortex/      CONSCIOUS layer      (deliberative)
 ```
@@ -19,7 +19,7 @@ CLI install, …).
 ## The depth hierarchy: reflexive → integrative → deliberative
 
 Cognition deepens as you descend the tiers. Each tier is a different local model size and a
-different job; the `brain/loop` conducts, and processing depth increases as work flows down.
+different job; the `brain/stem` conducts, and processing depth increases as work flows down.
 
 | Depth | Tier | ~Size | Where | Job |
 |---|---|---|---|---|
@@ -35,21 +35,24 @@ different job; the `brain/loop` conducts, and processing depth increases as work
 - **Deliberative** work is the cortex: it *decides* what to do, *executes* it as a tool-using
   OpenCode session, and *evaluates* the outcome.
 
-## The conductor: `brain/loop`
+## The conductor: `brain/stem`
 
-`runCortex` (`brain/loop/loop.ts`) is the per-character tick engine. It drains domain events
-off an Effect `Queue`, appraises them, orients, decides, executes, evaluates, and steers or
-interrupts in-flight work as the world changes. It is **not** "the cortex" — it is the loop
-that drives the cortex (and everything else). See [../../../../docs/CORTEX.md](../../../../docs/CORTEX.md)
-for the full tick anatomy, the three tiers, plans/steps/completion, steering, and parse
-tolerance.
+`runActivation` (`brain/stem/loop.ts`) is the per-character tick engine. It is a thin
+conductor — named for the activation/reticular-activating role it plays, not "the cortex":
+it paces ticks, drains domain events off an Effect `Queue`, dispatches them to the limbic
+and cortex layers, and steers or interrupts in-flight work as the world changes. It does
+**not** run the cortex itself — conscious-session lifecycle lives in `cortex/conscious/`
+and reflex scheduling lives in `limbic/`; the loop only owns pacing/polling/dispatch and
+the loop-owned orient→decide fork (the one seam licensed to touch both layers). See
+[../../../../docs/CORTEX.md](../../../../docs/CORTEX.md) for the full tick anatomy, the
+three tiers, plans/steps/completion, steering, and parse tolerance.
 
 - `loop.ts` — the tick engine (the conductor).
 - `state.ts` — the appraisal/escalation reducer (`appraise`, `appraiseTick`,
   `HindbrainEscalation`, plan/step helpers). It is conceptually limbic (documented in
   LIMBIC.md) but physically lives here for hot-loop locality.
 - `parse.ts` — tolerant JSON extraction for the mlx tiers (no constrained decoding).
-- `tier-config.ts` — the `CortexRunnerConfig` the tier runners share.
+- `tier-config.ts` — the `ActivationRunnerConfig` the tier runners share.
 
 ## The two layers
 
@@ -76,7 +79,7 @@ payload plumbing, and the deliberative prompts (`decide.md`, `evaluate.md`, `dia
 session owner imports **no limbic code** — all wm/memory/episode bookkeeping stays loop-side.
 Full reference: [../../../../docs/CORTEX.md](../../../../docs/CORTEX.md).
 
-### `brain/transport/` — shared turn plumbing
+### `brain/stem/transport/` — shared turn plumbing
 
 The layer-neutral docker-exec turn machinery: `transport.ts` (stream/race/kill core),
 `payload.ts` (per-runtime inner command + normalizer), `process-runner.ts` (`runTurn` /
@@ -85,9 +88,9 @@ the limbic memory turns and the conscious executor. It never imports up into eit
 
 ## Load-bearing invariants
 
-1. **Limbic and cortex NEVER import each other.** The `brain/loop` mediates the orient→decide
+1. **Limbic and cortex NEVER import each other.** The `brain/stem` mediates the orient→decide
    handoff. That handoff runs as a **forked, loop-owned** `runDeliberation` → `applyDeliberation`
-   fiber (`brain/loop/loop.ts`), so a slow conscious/forebrain call cannot freeze the tick loop.
+   fiber (`brain/stem/loop.ts`), so a slow conscious/forebrain call cannot freeze the tick loop.
    The reflexive hindbrain triage is likewise **forked off the hot path** by a limbic-owned
    reflex scheduler (`brain/limbic/reflex-scheduler.ts`): the loop *submits* each state-changing
    event's appraisal and *drains* the ones that have landed into the tick's escalation reduce, so
@@ -113,7 +116,7 @@ the limbic memory turns and the conscious executor. It never imports up into eit
    store lives under `limbic/hippocampus/memory/` and is reached in-container via the `memory`
    CLI subprocess. The conscious executor *invokes* that CLI, but does not own the store.
 
-4. **Shared/neutral infra is imported DOWN by both layers; it never imports up.** `brain/transport`,
+4. **Shared/neutral infra is imported DOWN by both layers; it never imports up.** `brain/stem/transport`,
    `model/`, and `services/` know nothing about limbic or cortex. Documented lower→limbic
    exceptions (declarative reads, not runtime coupling): neutral character scaffolding
    (`core/character-scaffold.ts`, `services/CharacterFs.ts`) reads `limbic/hypothalamus/drives`
@@ -126,6 +129,6 @@ the limbic memory turns and the conscious executor. It never imports up into eit
 The refactor spec described `Limbic` and `Cortex` Effect **service facades** that would front
 each layer behind a single tag. That facade rewire is a **planned follow-up — it is not
 implemented today.** The loop currently resolves the individual service tags directly
-(`EventProcessorTag`, `SituationClassifierTag`, `InterruptRegistryTag`, `brain/loop/loop.ts`)
+(`EventProcessorTag`, `SituationClassifierTag`, `InterruptRegistryTag`, `brain/stem/loop.ts`)
 and imports the tier runners and stores from their modules. Do not treat the facades as
 existing; describe what the code does.

@@ -17,13 +17,13 @@ import {
 
 /**
  * Shared OODA tier-runner config + tier-calling plumbing. Loop-owned (this
- * module lives under brain/loop/) so both the limbic runners
+ * module lives under brain/stem/) so both the limbic runners
  * (hindbrain/forebrain — brain/limbic/tiers-limbic.ts) and the
  * cortex/conscious runners (decide/evaluate/diary —
  * brain/cortex/conscious/tiers-conscious.ts) can import it DOWN without
  * either runner file importing the other.
  */
-export interface CortexRunnerConfig {
+export interface ActivationRunnerConfig {
   char: CharacterConfig
   cadence: Cadence
   models: CortexModelConfig
@@ -44,7 +44,7 @@ export function classifyTierOutcome(error: unknown): "error" | "timeout" {
 
 /** Run one prompt against the model backing `tier`, log the full exchange, return the raw text. */
 export const callTier = (
-  config: CortexRunnerConfig,
+  config: ActivationRunnerConfig,
   tier: "hindbrain" | "forebrain" | "conscious",
   step: "observe" | "orient" | "decide" | "evaluate" | "diary",
   prompt: string,

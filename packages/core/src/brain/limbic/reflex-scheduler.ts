@@ -5,7 +5,7 @@ import { type CharacterLog, logToConsole } from "../../logging/log-writer.js"
 import type { ObserveResult, WaitState } from "../../skills/types.js"
 import { MemoryGateway, observeMemories } from "#brain/limbic/hippocampus/memory/memory-gateway.js"
 import { runHindbrain } from "#brain/limbic/tiers-limbic.js"
-import type { CortexRunnerConfig } from "#brain/loop/tier-config.js"
+import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 
 /**
  * One landed per-event appraisal: the raw event text plus its validated
@@ -74,11 +74,11 @@ const REFLEX_ERROR_APPRAISAL: ObserveResult = {
 }
 
 /**
- * Build a fresh reflex scheduler for one `runCortex` invocation. Holds the
+ * Build a fresh reflex scheduler for one `runActivation` invocation. Holds the
  * in-flight fibers in closure state; the loop drives it via `submit` /
  * `drainReady` / `interruptAll`.
  */
-export function makeReflexScheduler(config: CortexRunnerConfig, containerId: string): ReflexScheduler {
+export function makeReflexScheduler(config: ActivationRunnerConfig, containerId: string): ReflexScheduler {
   const char = config.char
   let inflight: Array<Fiber.RuntimeFiber<ReflexAppraisal, never>> = []
 

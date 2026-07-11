@@ -1,10 +1,10 @@
 # GitHub Domain
 
-AI agents that manage GitHub repositories through the `brain/loop` tick engine. Each character monitors a set of repos, triages issues, reviews PRs, investigates CI failures, and implements code changes -- all within a structured cycle of work and reflection.
+AI agents that manage GitHub repositories through the `brain/stem` tick engine. Each character monitors a set of repos, triages issues, reviews PRs, investigates CI failures, and implements code changes -- all within a structured cycle of work and reflection.
 
 ## Execution Model
 
-The GitHub domain runs on the `brain/loop` tick engine (`runCortex` from `@roci/core/brain/loop/loop.js`). State updates arrive as events every 30 seconds; the loop runs tool-using work as an OpenCode session inside Docker.
+The GitHub domain runs on the `brain/stem` tick engine (`runActivation` from `@roci/core/brain/stem/loop.js`). State updates arrive as events every 30 seconds; the loop paces, drains, and dispatches them, running tool-using work as an OpenCode session inside Docker.
 
 The loop receives:
 - An **initial task** with the full situation briefing, agent identity, and work instructions
@@ -23,7 +23,7 @@ startup --> active --> break --> reflection --> active (loop)
 
 - **startup** -- Reads `github.json`, validates the token against `/user`, clones all configured repos into `/work/repos/owner--repo`, creates worktree directories, starts the `GitHubClient` polling fiber.
 
-- **active** -- Runs `runCortex` with the domain bundle. On completion, transitions to `break`. If a critical interrupt fires, returns `Interrupted` and re-enters `active` immediately.
+- **active** -- Runs `runActivation` with the domain bundle. On completion, transitions to `break`. If a critical interrupt fires, returns `Interrupted` and re-enters `active` immediately.
 
 - **break** -- Sleeps for 90 minutes via `runBreak`, polling for critical interrupts every 5 seconds. If a critical fires (e.g., CI starts failing), exits early to `active`. Otherwise, proceeds to `reflection`.
 

@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest"
 import { Effect, Layer, Queue, Fiber, Option, Deferred } from "effect"
 import { CommandExecutor } from "@effect/platform"
-import { runCortex, DEFAULT_STEER_CADENCE_TICKS } from "./loop.js"
+import { runActivation, DEFAULT_STEER_CADENCE_TICKS } from "./loop.js"
 import { ModelClient } from "../../model/client.js"
 import { ModelError } from "../../model/errors.js"
 import type { ModelHandle } from "../../model/handles.js"
 import { ConsciousThought, ConsciousThoughtTest } from "#brain/cortex/conscious/conscious-thought.js"
 import { Docker } from "../../services/Docker.js"
-import type { TurnResult } from "#brain/transport/types.js"
+import type { TurnResult } from "#brain/stem/transport/types.js"
 import { EventProcessorTag } from "#brain/limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "#brain/limbic/thalamus/situation-classifier.js"
 import { InterruptRegistryTag } from "#brain/limbic/amygdala/interrupt.js"
@@ -259,7 +259,7 @@ const successTurnResult = (task: string): TurnResult => ({
   durationMs: 10,
 })
 
-describe("runCortex (conscious-session executor)", () => {
+describe("runActivation (conscious-session executor)", () => {
   it("turn 1 opens a session and the loop completes when evaluate returns terminate", async () => {
     let turnCallCount = 0
     const ctLayer = ConsciousThoughtTest((config, resume) => {
@@ -273,7 +273,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      const result = yield* runCortex({
+      const result = yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -336,7 +336,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      const result = yield* runCortex({
+      const result = yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -395,7 +395,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -478,7 +478,7 @@ describe("runCortex (conscious-session executor)", () => {
           Effect.andThen(Queue.offer(events, { type: "mid-session-update" })),
         ),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -563,7 +563,7 @@ describe("runCortex (conscious-session executor)", () => {
           Effect.andThen(Queue.offer(events, { type: "event-b" })),
         ),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -651,7 +651,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -720,7 +720,7 @@ describe("runCortex (conscious-session executor)", () => {
       yield* Effect.forkDaemon(
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "event-b" }))),
       )
-      const result = yield* runCortex({
+      const result = yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -784,7 +784,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -841,7 +841,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -901,7 +901,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -950,7 +950,7 @@ describe("runCortex (conscious-session executor)", () => {
     }))
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -1018,7 +1018,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -1056,7 +1056,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      const result = yield* runCortex({
+      const result = yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -1115,7 +1115,7 @@ describe("runCortex (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "boot" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -1185,7 +1185,7 @@ describe("runCortex (conscious-session executor)", () => {
           Effect.andThen(Queue.offer(events, { type: "retry" })),
         ),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -1263,7 +1263,7 @@ describe("runCortex (conscious-session executor)", () => {
           Effect.andThen(Queue.offer(events, { type: "raw-event-should-not-appear" })),
         ),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -1345,7 +1345,7 @@ describe("runCortex (conscious-session executor)", () => {
       yield* Effect.forkDaemon(
         Effect.sleep("12 millis").pipe(Effect.andThen(Queue.offer(events, { type: "wakeup" }))),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -1413,7 +1413,7 @@ describe("runCortex (conscious-session executor)", () => {
       // Fork + bounded wait so the buggy version fails fast (decideCount stays 1)
       // rather than hanging until the test timeout.
       const fiber = yield* Effect.fork(
-        runCortex({
+        runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1",
           events,
@@ -1486,7 +1486,7 @@ describe("runCortex (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" }) // the ONLY event ever queued
       const fiber = yield* Effect.fork(
-        runCortex({
+        runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1",
           events,
@@ -1517,7 +1517,7 @@ describe("runCortex (conscious-session executor)", () => {
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1",
           events,
@@ -1551,10 +1551,10 @@ describe("runCortex (conscious-session executor)", () => {
     }
   }, 20_000)
 
-  it("resets a stale per-character episode context at runCortex entry (no stepId bleed across sessions)", async () => {
+  it("resets a stale per-character episode context at runActivation entry (no stepId bleed across sessions)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-loop-stale-"))
     setEpisodeLogRoot(root)
-    // Simulate the dangling context a prior runCortex invocation can leave behind
+    // Simulate the dangling context a prior runActivation invocation can leave behind
     // when it exits via the terminate/critical-interrupt paths (which return before
     // the per-step reset) — a fresh invocation must not inherit it.
     setEpisodeTick("ada", 99)
@@ -1567,7 +1567,7 @@ describe("runCortex (conscious-session executor)", () => {
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1",
           events,
@@ -1615,7 +1615,7 @@ describe("runCortex (conscious-session executor)", () => {
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -1696,7 +1696,7 @@ describe("runCortex (conscious-session executor)", () => {
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -1740,7 +1740,7 @@ describe("runCortex (conscious-session executor)", () => {
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -1806,7 +1806,7 @@ describe("runCortex (conscious-session executor)", () => {
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -1872,7 +1872,7 @@ describe("runCortex (conscious-session executor)", () => {
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -1897,7 +1897,7 @@ describe("runCortex (conscious-session executor)", () => {
 })
 
 // ── Subteam A — limbic drives: per-event triage, fast-path, graded ladder ──────
-describe("runCortex — limbic drives (per-event triage + escalation ladder)", () => {
+describe("runActivation — limbic drives (per-event triage + escalation ladder)", () => {
   // Build a domain whose processEvent marks an event inert (no stateUpdate) when
   // its `type` is in `inertTypes`, state-changing otherwise. Optional criticals.
   const domainWith = (
@@ -1987,7 +1987,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       yield* Queue.offer(events, { type: "change-a" })
       yield* Queue.offer(events, { type: "change-b" })
       yield* Queue.offer(events, { type: "noise" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -2034,7 +2034,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       yield* Effect.forkDaemon(
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "attack-now" }))),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -2076,7 +2076,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       yield* Effect.forkDaemon(
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -2137,7 +2137,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         if (criticalsRef.n === 1) Queue.unsafeOffer(events, { type: "later" })
         return criticalsRef.n >= 4 ? [{ priority: "critical" as const, message: "hull critical" }] : []
       })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(blockingDecideClient, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
@@ -2194,7 +2194,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         if (criticalsRef.n === 1) Queue.unsafeOffer(events, { type: "later" })
         return criticalsRef.n >= 4 ? [{ priority: "critical" as const, message: "hull critical" }] : []
       })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(blockingObserveClient, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
@@ -2231,7 +2231,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       yield* Queue.offer(events, { type: "a" })
       yield* Queue.offer(events, { type: "b" })
       const fiber = yield* Effect.fork(
-        runCortex({
+        runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1000, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, StubCommandExecutor, StubOAuthToken, StubDocker, countingMemory, noopModelService))),
@@ -2298,7 +2298,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         if (criticalsRef.n === 3) Effect.runFork(Deferred.succeed(gate, undefined))
         return []
       })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 100, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
@@ -2339,7 +2339,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "seed" })
       const fiber = yield* Effect.fork(
-        runCortex({
+        runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
@@ -2381,7 +2381,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         yield* Effect.forkDaemon(
           Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
         )
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1",
           events,
@@ -2437,7 +2437,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         yield* Effect.forkDaemon(
           Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
         )
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -2509,7 +2509,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "plan-seed" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -2565,7 +2565,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "wake" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -2629,7 +2629,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       yield* Effect.forkDaemon(
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "steer-evt" }))),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -2676,11 +2676,18 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       )
       yield* Queue.offer(events, { type: "plan-seed" })
       // Bound the loop: exit via a critical once the steer has had its chance.
+      // >= 6, not >= 4: turn 1's callback (which enqueues the mid-session steer
+      // event) itself lands on tick 2 or 3 depending on fork-scheduling jitter, and
+      // since phase B2 forked the hindbrain reflex off the tick loop, a submitted
+      // reflex's appraisal now lands one tick LATER than the event that triggered
+      // it (observed landing as late as tick 5). The bound must clear both the
+      // pre-existing turn-open jitter and the forked-reflex one-tick landing
+      // latency (B2).
       const domain = domainWith([], () => {
         tickRef.n++
-        return tickRef.n >= 4 ? [{ priority: "critical" as const, message: "bound" }] : []
+        return tickRef.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []
       })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -2750,7 +2757,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
         if (sessionOpened.value) sinceOpen.n++
         return sinceOpen.n >= 5 ? [{ priority: "critical" as const, message: "bound" }] : []
       })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -2805,7 +2812,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "seed" }) // tick 1 → fork deliberation (decide #1 blocks)
       yield* Effect.forkDaemon(Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))))
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
@@ -2850,7 +2857,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "seed" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
@@ -2954,7 +2961,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       // orientInterval:3 (not 1) so the post-idle `forceOrient` waits a few ticks
       // after the empty tick-1 deliberation — giving SEED_EVENT's forked reflex
       // time to land + accumulate before decide #2's fork captures its snapshot.
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 3, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
@@ -3007,7 +3014,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "seed" }) // the ONLY event ever queued
       const fiber = yield* Effect.fork(
-        runCortex({
+        runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
@@ -3059,7 +3066,7 @@ describe("runCortex — limbic drives (per-event triage + escalation ladder)", (
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "seed" }) // the ONLY event ever queued
       const fiber = yield* Effect.fork(
-        runCortex({
+        runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
@@ -3124,7 +3131,7 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -3199,7 +3206,7 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
       yield* Effect.forkDaemon(
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "mid-session-update" }))),
       )
-      return yield* runCortex({
+      return yield* runActivation({
         char: { name: "ada", dir: "/work/players/ada/me" },
         containerId: "c1",
         events,
@@ -3329,7 +3336,7 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
         yield* Effect.forkDaemon(
           Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "mid-session-update" }))),
         )
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: charDir },
           containerId: "c1",
           events,
@@ -3374,13 +3381,13 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
   }, 20_000)
 })
 
-// ── Phase 0 characterization — contracts the runCortex decomposition must preserve ──
+// ── Phase 0 characterization — contracts the runActivation decomposition must preserve ──
 // These pin the observable behaviors the B/A/rename phases could silently break.
 // They deliberately do NOT duplicate contracts already pinned elsewhere in this file;
 // see .superpowers/sdd/phase-0-baseline.md for the test↔contract map. New here only
 // where no existing test pins the contract (tick-cadence source) or where a phase will
 // relocate a named exported knob (DEFAULT_STEER_CADENCE_TICKS).
-describe("runCortex — Phase 0 characterization (decomposition-invariant contracts)", () => {
+describe("runActivation — Phase 0 characterization (decomposition-invariant contracts)", () => {
   it("tick cadence source: the inter-tick sleep is sourced from config.tickIntervalMs, defaulting to the 30s DEFAULT_TICK_MS when the caller passes none", async () => {
     // Load-bearing for Phase B1: today the domains capture the connection's
     // tickIntervalSec but pass NO tickIntervalMs, so the live loop silently paces on
@@ -3397,7 +3404,7 @@ describe("runCortex — Phase 0 characterization (decomposition-invariant contra
       Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
-        return yield* runCortex({
+        return yield* runActivation({
           char: { name: "ada", dir: "/work/players/ada/me" },
           containerId: "c1",
           events,
@@ -3417,7 +3424,7 @@ describe("runCortex — Phase 0 characterization (decomposition-invariant contra
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         const fiber = yield* Effect.fork(
-          runCortex({
+          runActivation({
             char: { name: "ada", dir: "/work/players/ada/me" },
             containerId: "c1",
             events,

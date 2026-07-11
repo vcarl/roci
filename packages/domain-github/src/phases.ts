@@ -9,7 +9,7 @@ import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { GitHubClientTag } from "./github-client.js"
 import { runBreak, runReflection } from "@roci/core/core/orchestrator/planned-action.js"
-import { runCortex } from "@roci/core/brain/loop/loop.js"
+import { runActivation } from "@roci/core/brain/stem/loop.js"
 import type { PlannedActionTempo } from "@roci/core/brain/limbic/hypothalamus/tempo.js"
 
 const tempo: PlannedActionTempo = {
@@ -233,12 +233,12 @@ const activePhase = {
       yield* logToConsole(context.char.name, "orchestrator", "Starting cortex loop...")
 
       yield* log.emit(context.char, {
-        ...eventBase(context.char.name, "orchestrator", "cortex-loop"),
+        ...eventBase(context.char.name, "orchestrator", "activation-loop"),
         kind: "system",
         message: "loop_start",
       })
 
-      const result = yield* runCortex({
+      const result = yield* runActivation({
         char: context.char,
         containerId: context.containerId,
         containerEnv,

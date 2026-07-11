@@ -11,12 +11,12 @@
 import { Effect, Stream } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import type { TurnConfig, TurnResult } from "./types.js"
-import { ClaudeError } from "../../services/Claude.js"
-import { OAuthToken } from "../../services/OAuthToken.js"
-import { CharacterLog, logToConsole, logExchange } from "../../logging/log-writer.js"
+import { ClaudeError } from "../../../services/Claude.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
+import { CharacterLog, logToConsole, logExchange } from "../../../logging/log-writer.js"
 import { selectRuntime, buildInnerCommand, normalizerFor, wrapWithTimeout, OPENCODE_DISABLE_NETWORK_ENV } from "./payload.js"
 import { runTransport } from "./transport.js"
-import type { InternalEvent } from "../../logging/stream-normalizer.js"
+import type { InternalEvent } from "../../../logging/stream-normalizer.js"
 
 /** Build the `docker exec` args: working dir, env (incl. OAuth token), inner command. */
 export function buildExecArgs(config: TurnConfig, innerCmd: string, token: string): string[] {

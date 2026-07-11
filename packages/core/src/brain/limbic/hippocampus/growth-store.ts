@@ -258,7 +258,7 @@ function isAction(x: unknown): x is ProposalAction {
  * brackets/quotes inside double-quoted strings, including escaped quotes).
  * Returns an array of every balanced candidate, in positional order — candidates
  * are NOT reordered here; the caller tries objects before arrays itself (see
- * extractProposalsArray). Replicated self-contained from brain/loop/parse.ts (see
+ * extractProposalsArray). Replicated self-contained from brain/stem/parse.ts (see
  * module header) to avoid a conscious/ -> cortex/ edge.
  *
  * Stage-4 review hardening (probe-5/6): the old single-candidate scan anchored on

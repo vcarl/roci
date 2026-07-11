@@ -7,9 +7,9 @@ import { Effect, Layer } from "effect"
 import { ModelClient, ModelClientLive } from "../../model/client.js"
 import type { ModelHandle } from "../../model/handles.js"
 import { DEFAULT_CORTEX_MODELS } from "../../model/handles.js"
-import { extractJson, parseOr } from "#brain/loop/parse.js"
+import { extractJson, parseOr } from "#brain/stem/parse.js"
 import { runHindbrain, runForebrain } from "./tiers-limbic.js"
-import type { CortexRunnerConfig } from "#brain/loop/tier-config.js"
+import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import { ModelService } from "../../services/ModelService.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 import type { UnifiedEvent } from "../../logging/events.js"
@@ -50,7 +50,7 @@ const recordingService = (sink: string[]): Layer.Layer<ModelService> =>
     }),
   )
 
-const config: CortexRunnerConfig = {
+const config: ActivationRunnerConfig = {
   char: { name: "ada", dir: "/work/players/ada/me" },
   cadence: "real-time",
   models: DEFAULT_CORTEX_MODELS,
@@ -158,7 +158,7 @@ describe("runHindbrain — reasoning-only response (Bug B regression)", () => {
 
   it("does not fatal; parses the disposition out of message.reasoning", async () => {
     const { layer, baseUrl } = await reasoningOnlyClientAt()
-    const reasoningConfig: CortexRunnerConfig = {
+    const reasoningConfig: ActivationRunnerConfig = {
       ...config,
       models: {
         ...DEFAULT_CORTEX_MODELS,

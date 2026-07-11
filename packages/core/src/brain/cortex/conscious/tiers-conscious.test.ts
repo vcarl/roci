@@ -7,7 +7,7 @@ import { ModelClient } from "../../../model/client.js"
 import type { ModelHandle } from "../../../model/handles.js"
 import { DEFAULT_CORTEX_MODELS } from "../../../model/handles.js"
 import { runConsciousDecide, runConsciousEvaluate, runDiaryTurn } from "./tiers-conscious.js"
-import type { CortexRunnerConfig } from "#brain/loop/tier-config.js"
+import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import type { OrientResult } from "../../../skills/types.js"
 import { ModelService } from "../../../services/ModelService.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
@@ -41,7 +41,7 @@ const recordingService = (sink: string[]): Layer.Layer<ModelService> =>
     }),
   )
 
-const config: CortexRunnerConfig = {
+const config: ActivationRunnerConfig = {
   char: { name: "ada", dir: "/work/players/ada/me" },
   cadence: "real-time",
   models: DEFAULT_CORTEX_MODELS,

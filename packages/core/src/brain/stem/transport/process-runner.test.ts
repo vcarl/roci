@@ -4,9 +4,9 @@ import { CommandExecutor } from "@effect/platform"
 import { buildExecArgs, runTurn } from "./process-runner.js"
 import { buildInnerCommand } from "./payload.js"
 import type { TurnConfig } from "./types.js"
-import { CharacterLog } from "../../logging/log-writer.js"
-import { OAuthToken } from "../../services/OAuthToken.js"
-import type { UnifiedEvent } from "../../logging/events.js"
+import { CharacterLog } from "../../../logging/log-writer.js"
+import { OAuthToken } from "../../../services/OAuthToken.js"
+import type { UnifiedEvent } from "../../../logging/events.js"
 
 const base: TurnConfig = {
   containerId: "cabc",

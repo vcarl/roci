@@ -53,7 +53,7 @@
 			}
 		},
 		{
-			"includes": ["packages/core/src/brain/transport/**"],
+			"includes": ["packages/core/src/brain/stem/transport/**"],
 			"linter": {
 				"rules": {
 					"style": {

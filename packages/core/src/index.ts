@@ -74,16 +74,16 @@ export * from "./model/client.js"
 
 
 // Cortex — local-model escalation ladder
-export { runCortex } from "#brain/loop/loop.js"
-export type { CortexLoopConfig, CortexResult } from "#brain/loop/loop.js"
-export { freshCortexState, appraise, appraiseTick, emptyEscalation, DEFAULT_APPRAISAL_THRESHOLDS } from "#brain/loop/state.js"
-export type { CortexState, HindbrainEscalation, EscalationRung, AppraisalThresholds } from "#brain/loop/state.js"
+export { runActivation } from "#brain/stem/loop.js"
+export type { ActivationConfig, ActivationResult } from "#brain/stem/loop.js"
+export { freshActivationState, appraise, appraiseTick, emptyEscalation, DEFAULT_APPRAISAL_THRESHOLDS } from "#brain/stem/state.js"
+export type { ActivationState, HindbrainEscalation, EscalationRung, AppraisalThresholds } from "#brain/stem/state.js"
 // Limbic drives — innate motivators carried in the character template (Subteam A)
 export { TEMPLATE_DRIVES, CORE_DRIVE_NAMES, drivesFile, renderDriveLines, parseDriveNames } from "#brain/limbic/hypothalamus/drives.js"
 export type { DomainDrive } from "#brain/limbic/hypothalamus/drives.js"
 export { runHindbrain, runForebrain } from "#brain/limbic/tiers-limbic.js"
 export { runConsciousDecide, runConsciousEvaluate } from "#brain/cortex/conscious/tiers-conscious.js"
-export type { CortexRunnerConfig } from "#brain/loop/tier-config.js"
+export type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 
 // Conscious tier — local-model OpenCode executor session
 export { ConsciousThought, ConsciousThoughtLive, ConsciousThoughtTest } from "#brain/cortex/conscious/conscious-thought.js"

@@ -391,12 +391,12 @@ The steering and process-runner layers can be fully exercised without Docker:
 
 ```bash
 pnpm exec vitest run \
-  packages/core/src/brain/transport/process-runner.test.ts
+  packages/core/src/brain/stem/transport/process-runner.test.ts
 ```
 
 #### Phase 4 Scope (Not Yet Built)
 
-`DEFAULT_STEER_CADENCE_TICKS` (in `brain/loop/loop.ts`) is defined now but is consumed only in Phase 4. The following are deferred to Phase 4: cadence-throttled production of directives, hindbrain/forebrain running during a session, escalation, completion-marker detection, and an end-to-end steered/real-container smoke test.
+`DEFAULT_STEER_CADENCE_TICKS` (in `brain/stem/loop.ts`) is defined now but is consumed only in Phase 4. The following are deferred to Phase 4: cadence-throttled production of directives, hindbrain/forebrain running during a session, escalation, completion-marker detection, and an end-to-end steered/real-container smoke test.
 
 ## Step 7: Conscious-Session Transport (Phase 4a)
 

@@ -3,7 +3,7 @@
 Roci runs **two distinct model systems**:
 
 1. **The cortex MLX tier topology** — the live engine. Three local OpenAI-compatible
-   servers (hindbrain / forebrain / conscious) back the `brain/loop` engine. This is where the
+   servers (hindbrain / forebrain / conscious) back the `brain/stem` engine. This is where the
    bulk of model traffic goes. See [Cortex MLX Tiers](#cortex-mlx-tiers) below.
 2. **The legacy tier-based `resolveModel` system** — `fast`/`smart`/`reasoning` tiers
    that role-based callers resolve through. The live roles are the reflection-cycle
@@ -26,7 +26,7 @@ are no other configurable role knobs.
 
 ## Cortex MLX Tiers
 
-The `brain/loop` engine drives three cognition tiers, each served by a local MLX server on its
+The `brain/stem` engine drives three cognition tiers, each served by a local MLX server on its
 own port. The single source of truth for which model answers each tier and where is
 `DEFAULT_CORTEX_MODELS` in `packages/core/src/model/handles.ts` (`:54-130`).
 `packages/core/src/services/model-tier-spec.ts` (`MODEL_TIER_SPECS`) **derives** each

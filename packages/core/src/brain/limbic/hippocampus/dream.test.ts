@@ -6,7 +6,7 @@ import type { UnifiedEvent } from "../../../logging/events.js"
 
 // Mock the model turn so we can script what the "model" returns (or how it fails).
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
-vi.mock("../../../brain/transport/process-runner.js", () => ({
+vi.mock("../../../brain/stem/transport/process-runner.js", () => ({
 	runTurn: runTurnMock,
 }))
 

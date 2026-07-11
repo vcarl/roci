@@ -6,7 +6,7 @@ import type { GameEvent } from "./ws-types.js"
 import { getModels, type Phase, type PhaseContext, type PhaseResult, type PhaseRegistry, type ConnectionState } from "@roci/core/core/phase.js"
 import { GameSocket } from "./game-socket.js"
 import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
-import { runCortex } from "@roci/core/brain/loop/loop.js"
+import { runActivation } from "@roci/core/brain/stem/loop.js"
 import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
@@ -157,7 +157,7 @@ const activePhase = {
       yield* logToConsole(context.char.name, "orchestrator", "Starting event loop...")
 
       yield* log.emit(context.char, {
-        ...eventBase(context.char.name, "orchestrator", "cortex-loop"),
+        ...eventBase(context.char.name, "orchestrator", "activation-loop"),
         kind: "system",
         message: "loop_start",
       })
@@ -167,7 +167,7 @@ const activePhase = {
         return { _tag: "Shutdown" } as PhaseResult
       }
 
-      const result = yield* runCortex({
+      const result = yield* runActivation({
         char: context.char,
         containerId: context.containerId,
         containerEnv: context.containerEnv,

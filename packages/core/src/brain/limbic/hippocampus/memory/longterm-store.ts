@@ -14,7 +14,7 @@ export { MEMORY_CLI_PATH }
  *
  * Promotion captures RAW episodic entries (the per-step diary appends), read at
  * the reflection seam BEFORE consolidate rewrites the diary. The loop only ever
- * APPENDS `\n\n`-separated entries during a session (brain/loop/loop.ts:518-520:
+ * APPENDS `\n\n`-separated entries during a session (brain/stem/loop.ts:518-520:
  * `existing + "\n\n" + entry`), so the diary left by the previous reflection is a
  * verbatim PREFIX of the current one. A bounded high-water mark — the length +
  * sha256 of that previous diary — therefore isolates exactly the new appends,

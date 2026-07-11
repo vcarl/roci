@@ -4,7 +4,7 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { CommandExecutor } from "@effect/platform"
 
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
-vi.mock("../../../brain/transport/process-runner.js", () => ({ runTurn: runTurnMock }))
+vi.mock("../../../brain/stem/transport/process-runner.js", () => ({ runTurn: runTurnMock }))
 
 import { bootstrapSynthesis, buildBootstrapPrompt } from "./synthesis-bootstrap.js"
 import { MAX_SYNTHESIS_CHARS } from "./macro.js"

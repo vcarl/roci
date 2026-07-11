@@ -23,7 +23,7 @@ import { CharacterLog, logError, logToConsole } from "../../../logging/log-write
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { renderSkillIndex } from "../../../services/skills-core.js"
 import { readCurrentCycleEpisodes } from "../../../logging/episodes.js"
-import { runTurn } from "#brain/transport/process-runner.js"
+import { runTurn } from "#brain/stem/transport/process-runner.js"
 import type { ModelConfig } from "../../../core/model-config.js"
 import { resolveModel } from "../../../core/model-config.js"
 import { REFLECTION_TURN_TIMEOUT_MS } from "./dream.js"

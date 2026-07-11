@@ -5,15 +5,15 @@ import { CharacterLog } from "@roci/core/logging/log-writer.js"
 import type { DomainBundle } from "@roci/core/core/domain-bundle.js"
 import type { PhaseContext } from "@roci/core/core/phase.js"
 
-const runCortexMock = vi.fn((..._args: unknown[]) =>
+const runActivationMock = vi.fn((..._args: unknown[]) =>
   Effect.succeed({ _tag: "Completed" as const, finalState: {} }),
 )
 
-vi.mock("@roci/core/brain/loop/loop.js", () => ({
-  runCortex: (...args: unknown[]) => runCortexMock(...args),
+vi.mock("@roci/core/brain/stem/loop.js", () => ({
+  runActivation: (...args: unknown[]) => runActivationMock(...args),
 }))
 
-// Imported after the mock so phases.ts picks up the mocked runCortex.
+// Imported after the mock so phases.ts picks up the mocked runActivation.
 const { spaceMoltPhaseRegistry } = await import("./phases.js")
 
 const stubCharacterLog = Layer.succeed(
@@ -23,10 +23,10 @@ const stubCharacterLog = Layer.succeed(
 
 describe("spacemolt activePhase — tick interval wiring (Phase B1)", () => {
   beforeEach(() => {
-    runCortexMock.mockClear()
+    runActivationMock.mockClear()
   })
 
-  it("passes tickIntervalMs derived from the connection's tickIntervalSec (×1000) to runCortex", async () => {
+  it("passes tickIntervalMs derived from the connection's tickIntervalSec (×1000) to runActivation", async () => {
     const activePhase = spaceMoltPhaseRegistry.getPhase("active")!
     const char = { name: "vcarl", dir: "/tmp/vcarl" } as CharacterConfig
     const context = {
@@ -49,8 +49,8 @@ describe("spacemolt activePhase — tick interval wiring (Phase B1)", () => {
       ) as Effect.Effect<unknown, unknown, never>,
     )
 
-    expect(runCortexMock).toHaveBeenCalledTimes(1)
-    const callArgs = runCortexMock.mock.calls[0]?.[0] as unknown as { tickIntervalMs?: number }
+    expect(runActivationMock).toHaveBeenCalledTimes(1)
+    const callArgs = runActivationMock.mock.calls[0]?.[0] as unknown as { tickIntervalMs?: number }
     expect(callArgs.tickIntervalMs).toBe(10_000)
   })
 
@@ -77,7 +77,7 @@ describe("spacemolt activePhase — tick interval wiring (Phase B1)", () => {
       ) as Effect.Effect<unknown, unknown, never>,
     )
 
-    const callArgs = runCortexMock.mock.calls[0]?.[0] as unknown as { tickIntervalMs?: number }
+    const callArgs = runActivationMock.mock.calls[0]?.[0] as unknown as { tickIntervalMs?: number }
     expect(callArgs.tickIntervalMs).toBe(45_000)
   })
 })

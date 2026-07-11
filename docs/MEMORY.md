@@ -151,7 +151,7 @@ destroys it. `runReflection` (`core/orchestrator/planned-action.ts:36`) runs the
 promotion **first** (`planned-action.ts:59-78`), then `consolidate`, then `dream`,
 then re-baselines the mark (`planned-action.ts:104-120`).
 
-The `brain/loop` engine only **appends** `\n\n`-separated entries to the diary during a
+The `brain/stem` engine only **appends** `\n\n`-separated entries to the diary during a
 session, so the diary left by the previous reflection is a verbatim **prefix** of
 the current one. The hook exploits this with a bounded high-water mark — the
 length + sha256 of the previously-marked diary — to isolate exactly the new

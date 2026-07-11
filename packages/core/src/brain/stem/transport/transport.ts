@@ -1,12 +1,12 @@
 import { Effect, Stream, Chunk, Fiber, Ref, Clock } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
-import type { CharacterConfig } from "../../services/CharacterFs.js"
+import type { CharacterConfig } from "../../../services/CharacterFs.js"
 import type { TurnResult } from "./types.js"
-import type { InternalEvent } from "../../logging/stream-normalizer.js"
-import { ClaudeError } from "../../services/Claude.js"
-import { toUnifiedEvents, eventBase } from "../../logging/events.js"
-import { CharacterLog, logToConsole } from "../../logging/log-writer.js"
-import { appendToolEpisode, episodeContext, summarizeArgs } from "../../logging/episodes.js"
+import type { InternalEvent } from "../../../logging/stream-normalizer.js"
+import { ClaudeError } from "../../../services/Claude.js"
+import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
+import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
+import { appendToolEpisode, episodeContext, summarizeArgs } from "../../../logging/episodes.js"
 
 /**
  * How long a body/brain turn may stay silent (no stdout) before the heartbeat

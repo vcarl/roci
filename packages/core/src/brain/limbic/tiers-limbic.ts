@@ -8,12 +8,12 @@ import { loadSkillSync } from "../../skills/loader.js"
 import { getCadenceGuidance } from "#brain/limbic/hypothalamus/cadence.js"
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
 import { TEMPLATE_DRIVES, parseDriveNames } from "#brain/limbic/hypothalamus/drives.js"
-import { appraise } from "#brain/loop/state.js"
+import { appraise } from "#brain/stem/state.js"
 import type { ObserveResult, OrientResult, WaitState } from "../../skills/types.js"
-import { parseOr, tryParseJson, isPlainObject } from "#brain/loop/parse.js"
+import { parseOr, tryParseJson, isPlainObject } from "#brain/stem/parse.js"
 import { logToConsole, type CharacterLog } from "../../logging/log-writer.js"
 import type { EpisodeAttribution } from "../../logging/episodes.js"
-import { callTier, emitTier, type CortexRunnerConfig } from "#brain/loop/tier-config.js"
+import { callTier, emitTier, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 
 const SKILLS_DIR = path.resolve(import.meta.dirname, "prompts")
 const skills = {
@@ -34,7 +34,7 @@ const skills = {
  * loop's fast-path and never reach this function.
  */
 export function runHindbrain(
-  config: CortexRunnerConfig,
+  config: ActivationRunnerConfig,
   event: string,
   waitState: WaitState | null,
 ): Effect.Effect<ObserveResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
@@ -81,7 +81,7 @@ const orientFallback = (emotionalWeight: string): OrientResult => ({
 
 // ── Forebrain (orient) ───────────────────────────────────────
 export function runForebrain(
-  config: CortexRunnerConfig,
+  config: ActivationRunnerConfig,
   accumulatedEvents: string[],
   domainState: string,
   identity: { background: string; values: string; diary: string; synthesis: string },

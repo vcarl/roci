@@ -7,7 +7,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
-vi.mock("../../../brain/transport/process-runner.js", () => ({ runTurn: runTurnMock }))
+vi.mock("../../../brain/stem/transport/process-runner.js", () => ({ runTurn: runTurnMock }))
 
 import { retrospect, buildRetrospectPrompt } from "./retrospect.js"
 import { CharacterFs } from "../../../services/CharacterFs.js"

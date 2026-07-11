@@ -5,7 +5,7 @@ import type { ModelHandle } from "../../../model/handles.js"
 import { CONSCIOUS_PROVIDER_ID } from "../../../model/conscious-label.js"
 import { Docker } from "../../../services/Docker.js"
 import { hostInternalBaseUrl } from "../../../services/host-url.js"
-import { CONSCIOUS_AGENT_NAME } from "#brain/transport/consts.js"
+import { CONSCIOUS_AGENT_NAME } from "#brain/stem/transport/consts.js"
 
 /**
  * Display name for the conscious model inside the provider's `models` map.

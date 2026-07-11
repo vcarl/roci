@@ -1,12 +1,16 @@
-# The Cortex (Conscious Layer) & the `brain/loop` Engine
+# The Cortex (Conscious Layer) & the `brain/stem` Engine
 
-**Vocabulary note (read this first).** "Cortex" now names the **conscious /
+**Vocabulary note (read this first).** "Cortex" names the **conscious /
 deliberative layer only** — `packages/core/src/brain/cortex/conscious/`, the ~31B tier
-that decides, evaluates, and executes tool-using work. The **tick engine** that conducts
-the whole brain is `runCortex`, and it lives in `packages/core/src/brain/loop/` — it is
-*not* itself "the cortex." Older docs used "the cortex loop" to mean the whole engine;
-that framing is retired. This document is the reference for both the loop engine and the
-conscious layer it drives.
+that decides, evaluates, and executes tool-using work. The **tick engine** that paces,
+polls, and dispatches across the whole brain is `runActivation`, and it lives in
+`packages/core/src/brain/stem/` — it is *not* itself "the cortex," and (since the
+decomposition that pushed conscious-session lifecycle into `cortex/` and reflex
+scheduling into `limbic/`) it no longer "runs" the cortex either — it is a thin
+conductor, named for the activation/reticular-activating role it plays: pacing ticks,
+draining events, and dispatching work to the layers that actually think. Older docs used
+"the cortex loop" or `runCortex` to mean the whole engine; that framing is retired. This
+document is the reference for both the loop engine and the conscious layer it drives.
 
 For the surrounding mental model (the reflexive → integrative → deliberative depth
 hierarchy and the layering invariants) see [../packages/core/src/brain/BRAIN.md](../packages/core/src/brain/BRAIN.md);
@@ -16,21 +20,21 @@ tiers render see [OPERATING_SKILLS.md](OPERATING_SKILLS.md).
 
 ## 1. What the loop is
 
-`runCortex(config)` is exported from `packages/core/src/brain/loop/loop.ts` and
+`runActivation(config)` is exported from `packages/core/src/brain/stem/loop.ts` and
 re-exported from the package barrel at `packages/core/src/index.ts`. It runs once per
 character: each domain calls it from the `active` phase (`domain-spacemolt/src/phases.ts`
-and `domain-github/src/phases.ts`, both importing it from `@roci/core/brain/loop/loop.js`).
+and `domain-github/src/phases.ts`, both importing it from `@roci/core/brain/stem/loop.js`).
 
 The loop is an infinite `while (true)` tick loop. World events do not stream into a
 running CLI session; they arrive on an Effect `Queue`
-(`CortexLoopConfig.events: Queue.Queue<unknown>`) that each tick drains non-blocking. The
-loop owns cognition (appraise → orient → decide → execute → evaluate); the actual
-tool-using work happens in a separate OpenCode session the conscious layer forks and
-resumes (see §7).
+(`ActivationConfig.events: Queue.Queue<unknown>`) that each tick drains non-blocking. The
+loop paces, polls, and dispatches (appraise → orient → decide → execute → evaluate); the
+actual cognition and tool-using work happen in the limbic and cortex layers it drives (see
+§7).
 
-`CortexLoopConfig` carries: `char`, `containerId`, `containerEnv`, `addDirs`, `events`,
+`ActivationConfig` carries: `char`, `containerId`, `containerEnv`, `addDirs`, `events`,
 `initialState`, `cadence`, `cortexModels`, `workerModels`, `orientInterval`,
-`workerTimeoutMs`, `tickIntervalMs`. The loop returns a `CortexResult`: `Completed` (with
+`workerTimeoutMs`, `tickIntervalMs`. The loop returns an `ActivationResult`: `Completed` (with
 `finalState`) or `Interrupted` (with `finalState` + `criticals`).
 
 ## 2. The three tiers
@@ -72,7 +76,7 @@ in `brain/limbic/prompts/`; the deliberative prompts (`decide.md`, `evaluate.md`
 ## 3. Tick anatomy
 
 Each iteration of the loop runs a fixed sequence of numbered steps
-(`brain/loop/loop.ts`):
+(`brain/stem/loop.ts`):
 
 1. **Drain world events into state.** Each queued event is run through
    `EventProcessor.processEvent`. An event that produces a `stateUpdate` is *state-changing*;
@@ -126,9 +130,9 @@ Loop constants:
 ### The orient→decide seam runs as a forked fiber
 
 The decide/evaluate/diary work is not run inline on the hot path. The loop forks a
-loop-owned deliberation fiber (`runDeliberation`, `brain/loop/loop.ts`) and later folds its
-result back into loop state (`applyDeliberation`, `brain/loop/loop.ts`), which returns a
-`CortexResult` on terminate or `null` otherwise. This keeps a slow conscious/forebrain call
+loop-owned deliberation fiber (`runDeliberation`, `brain/stem/loop.ts`) and later folds its
+result back into loop state (`applyDeliberation`, `brain/stem/loop.ts`), which returns an
+`ActivationResult` on terminate or `null` otherwise. This keeps a slow conscious/forebrain call
 from freezing the tick loop — the loop keeps draining events and honoring critical
 interrupts while a deliberation is in flight. The reflexive hindbrain triage in step 4 is
 **likewise forked** — off a limbic-owned reflex scheduler (`reflex-scheduler.ts`) — so a slow
@@ -139,7 +143,7 @@ critical-interrupt check (step 2).
 ## 4. Plans, steps, and completion
 
 A `decide=plan` decision carries an array of plan steps. `planSteps` / `decideSteps`
-(`brain/loop/state.ts`) always return a real array even when a small model emits a malformed
+(`brain/stem/state.ts`) always return a real array even when a small model emits a malformed
 `plan` with missing or non-array `steps`, so the loop never crashes on `.length`/`.map`. An
 active plan with no executable steps is a wedged-plan invariant violation
 (`isWedgedEmptyPlan`, `state.ts`) that the loop fails loudly on and self-heals by re-orienting.
@@ -178,7 +182,7 @@ the resume turn. The `reorient` and `interrupt` rungs instead drop the plan enti
 The structured tiers (hindbrain/forebrain) must emit parseable JSON every tick, but the mlx
 stack has **no constrained decoding** — `response_format`/json-schema is silently ignored on
 the mlx provider. The engine therefore relies on a tolerant extractor rather than schema
-enforcement (`packages/core/src/brain/loop/parse.ts`):
+enforcement (`packages/core/src/brain/stem/parse.ts`):
 
 - `extractJson` resolves a fenced ```json block, else the first balanced top-level `{...}`
   object (tolerating surrounding prose via `firstBalancedObject`), else the trimmed whole
@@ -218,7 +222,7 @@ frontmatter `model:`.
 
 Each plan step (and each steer) runs as one turn via `ConsciousThought.turn`, which calls
 `runOpenCodeSessionTurn` from the shared transport layer
-(`brain/transport/process-runner.ts`). Turn 1 opens a new OpenCode session; subsequent turns
+(`brain/stem/transport/process-runner.ts`). Turn 1 opens a new OpenCode session; subsequent turns
 resume the same session by `sessionId`. A transport failure is converted to a failed-style
 result (`output` = error message) rather than crashing the loop.
 

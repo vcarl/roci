@@ -26,7 +26,7 @@ import { readWm, renderOpenTodoTree } from "#brain/limbic/wm/wm-store.js"
  *     mechanism owned by wm-store.ts (ensureWmFiles / re-render on mutate).
  *  3. Worn-skill body (NOT here). The decide-chosen skill's body is injected into
  *     the step task by formatStepTask — a body-side mechanism owned by
- *     brain/loop/state.ts.
+ *     brain/stem/state.ts.
  *
  * SYNTHESIS.md is the character's memory index, produced by the macro cycle (and
  * seeded by the bootstrap stage). This helper's only responsibility for it is that

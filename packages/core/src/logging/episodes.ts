@@ -140,7 +140,7 @@ const contexts = new Map<string, EpisodeContext>()
 
 /**
  * Per-character RUN epoch (data-integrity fix). `tick` restarts at 0 on every
- * runCortex invocation, so a stepId of `s<tick>-<step>` collided unrelated
+ * runActivation invocation, so a stepId of `s<tick>-<step>` collided unrelated
  * steps ACROSS SESSIONS within the retained multi-cycle window (`s1-0` seen
  * 23× in one day's episodes-transition.jsonl): the streams are append-mode
  * across process restarts and rotation is by CYCLE count, not by session, so

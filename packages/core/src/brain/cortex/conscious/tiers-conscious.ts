@@ -7,10 +7,10 @@ import type { SpawnError, ReadinessError } from "../../../services/model-backend
 import type { CharacterLog } from "../../../logging/log-writer.js"
 import type { EpisodeAttribution } from "../../../logging/episodes.js"
 import { loadSkillSync } from "../../../skills/loader.js"
-import { sanitizeDecideSkill } from "#brain/loop/state.js"
-import { parseOr, isPlainObject } from "#brain/loop/parse.js"
+import { sanitizeDecideSkill } from "#brain/stem/state.js"
+import { parseOr, isPlainObject } from "#brain/stem/parse.js"
 import type { DecideResult, EvaluateResult, EvaluateTransition, OrientResult } from "../../../skills/types.js"
-import { callTier, emitTier, getCadenceGuidance, type CortexRunnerConfig } from "#brain/loop/tier-config.js"
+import { callTier, emitTier, getCadenceGuidance, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 
 const SKILLS_DIR = path.resolve(import.meta.dirname, "prompts")
 const skills = {
@@ -45,7 +45,7 @@ export interface DiaryTurnInput {
 
 // ── Conscious (decide) ───────────────────────────────────────
 export function runConsciousDecide(
-  config: CortexRunnerConfig,
+  config: ActivationRunnerConfig,
   orient: OrientResult,
   currentPlanState: string,
   availableActions: string,
@@ -114,7 +114,7 @@ function normalizeTransition(raw: EvaluateResult["transition"]): EvaluateTransit
 
 // ── Conscious (evaluate) ─────────────────────────────────────
 export function runConsciousEvaluate(
-  config: CortexRunnerConfig,
+  config: ActivationRunnerConfig,
   input: EvaluateInput,
 ): Effect.Effect<EvaluateResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const secondsBudgeted = input.ticksBudgeted * 30
@@ -166,7 +166,7 @@ export function runConsciousEvaluate(
  * enable_thinking:false (handles.ts), so there is no `<think>` preamble to strip.
  */
 export function runDiaryTurn(
-  config: CortexRunnerConfig,
+  config: ActivationRunnerConfig,
   input: DiaryTurnInput,
 ): Effect.Effect<string, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.diary.render({

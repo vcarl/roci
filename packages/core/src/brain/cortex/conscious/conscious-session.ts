@@ -9,9 +9,9 @@ import type { ModelService } from "../../../services/ModelService.js"
 import type { SpawnError, ReadinessError } from "../../../services/model-backend.js"
 import type { ModelError } from "../../../model/errors.js"
 import type { EvaluateResult } from "../../../skills/types.js"
-import type { TurnResult } from "#brain/transport/types.js"
-import type { CortexRunnerConfig } from "#brain/loop/tier-config.js"
-import { detectCompletion, formatExecutionReport } from "#brain/loop/state.js"
+import type { TurnResult } from "#brain/stem/transport/types.js"
+import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
+import { detectCompletion, formatExecutionReport } from "#brain/stem/state.js"
 import type { ConsciousThought } from "./conscious-thought.js"
 import { runConsciousEvaluate, runDiaryTurn, type EvaluateInput, type DiaryTurnInput } from "./tiers-conscious.js"
 
@@ -108,7 +108,7 @@ export interface ConsciousSession {
 export interface ConsciousSessionDeps {
   /** The resolved `ConsciousThought` service value (its turn/provision surface). */
   readonly consciousThought: Context.Tag.Service<ConsciousThought>
-  readonly runnerConfig: CortexRunnerConfig
+  readonly runnerConfig: ActivationRunnerConfig
   readonly containerId: string
   readonly char: CharacterConfig
   /** The `-m` body model label (`consciousModelLabel(handle)`); constant per run. */
@@ -118,7 +118,7 @@ export interface ConsciousSessionDeps {
 }
 
 /**
- * Build a fresh conscious-session owner for one `runCortex` invocation. Holds the
+ * Build a fresh conscious-session owner for one `runActivation` invocation. Holds the
  * session state in closure lets (mirrors `makeReflexScheduler`); the loop drives
  * it via the interface above.
  */

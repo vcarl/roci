@@ -1,7 +1,7 @@
 import type { DecideResult, Disposition, ObserveResult, WaitState, OrientResult } from "../../skills/types.js"
 import type { PlanStep } from "../../core/types.js"
 
-export interface CortexState {
+export interface ActivationState {
   accumulatedEvents: string[]
   emotionalWeight: string
   currentPlan: DecideResult | null
@@ -10,7 +10,7 @@ export interface CortexState {
   lastOrientTick: number
 }
 
-export function freshCortexState(): CortexState {
+export function freshActivationState(): ActivationState {
   return {
     accumulatedEvents: [],
     emotionalWeight: "",
@@ -168,7 +168,7 @@ export function appraiseTick(
 }
 
 /** Force an orient when events have piled up for `orientInterval` ticks without one. */
-export function shouldForceOrient(state: CortexState, tick: number, orientInterval: number): boolean {
+export function shouldForceOrient(state: ActivationState, tick: number, orientInterval: number): boolean {
   return state.accumulatedEvents.length > 0 && tick - state.lastOrientTick >= orientInterval
 }
 

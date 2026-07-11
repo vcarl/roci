@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import {
-  freshCortexState,
+  freshActivationState,
   shouldForceOrient,
   formatStepTask,
   planSteps,
@@ -31,9 +31,9 @@ const obs = (o: Partial<ObserveResult>): ObserveResult => ({
   ...o,
 })
 
-describe("freshCortexState", () => {
+describe("freshActivationState", () => {
   it("starts empty", () => {
-    const s = freshCortexState()
+    const s = freshActivationState()
     expect(s.accumulatedEvents).toEqual([])
     expect(s.currentPlan).toBeNull()
     expect(s.lastOrientTick).toBe(0)
@@ -254,13 +254,13 @@ describe("appraiseTick — interrupt scope (graded vs hard-interrupt)", () => {
 })
 
 describe("shouldForceOrient", () => {
-  const s = { ...freshCortexState(), accumulatedEvents: ["e"], lastOrientTick: 0 }
+  const s = { ...freshActivationState(), accumulatedEvents: ["e"], lastOrientTick: 0 }
   it("forces orient once the interval elapses with pending events", () => {
     expect(shouldForceOrient(s, 5, 5)).toBe(true)
     expect(shouldForceOrient(s, 4, 5)).toBe(false)
   })
   it("never forces when no events accumulated", () => {
-    expect(shouldForceOrient(freshCortexState(), 99, 5)).toBe(false)
+    expect(shouldForceOrient(freshActivationState(), 99, 5)).toBe(false)
   })
 })
 

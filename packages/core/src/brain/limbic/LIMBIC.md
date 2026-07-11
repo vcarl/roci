@@ -2,18 +2,20 @@
 
 The limbic system is the **pre-conscious** layer of the brain: a passive sensing and
 signaling layer that sits between raw domain events and the conscious/deliberative
-cortex. It is driven by the `brain/loop` tick engine (`runCortex`,
-`packages/core/src/brain/loop/loop.ts`), which conducts everything up to and including
-the **orient** step; the limbic→cortex boundary *is* the orient→decide seam. The limbic
-layer handles data ingestion, situation classification, threat detection, pacing, and
-memory formation/retrieval. It does not orchestrate — the loop resolves the limbic
-service tags (`EventProcessorTag`, `SituationClassifierTag`, `InterruptRegistryTag` — see
-`brain/loop/loop.ts:9-11`) directly and drives all decisions itself.
+cortex. It is driven by the `brain/stem` tick engine (`runActivation`,
+`packages/core/src/brain/stem/loop.ts`), a thin conductor that paces, polls, and
+dispatches up to and including the **orient** step; the limbic→cortex boundary *is* the
+orient→decide seam. The limbic layer handles data ingestion, situation classification,
+threat detection, pacing, memory formation/retrieval, and (since the reflex-scheduler
+extraction) owns/schedules its own hindbrain reflex off the loop's hot path. It does not
+orchestrate — the loop resolves the limbic service tags (`EventProcessorTag`,
+`SituationClassifierTag`, `InterruptRegistryTag` — see `brain/stem/loop.ts:9-11`) directly
+and dispatches to them each tick.
 
 > **Layering invariant.** Limbic and cortex NEVER import each other. The loop mediates
 > the orient→decide handoff (which runs as a forked, loop-owned
-> `runDeliberation`→`applyDeliberation` fiber, `brain/loop/loop.ts:346,411`). Shared/neutral
-> infra (`brain/transport`, `model/`, `services/`) is imported *down* into this layer; it
+> `runDeliberation`→`applyDeliberation` fiber, `brain/stem/loop.ts:346,411`). Shared/neutral
+> infra (`brain/stem/transport`, `model/`, `services/`) is imported *down* into this layer; it
 > never imports *up*. Documented lower→limbic exceptions (declarative reads, not runtime
 > coupling): neutral character scaffolding (`core/character-scaffold.ts`,
 > `services/CharacterFs.ts`) reads `hypothalamus/drives` templates to render `DRIVES.md` at
@@ -36,7 +38,7 @@ not here.
 
 A limbic concept documented here but physically hot-loop-resident — the **hindbrain
 appraisal & escalation** (per-event drive tagging that feeds the loop's steering ladder) —
-has its own section below. Its reducer lives in `brain/loop/state.ts` for hot-loop
+has its own section below. Its reducer lives in `brain/stem/state.ts` for hot-loop
 locality, but it is conceptually the limbic appraisal layer, so it is documented here, its
 mental home. The per-event appraisal itself is now **forked off the hot path** by a
 limbic-owned reflex scheduler (`reflex-scheduler.ts`, §2) — the loop no longer blocks on a
@@ -85,7 +87,7 @@ brain/limbic/
 
 Agent-turn execution transport (`transport.ts`, `payload.ts`, `process-runner.ts`,
 `sdk-payload.ts`, `sdk-runner/`) is **no longer a limbic subsystem** — it moved out to the
-shared, layer-neutral `brain/transport/` (docker-exec turn plumbing shared by both limbic
+shared, layer-neutral `brain/stem/transport/` (docker-exec turn plumbing shared by both limbic
 and cortex) and, for the conscious executor pieces, into `brain/cortex/conscious/`. Runtime
 binary selection (`runtime.ts`) moved to the neutral `model/`. See
 [BRAIN.md](../BRAIN.md) for the transport layer.
@@ -170,7 +172,7 @@ priority sorting, and partitioning:
 - `criticals(state, situation, currentTask?)` -- only critical alerts
 - `softAlerts(state, situation, currentTask?)` -- non-critical alerts
 
-Critical alerts cause `runCortex` to return `Interrupted` (exiting to the break phase),
+Critical alerts cause `runActivation` to return `Interrupted` (exiting to the break phase),
 carrying the firing `Alert[]`. Soft alerts are surfaced to the running conscious turn so
 it can factor them into its work.
 
@@ -184,7 +186,7 @@ event, it sets the *frame* the whole loop runs inside.
 
 - **`tempo.ts`** — the `TempoConfig` discriminated union (`TempoBase`, `StateMachineTempo`,
   `PlannedActionTempo`) describing how a phase paces itself.
-- **`cadence.ts`** — the `Cadence` profile threaded into `CortexLoopConfig.cadence`; the
+- **`cadence.ts`** — the `Cadence` profile threaded into `ActivationConfig.cadence`; the
   tick-pacing frame the loop reads.
 - **`drives.ts`** — the innate, domain-agnostic drive vocabulary (`TEMPLATE_DRIVES`,
   `CORE_DRIVE_NAMES`, `renderDriveLines`, `drivesFile`, `parseDriveNames`). See the
@@ -261,7 +263,7 @@ own plan.
 This is the limbic system's appraisal layer: the fast, pre-conscious read of *"does this
 event matter, and how much?"* It is conceptually a limbic/hindbrain region (the amygdala's
 calmer sibling -- graded salience rather than binary threat), so it is documented here, its
-mental home. Note, however, that the **reducer physically lives in `brain/loop/state.ts`**,
+mental home. Note, however, that the **reducer physically lives in `brain/stem/state.ts`**,
 not under `brain/limbic/`: the appraisal runs on the hot path every tick, so it is
 co-located with the loop state it mutates for locality. Only the drive *vocabulary*
 (`brain/limbic/hypothalamus/drives.ts`) sits in the hypothalamus subsystem. This section
@@ -305,13 +307,13 @@ interface ObserveResult {
 ```
 
 The model's raw structured output is laundered through `appraise(raw, knownDrives?)`
-(`brain/loop/state.ts`) before it can drive control flow: `weight` is clamped to an integer
+(`brain/stem/state.ts`) before it can drive control flow: `weight` is clamped to an integer
 0–5, `drive` is validated against the closed vocabulary (unknown → `null`), `disposition`
 defaults to the safe `accumulate`, and `interrupt` is coerced to a strict boolean. It is
 pure and never throws.
 
 **Inert events never reach the model.** An event that produced no `stateUpdate` is tagged
-deterministically by the `INERT_APPRAISAL` fast-path (`brain/loop/loop.ts:116`) --
+deterministically by the `INERT_APPRAISAL` fast-path (`brain/stem/loop.ts:116`) --
 `discard`/weight-0, no model call (habituation to non-salient stimuli, so noise costs
 nothing). Only state-changing events are sent to the 2B observe.
 
@@ -385,7 +387,7 @@ disjoint paths:
     steer-cadence throttle, an `accumulate`-rung event steers on the normal throttle.
 
 This in-LOOP graded route is distinct from the **amygdala critical path**: a critical
-interrupt (section *Amygdala*) makes `runCortex` **return `Interrupted` and exit** to the
+interrupt (section *Amygdala*) makes `runActivation` **return `Interrupted` and exit** to the
 break phase, whereas the hindbrain `interrupt` rung stays inside the loop (kill turn,
 reorient, keep running). The two are deliberately separate escalation routes.
 

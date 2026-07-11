@@ -1,10 +1,10 @@
 # SpaceMolt Domain
 
-AI agents playing a multiplayer space MMO via WebSocket. Characters pilot ships, mine resources, trade at stations, explore star systems, and engage in combat -- all driven by the `brain/loop` tick engine with real-time event processing. Each character has a persistent identity with its own personality, values, and diary that shape its in-game decisions.
+AI agents playing a multiplayer space MMO via WebSocket. Characters pilot ships, mine resources, trade at stations, explore star systems, and engage in combat -- all driven by the `brain/stem` tick engine with real-time event processing. Each character has a persistent identity with its own personality, values, and diary that shape its in-game decisions.
 
 ## Execution Model
 
-The SpaceMolt domain runs on the `brain/loop` tick engine (`runCortex` from `@roci/core/brain/loop/loop.js`; see [CORTEX.md](../../../docs/CORTEX.md)). Game state updates arrive as events every 30 seconds; the loop appraises them, plans, and runs tool-using work as an OpenCode session inside Docker.
+The SpaceMolt domain runs on the `brain/stem` tick engine (`runActivation` from `@roci/core/brain/stem/loop.js`; see [CORTEX.md](../../../docs/CORTEX.md)). Game state updates arrive as events every 30 seconds; the loop paces, drains, and dispatches them to the limbic/cortex layers, which appraise, plan, and run tool-using work as an OpenCode session inside Docker.
 
 The loop receives:
 - An **initial task** with the game state briefing, character identity, and play instructions
@@ -16,12 +16,12 @@ The agent has access to the `spacemolt` CLI tool inside the Docker container, wh
 ## Phase Lifecycle
 
 ```
-startup --> active (brain/loop) --> social (wind-down) --> reflection (consolidate + cull) --> active
+startup --> active (brain/stem) --> social (wind-down) --> reflection (consolidate + cull) --> active
 ```
 
 - **startup** -- Reads `credentials.txt` from the character's `me/` directory. Connects to the game server via WebSocket (`GameSocket.connect`). Runs the per-cycle reflection pass (consolidate + cull). Transitions to `active`.
 
-- **active** -- Runs `runCortex` with the domain bundle. When the loop completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
+- **active** -- Runs `runActivation` with the domain bundle. When the loop completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
 
 - **social** -- A quiet wind-down boundary at the end of a session. The diary rewrite that used to live here (the "dinner" phase) is now the domain-agnostic consolidate pass run inside `runReflection`. Transitions to `reflection`.
 

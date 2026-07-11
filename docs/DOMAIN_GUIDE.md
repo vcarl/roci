@@ -4,7 +4,7 @@ How to build a new domain for the Roci orchestrator. New domains should be creat
 
 ## What is a Domain?
 
-The orchestrator is a generic engine for running autonomous character-driven sessions. The execution engine is the **`brain/loop` tick engine** (`runCortex`, `packages/core/src/brain/loop/loop.ts`) -- a per-character cognitive tick loop that drains domain events, appraises them across three model tiers, runs tool-using work inside Docker containers, and monitors for interrupts. None of this logic knows about any specific game or environment. See [CORTEX.md](CORTEX.md) for the engine reference.
+The orchestrator is a generic engine for running autonomous character-driven sessions. The execution engine is the **`brain/stem` tick engine** (`runActivation`, `packages/core/src/brain/stem/loop.ts`) -- a per-character conductor that paces ticks, drains domain events, dispatches them across three model tiers, runs tool-using work inside Docker containers, and monitors for interrupts. None of this logic knows about any specific game or environment. See [CORTEX.md](CORTEX.md) for the engine reference.
 
 A **domain** plugs into this engine by implementing 5 service interfaces (plus a phase registry and config object). The core never imports domain code -- services are injected via Effect tags at startup. SpaceMolt and GitHub are the two reference implementations.
 
@@ -212,28 +212,28 @@ interface PromptBuilder {
 
 **`systemPrompt(mode, task)`** -- The system prompt for the persistent session. Defines the agent's capabilities and constraints. Can vary by mode (e.g., read-only vs. full-access) and task (e.g., diary-only). Task content and per-tick updates are produced by the cortex OODA chain, not the builder.
 
-**Cortex integration:** The engine is the `brain/loop` tick engine (`runCortex`), which runs the OODA skill chain (observe → orient → decide → evaluate) across three model tiers to classify events, assess situations, and produce structured directives. See [CORTEX.md](CORTEX.md) for the full engine reference. Tune the loop via the optional `CortexLoopConfig` fields when calling `runCortex` (`brain/loop/loop.ts`):
+**Cortex integration:** The engine is the `brain/stem` tick engine (`runActivation`), which dispatches the OODA skill chain (observe → orient → decide → evaluate) across three model tiers to classify events, assess situations, and produce structured directives. See [CORTEX.md](CORTEX.md) for the full engine reference. Tune the loop via the optional `ActivationConfig` fields when calling `runActivation` (`brain/stem/loop.ts`):
 
 ```ts
-yield* runCortex({
+yield* runActivation({
   ...existingConfig,
   cadence: "planned-action",         // or "real-time" — selects the cadence profile
   orientInterval: 5,                 // max ticks of piled-up events before forcing an orient
 })
 ```
 
-(Memory consolidation is *not* a `runCortex` field — it runs in the per-cycle reflection phase; see below.)
+(Memory consolidation is *not* a `runActivation` field — it runs in the per-cycle reflection phase; see below.)
 
 See the GitHub implementation (`packages/domain-github/src/prompt-builder.ts`) for a full reference.
 
 ### 7. `PhaseRegistry` -- Session Lifecycle
 
-Phases are the top-level session structure. A minimal registry needs startup (connects and returns a `ConnectionState`) and active (runs `runCortex`).
+Phases are the top-level session structure. A minimal registry needs startup (connects and returns a `ConnectionState`) and active (runs `runActivation`).
 
 ```ts
 import { Effect, Queue } from "effect"
 import { getModels } from "@roci/core/core/phase.js"
-import { runCortex } from "@roci/core/brain/loop/loop.js"
+import { runActivation } from "@roci/core/brain/stem/loop.js"
 
 const activePhase = {
   name: "active",
@@ -243,7 +243,7 @@ const activePhase = {
         return { _tag: "Shutdown" } as PhaseResult
       }
 
-      const result = yield* runCortex({
+      const result = yield* runActivation({
         char: context.char,
         containerId: context.containerId,
         containerEnv: context.containerEnv,
@@ -266,7 +266,7 @@ const activePhase = {
 
 The key pattern: **`Effect.provide(context.domainBundle)`** injects your 5 service layers (EventProcessor, SituationClassifier, StateRenderer, InterruptRegistry, PromptBuilder) into the engine.
 
-Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is *not* a `runCortex` config field: the diary rewrite and cull run in a per-cycle reflection phase via `runReflection` (`packages/core/src/core/orchestrator/planned-action.ts`), which domains invoke from their own `reflection` phase.
+Domains typically add `break` (polls for critical interrupts during rest) phases alongside `active`. Dream (memory consolidation) is *not* a `runActivation` config field: the diary rewrite and cull run in a per-cycle reflection phase via `runReflection` (`packages/core/src/core/orchestrator/planned-action.ts`), which domains invoke from their own `reflection` phase.
 
 ### 8. `DomainConfig` -- Assemble Everything
 
@@ -379,7 +379,7 @@ New domain author checklist:
 - [ ] `StateRenderer` -- `richSnapshot()`, `stateDiff()`, `formatStateBar()`
 - [ ] `InterruptRegistry` -- rules array + `createInterruptRegistry()` factory
 - [ ] `PromptBuilder` -- `systemPrompt()`
-- [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runCortex()` with `Effect.provide(context.domainBundle)`
+- [ ] `PhaseRegistry` -- at least startup + active phases; active calls `runActivation()` with `Effect.provide(context.domainBundle)`
 - [ ] `DomainConfig` -- bundle, phaseRegistry, containerMounts, imageName
 - [ ] Domain bundle -- `Layer.mergeAll(...)` of all 5 service layers
 - [ ] Domain registered in `apps/roci/src/domains/registry.ts`

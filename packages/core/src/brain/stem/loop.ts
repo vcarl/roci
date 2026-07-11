@@ -35,9 +35,9 @@ import {
 import { runForebrain } from "#brain/limbic/tiers-limbic.js"
 import { makeReflexScheduler } from "#brain/limbic/reflex-scheduler.js"
 import { runConsciousDecide } from "#brain/cortex/conscious/tiers-conscious.js"
-import type { CortexRunnerConfig } from "./tier-config.js"
+import type { ActivationRunnerConfig } from "./tier-config.js"
 import {
-  freshCortexState,
+  freshActivationState,
   shouldForceOrient,
   planSteps,
   decideSteps,
@@ -68,7 +68,7 @@ import { makePlanTodoTracker } from "#brain/limbic/wm/plan-todos.js"
 import { renderSkillIndex, type SkillMeta } from "../../services/skills-core.js"
 import { readIdentityContext } from "#brain/limbic/hippocampus/identity-context.js"
 
-export interface CortexLoopConfig {
+export interface ActivationConfig {
   char: CharacterConfig
   containerId: string
   containerEnv?: Record<string, string>
@@ -83,7 +83,7 @@ export interface CortexLoopConfig {
   tickIntervalMs?: number
 }
 
-export type CortexResult =
+export type ActivationResult =
   | { readonly _tag: "Completed"; readonly finalState: unknown }
   | { readonly _tag: "Interrupted"; readonly finalState: unknown; readonly criticals: Alert[] }
 
@@ -142,7 +142,7 @@ interface DeliberationResult {
   decide: DecideResult
 }
 
-export const runCortex = (config: CortexLoopConfig) =>
+export const runActivation = (config: ActivationConfig) =>
   Effect.gen(function* () {
     // Episode substrate (spec §1): the per-character tick/step context is a
     // module-level map that outlives this run (mirrors behavior-digest.ts).
@@ -178,7 +178,7 @@ export const runCortex = (config: CortexLoopConfig) =>
     const drives = yield* charFs
       .readDrives(config.char)
       .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_DRIVES)))
-    const runnerConfig: CortexRunnerConfig = {
+    const runnerConfig: ActivationRunnerConfig = {
       char: config.char,
       cadence,
       models: config.cortexModels ?? DEFAULT_CORTEX_MODELS,
@@ -216,7 +216,10 @@ export const runCortex = (config: CortexLoopConfig) =>
       )
 
     let state = config.initialState
-    const cortex = freshCortexState()
+    // NOTE: kept as `cortex` (not renamed to match ActivationState) — an internal
+    // plan/wm bookkeeping variable referenced ~30x in this function; renaming it
+    // would balloon this diff without a clarity gain (rename-phase judgment call).
+    const cortex = freshActivationState()
     let tick = 0
     let stepStartTick = 0
     // Self-drive: set when the loop drops to idle after a replan / plan-completion so the
@@ -648,7 +651,7 @@ export const runCortex = (config: CortexLoopConfig) =>
             const outcome: DeliberationResult = yield* Fiber.join(deliberationFiber)
             deliberationFiber = null
             deliberationSettledThisTick = true
-            const maybeCompleted = yield* applyDeliberation(outcome) // returns CortexResult on terminate, else null
+            const maybeCompleted = yield* applyDeliberation(outcome) // returns ActivationResult on terminate, else null
             if (maybeCompleted) return maybeCompleted
             // Never-fail degrade / no-op decide (continue/failed/malformed/empty-plan) seeded no
             // plan — self-drive a re-orient next tick so a quiet world does not stall. But a
@@ -967,7 +970,7 @@ export const runCortex = (config: CortexLoopConfig) =>
       yield* Effect.sleep(`${tickMs} millis`)
     }
   }) as Effect.Effect<
-    CortexResult,
+    ActivationResult,
     ModelError | SpawnError | ReadinessError,
     | EventProcessorTag
     | SituationClassifierTag

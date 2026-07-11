@@ -3,12 +3,12 @@ import {
   runtimeBinary,
   runtimeBaseArgs,
   type AgentRuntime,
-} from "../../model/runtime.js"
+} from "../../../model/runtime.js"
 import {
   normalizeClaude,
   normalizeOpenCode,
   type InternalEvent,
-} from "../../logging/stream-normalizer.js"
+} from "../../../logging/stream-normalizer.js"
 import { CONSCIOUS_AGENT_NAME } from "./consts.js"
 
 /** Shell-safe literal using $'...' ANSI-C quoting. */

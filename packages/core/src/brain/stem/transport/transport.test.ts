@@ -12,10 +12,10 @@ import {
   parseStreamJson,
   isAuthError,
 } from "./transport.js"
-import { normalizeClaude, normalizeOpenCode } from "../../logging/stream-normalizer.js"
-import { CharacterLog } from "../../logging/log-writer.js"
-import type { UnifiedEvent } from "../../logging/events.js"
-import { ARGS_SUMMARY_MAX, setEpisodeLogRoot, resetEpisodeContext } from "../../logging/episodes.js"
+import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
+import { CharacterLog } from "../../../logging/log-writer.js"
+import type { UnifiedEvent } from "../../../logging/events.js"
+import { ARGS_SUMMARY_MAX, setEpisodeLogRoot, resetEpisodeContext } from "../../../logging/episodes.js"
 
 const StubCharacterLog = Layer.succeed(
   CharacterLog,

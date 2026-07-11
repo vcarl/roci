@@ -7,7 +7,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
-vi.mock("../../../brain/transport/process-runner.js", () => ({ runTurn: runTurnMock }))
+vi.mock("../../../brain/stem/transport/process-runner.js", () => ({ runTurn: runTurnMock }))
 
 import { macro, buildMacroPrompt, defaultGrowthNote, renderMemoryHits, MAX_SYNTHESIS_CHARS } from "./macro.js"
 import type { MemoryHit } from "#brain/limbic/hippocampus/memory/longterm-store.js"

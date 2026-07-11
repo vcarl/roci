@@ -8,7 +8,7 @@ import * as path from "node:path"
 
 // Mock the model turn used by both consolidate and dream (cull).
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }))
-vi.mock("../../brain/transport/process-runner.js", () => ({
+vi.mock("../../brain/stem/transport/process-runner.js", () => ({
   runTurn: runTurnMock,
 }))
 
