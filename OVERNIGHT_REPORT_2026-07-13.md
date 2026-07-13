@@ -1,6 +1,6 @@
 # Overnight self-improvement loop — 2026-07-12/13
 
-**Status: ended early at ~02:30 — monthly API spend limit hit** (the Phase 2 observer agent died mid-run; no further subagents could be spawned). Five iterations landed and were live-validated before the stop. Branch `feat/overnight-refinement`, **not merged** — merge awaits your review.
+**Status: COMPLETE — 6 iterations, all live-validated; final verdict from the 110-minute validation run: ready for routine unattended multi-hour operation.** (The loop paused ~02:30–05:00 on the monthly API spend limit, then resumed per your instruction and ran the original plan to completion.) Branch `feat/overnight-refinement`, **not merged** — merge awaits your review.
 
 ## Commits (each validated by the run after it)
 
@@ -11,6 +11,7 @@
 | `4768572` | 3 | Ground-truth cognition: decide gets live domain state + "ground truth wins" rule; `applyGroundTruthMetrics` mechanically overwrites confabulated orient metrics; percent-rendered units. WebSocket self-heal: real teardown→redial→re-login with 1s→30s backoff (root cause: vendored client goes terminal on re-auth failure; domain re-polled a dead socket); staleness stamped into the summary; classifier emits structured system/location/docked. |
 | `7a54dd5` | 4 | Appraisal middle ground after run 3 swung to 47/47 accumulate: mechanical event dedup (40-tick fingerprint window, chat exempt) + rubric repetition/anti-fabrication rules; orient prompt puts live state LAST (recency bias) with headline contract; percent bug root-caused (normalization skipped when ground metrics empty); WM plan titles prefixed `(assessment)`; appraisal events carry reason/summary/degraded. |
 | `ac7d6b7` | 5 | Fingerprint deep-extracts salient nested state (system/poi/docked/combat, 10%-banded fuel/hull) — bridge run showed 6+ system jumps all deduped as "duplicate". Vendored client-v2 1.6.0 swapped in (see below), docker image rebuilt. |
+| `39cc5e2` | 6 | Conscious-tier silence recovery — two deep runs reproduced indefinite opencode→mlx hangs (29+/20+ min, server idle, only backstop a 61-min process timeout): 300s silence watchdog → kill stuck request + reap in-container tree → retry once → structured abort into the step-failure→replan seam; `body_liveness` metric. Control-plane clamp (lifecycle frames can never escalate — kills the fabricated "hull damage on logged_in" threat), threat-evidence guard, WM volatile-metrics scrub. |
 
 ## Measured improvements (baseline run 1 → bridge run / partial Phase 2)
 
@@ -22,7 +23,17 @@
 - Behavior: multi-session doom loop (re-deriving the CPU deficit) → **bought a Processing Core (1090cr), undocked, mined successfully, multi-system material sourcing for the CPU Co-Processor recipe, used system chat to ask players for materials**.
 - CLI fumbling (Phase 2 partial, ~25 min): Did-you-mean=1, unexpected-argument=2, Unknown-command=1 total — vs earlier runs' repeated `Unknown command` → 3.7KB help-dump ratholes.
 
-## Phase 2 deep run (partial — observer died at spend limit)
+## Final validation run (110 min, commit 39cc5e2) — PASS
+
+Detached-launch (immune to the 60-min background-shell cap that killed earlier attempts). Results:
+- **Silence recovery validated 3× live, both branches**: hang at 319s → kill → retry → ~21 productive minutes; second hang on the same step → abort → `step salvage` → diary lesson → grounded orient → next step closed clean in 4 min; a third hang later also recovered. Zero false positives (a 13-min turn emitting output was left alone). The prior runs froze permanently at this exact point.
+- **Control-plane clamp validated on the exact repro**: `appraisal clamped: control-plane event (was w=4 ... "Hull damage taken")` at startup; fabricated threats 1 → 0.
+- **Reliability**: 0 tier errors, 0 ws errors/reconnects, no memory growth (~770MiB steady), WM 4→6 lines, promptTokens ~3.9k, clean SIGTERM + full sweep.
+- **Behavior**: real economy play — cross-system ore trading, mining, cargo cycling 34→47→19→28, CPU-upgrade plan actively pursued (superconductor bought, crafts dry-run) though not completed in-window.
+
+**Remaining weaknesses (non-blocking, ranked)**: (1) the underlying opencode→mlx stuck-request stalls still occur ~once per long turn — recovery masks them, throughput pays; root-cause the mlx side next. (2) Deliberative turns are slow (avg 74s, max 150s) and single steps can run 20-35 min without closing (commit-gap). (3) "full fuel" narration still leaks into ~half of orient headlines at 61-71% fuel (WM scrub misses cargo numbers too). (4) Never exercised: threat-evidence guard (no combat), fuel_low interrupt (fuel stayed ≥61%), iter-5 fuel-band-crossing positive case; location-change salience looks under-weighted (post-jump snapshots appraised as duplicates).
+
+## Phase 2 first attempt (partial — observer died at spend limit)
 
 Launched 01:25 from `ac7d6b7`; data through ~01:48 in `players/vcarl/logs/` (events.jsonl lines ~2792–3258+) and checkpoints in the session scratchpad (`phase2-checkpoints.md`). Highlights: 0 reconnects, 0 tier errors, WM stable at 5 lines, fuel 85→71% across jumps, recipe discovered (processing_core + coolant_loop + 2×circuit_board + 3×durasteel_plate + superconductor), loud arg errors fired and kept the body out of ratholes. The run/container were killed (137) when the observer's process tree was reaped — logs intact, no orphans, container removed.
 
