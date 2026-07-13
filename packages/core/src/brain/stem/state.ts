@@ -34,7 +34,20 @@ const RUNG_RANK: Record<EscalationRung, number> = {
   interrupt: 4,
 }
 
-/** Weight thresholds for the graded ladder. STEER ≈ 4, REORIENT ≈ 5 (§3.2). */
+/**
+ * Weight thresholds for the graded ladder. STEER ≈ 4, REORIENT ≈ 5 (§3.2).
+ *
+ * Calibration note (observe.md v4): `weight` is SALIENCE ("how much does this
+ * matter"), not danger-only. Social/economic/navigation/opportunity/novelty
+ * events are now KEPT with a spread of non-zero weights (typically 1–3), where
+ * pre-v4 they collapsed to discard/weight-0. That widening does NOT move these
+ * thresholds: 1–3 never escalates on weight alone, so a chat or a trade tip
+ * accumulates for the forebrain (surfaced via the periodic forced orient)
+ * WITHOUT waking a spurious steer/reorient. Weight 4–5 stays reserved for the
+ * genuinely pressing/emergency (a real threat OR a must-act-now opportunity),
+ * so `steer`/`reorient` keep meaning "act this cycle" / "the world moved
+ * materially" — the rubric change is calibration under a stable ladder.
+ */
 export interface AppraisalThresholds {
   readonly steer: number
   readonly reorient: number

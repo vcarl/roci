@@ -24,9 +24,11 @@ const skills = {
 // ── Hindbrain (observe) ──────────────────────────────────────
 /**
  * Appraise ONE state-changing event (per-event processing, §3.1). Renders the
- * single-event observe prompt (the validated v3.2 prompt: drives + palette as
- * the two reference frames, both-pole few-shot, interrupt criterion separated
- * from the weight scale), calls the 2B hindbrain at temp 0.05, and returns a
+ * single-event observe prompt (observe.md v4: two independent calls — keep/drop
+ * where discard is noise-only, and a 0–5 SALIENCE weight spread across social /
+ * economic / navigation / opportunity / novelty / threat via a few-shot table;
+ * drives + palette as reference frames; interrupt criterion kept separate from
+ * the weight scale), calls the 2B hindbrain at temp 0.05, and returns a
  * validated/clamped `ObserveResult` for that event. The parse-miss fallback is a
  * single object (the parser's happy path); `appraise` then clamps `weight` to
  * 0–5 and validates `drive` against the closed vocabulary parsed from the drive
