@@ -752,7 +752,7 @@ packages:
     resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
 
   '@spacemolt/client-v2@file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz':
-    resolution: {integrity: sha512-2cfSLMoXi2BZ0MNvI2QLnnHTdCT8uQA6fodsyKC//nIVG1RZuRh32om0lmFtH9elz2cU60BtWv/mTbfzuK1xdQ==, tarball: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz}
+    resolution: {integrity: sha512-VEmK3asa1Vx05KHzrXvvE29iX7GJ/k4FX4eTwBOFVUstp4ZZZ63GtOM+BDpyo3STijZmlE0XwQr5Y8gAP9DYIA==, tarball: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz}
     version: 1.6.0
     hasBin: true
     peerDependencies:

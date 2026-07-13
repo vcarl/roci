@@ -720,6 +720,138 @@ describe("eventFingerprint", () => {
     expect(eventFingerprint("type: raw\nnot json").full).toBe(eventFingerprint("type: raw\nnot json").full)
     expect(eventFingerprint("type: raw\nnot json").full).not.toBe(eventFingerprint("type: raw\nother").full)
   })
+
+  // ── Deep salient extraction (real full_state shape) ────────────────────────
+  // full_state carries location/ship state NESTED (location.system_id,
+  // ship.fuel/max_fuel), so its only top-level scalars are `version`/`message`.
+  // Before the deep allowlist, EVERY full_state fingerprinted identically and a
+  // 6-system bridge run deduped every snapshot ("duplicate 41x"). These paths
+  // are lifted from real players/vcarl events.jsonl (04:42-05:08Z).
+  const fullState = (over: {
+    system?: string
+    poi?: string
+    docked?: string | null
+    fuel?: number
+    hull?: number
+    shield?: number
+  }): string =>
+    evText("full_state", {
+      version: "0.493.0",
+      player: { id: "fd3d78ba", username: "vcarl", credits: 80083 },
+      ship: {
+        id: "s1",
+        hull: over.hull ?? 100,
+        max_hull: 100,
+        shield: over.shield ?? 50,
+        max_shield: 50,
+        fuel: over.fuel ?? 49,
+        max_fuel: 100,
+        cargo_used: 3,
+      },
+      location: {
+        system_id: over.system ?? "first_step",
+        system_name: "First Step",
+        poi_id: over.poi ?? "first_step_memorial_station",
+        poi_type: "station",
+        docked_at: over.docked === undefined ? "first_step_memorial_station" : over.docked,
+        nearby_player_count: 4,
+        nearby_players: [{ player_id: "aaa" }, { player_id: "bbb" }],
+      },
+      message: "Current game state",
+    })
+
+  it("gives two full_states differing ONLY by nested system_id different fingerprints", () => {
+    const a = fullState({ system: "first_step" })
+    const b = fullState({ system: "horizon" })
+    expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
+    expect(eventFingerprint(a).type).toBe(eventFingerprint(b).type) // same family
+  })
+
+  it("keys two full_states identical except tick/timestamp/transient nested arrays the same", () => {
+    // Same location + same coarse ship bands; only volatile frame data + the
+    // shifting nearby_players list differ → must still collapse.
+    const a = evText("full_state", {
+      version: "0.493.0",
+      ship: { fuel: 49, max_fuel: 100, hull: 100, max_hull: 100, shield: 50, max_shield: 50 },
+      location: {
+        system_id: "first_step",
+        poi_id: "first_step_memorial_station",
+        docked_at: "first_step_memorial_station",
+        nearby_players: [{ player_id: "aaa" }],
+      },
+      tick: 1000,
+      timestamp: "2026-07-13T04:43:00Z",
+    })
+    const b = evText("full_state", {
+      version: "0.493.0",
+      ship: { fuel: 49, max_fuel: 100, hull: 100, max_hull: 100, shield: 50, max_shield: 50 },
+      location: {
+        system_id: "first_step",
+        poi_id: "first_step_memorial_station",
+        docked_at: "first_step_memorial_station",
+        nearby_players: [{ player_id: "bbb" }, { player_id: "ccc" }],
+      },
+      tick: 9999,
+      timestamp: "2026-07-13T05:07:00Z",
+    })
+    expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
+  })
+
+  it("distinguishes a dock-state change (docked → undocked at same poi)", () => {
+    const docked = fullState({ docked: "first_step_memorial_station" })
+    const undocked = fullState({ docked: null })
+    expect(eventFingerprint(docked).full).not.toBe(eventFingerprint(undocked).full)
+  })
+
+  it("distinguishes a moved poi within the same system", () => {
+    const a = fullState({ poi: "first_step_memorial_station" })
+    const b = fullState({ poi: "first_step_gate" })
+    expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
+  })
+
+  it("buckets gradual fuel drain: 96% and 94% are the same coarse band → same fingerprint", () => {
+    const a = fullState({ fuel: 96 }) // ratio 0.96 → band 9
+    const b = fullState({ fuel: 94 }) // ratio 0.94 → band 9
+    expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
+  })
+
+  it("distinguishes a real fuel drop across bands: 96% vs 71% → different fingerprint", () => {
+    const a = fullState({ fuel: 96 }) // band 9
+    const b = fullState({ fuel: 71 }) // band 7
+    expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
+  })
+
+  it("distinguishes a combat flip on the player's own status", () => {
+    const calm = evText("full_state", {
+      ship: { fuel: 50, max_fuel: 100 },
+      location: { system_id: "s1", poi_id: "p1" },
+      in_combat: false,
+    })
+    const fighting = evText("full_state", {
+      ship: { fuel: 50, max_fuel: 100 },
+      location: { system_id: "s1", poi_id: "p1" },
+      in_combat: true,
+    })
+    expect(eventFingerprint(calm).full).not.toBe(eventFingerprint(fighting).full)
+  })
+
+  it("still collapses same-station observation_updates (top-level scalars unaffected)", () => {
+    // Regression: the deep allowlist must not re-admit the churn the top-level
+    // scan already kills. observation_update keeps system_id/poi_id top-level.
+    const a = evText("observation_update", {
+      poi_id: "first_step_memorial_station",
+      system_id: "first_step",
+      tick: 1,
+      nearby_changed: [{ player_id: "aaa" }],
+    })
+    const b = evText("observation_update", {
+      poi_id: "first_step_memorial_station",
+      system_id: "first_step",
+      tick: 2,
+      nearby_changed: [{ player_id: "bbb" }, { player_id: "ccc" }],
+    })
+    expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
+  })
 })
 
 describe("isChatEventType", () => {

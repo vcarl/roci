@@ -258,6 +258,83 @@ export interface EventFingerprint {
   readonly full: string
 }
 
+/**
+ * DEEP salient-field allowlist (Task 1, iteration 5). The top-level scalar scan
+ * alone is blind to state that lives NESTED: a real `full_state` payload carries
+ * location under `location.system_id` and ship status under `ship.fuel`/etc, so
+ * its only top-level scalars are `version`/`message` — constant frame to frame.
+ * Iteration-4 dedup therefore collapsed EVERY `full_state` to one fingerprint,
+ * and a 6-system bridge run deduped every snapshot as "duplicate 41x" — zero
+ * accumulates fired on genuine location/dock changes.
+ *
+ * These paths are lifted from real payloads (players/vcarl events.jsonl,
+ * 04:42-05:08Z): the location-/status-bearing values that MUST distinguish two
+ * snapshots (system jump, dock change, combat flip, a real resource drop) while
+ * the transient nested churn (`location.nearby_players`, `player.stats`, …) stays
+ * dropped. Extracted via safe path lookups; a missing path contributes nothing.
+ */
+const SALIENT_IDENTITY_PATHS: ReadonlyArray<readonly string[]> = [
+  // location-bearing (full_state nests these under `location`)
+  ["location", "system_id"],
+  ["location", "poi_id"],
+  ["location", "poi_type"],
+  ["location", "docked_at"],
+  // status-bearing booleans — the player's OWN combat/cloak state (probed at a
+  // few plausible seats; only the present one contributes)
+  ["in_combat"],
+  ["player", "in_combat"],
+  ["ship", "in_combat"],
+  ["location", "in_combat"],
+  ["player", "is_cloaked"],
+]
+
+/**
+ * DEEP bucketed-ratio allowlist (Task 1). A resource whose absolute value drains
+ * gradually (`ship.fuel` 96->95->94...) would defeat dedup if keyed on the raw
+ * value, so each is BUCKETED to a coarse 10% band (`Math.floor(ratio*10)`): a
+ * 96%->94% frame-to-frame drip stays in band 9 and still dedups, while a material
+ * 96%->71% drop (band 9->7) produces a new fingerprint. Value/max pairs from the
+ * real `ship` object; the ratio is value/max.
+ */
+const SALIENT_RATIO_PATHS: ReadonlyArray<{
+  readonly label: string
+  readonly value: readonly string[]
+  readonly max: readonly string[]
+}> = [
+  { label: "fuel", value: ["ship", "fuel"], max: ["ship", "max_fuel"] },
+  { label: "hull", value: ["ship", "hull"], max: ["ship", "max_hull"] },
+  { label: "shield", value: ["ship", "shield"], max: ["ship", "max_shield"] },
+]
+
+/** Safe nested lookup: walk `path` through plain objects only; any miss -> undefined. Never throws. */
+function deepGet(base: Record<string, unknown>, path: readonly string[]): unknown {
+  let cur: unknown = base
+  for (const key of path) {
+    if (!isPlainObject(cur)) return undefined
+    cur = cur[key]
+  }
+  return cur
+}
+
+/**
+ * Coarse 10%-band index for a resource ratio, or null when it cannot be derived.
+ * A positive `max` -> ratio = value/max; otherwise a bare value already in [0,1]
+ * is treated as the ratio. The ratio is clamped to [0,1] before bucketing so an
+ * over-cap reading can't escape band 10.
+ */
+function ratioBucket(value: unknown, max: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null
+  let ratio: number
+  if (typeof max === "number" && Number.isFinite(max) && max > 0) {
+    ratio = value / max
+  } else if (value >= 0 && value <= 1) {
+    ratio = value
+  } else {
+    return null
+  }
+  return Math.floor(Math.max(0, Math.min(1, ratio)) * 10)
+}
+
 export function eventFingerprint(text: string): EventFingerprint {
   const nl = text.indexOf("\n")
   const firstLine = (nl >= 0 ? text.slice(0, nl) : text).trim()
@@ -270,12 +347,26 @@ export function eventFingerprint(text: string): EventFingerprint {
     const base = isPlainObject(obj) && isPlainObject(obj.payload) ? obj.payload : obj
     if (isPlainObject(base)) {
       const parts: string[] = []
+      // (1) Top-level scalar identity fields (the natural key of a flat event).
       for (const [k, v] of Object.entries(base)) {
         if (k === "type") continue
         if (VOLATILE_FINGERPRINT_KEYS.has(k.toLowerCase())) continue
         if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
           parts.push(`${k}=${String(v)}`)
         }
+      }
+      // (2) Deep salient identity fields (nested location/status — makes a
+      // full_state, whose state is ALL nested, sensitive to a real move/flip).
+      for (const path of SALIENT_IDENTITY_PATHS) {
+        const v = deepGet(base, path)
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+          parts.push(`${path.join(".")}=${String(v)}`)
+        }
+      }
+      // (3) Deep bucketed resource ratios (coarse bands; gradual-drain-safe).
+      for (const { label, value, max } of SALIENT_RATIO_PATHS) {
+        const bucket = ratioBucket(deepGet(base, value), deepGet(base, max))
+        if (bucket !== null) parts.push(`${label}~${bucket}`)
       }
       parts.sort()
       sig = parts.join("|")
