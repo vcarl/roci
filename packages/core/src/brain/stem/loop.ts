@@ -50,6 +50,13 @@ import {
   emptyEscalation,
   DEFAULT_APPRAISAL_THRESHOLDS,
   STEP_DONE_MARKER,
+  eventFingerprint,
+  isChatEventType,
+  countRecentFingerprints,
+  summarizeEventText,
+  planTitleFromHeadline,
+  DEDUP_WINDOW_TICKS,
+  type DedupWindowEntry,
 } from "./state.js"
 import {
   appendStepEnd,
@@ -115,6 +122,25 @@ const INERT_APPRAISAL: ObserveResult = {
   interrupt: false,
   reason: "inert event — no state change (fast-path discard)",
 }
+
+/**
+ * The deterministic appraisal for an event that is an exact/near-identical
+ * REPEAT of one already appraised within the dedup window (Task 1). Tagged
+ * `discard`/weight-0 WITHOUT a model call — mechanical habituation upstream of
+ * the 2B: run-3 appraised the same "New station … in-system" observation ~35×
+ * at w=2, flooding accumulatedEvents/WM and burning inference. Never escalates,
+ * never accumulates; still flows through the tick's `appraiseTick` reduce so the
+ * normal appraisal behavior event still fires (observability). `nTimes` is the
+ * running occurrence count within the window, surfaced in the reason.
+ */
+const duplicateAppraisal = (nTimes: number): ObserveResult => ({
+  disposition: "discard",
+  emotionalWeight: "😐",
+  drive: null,
+  weight: 0,
+  interrupt: false,
+  reason: `duplicate of recent event (${nTimes}x)`,
+})
 
 const AVAILABLE_ACTIONS =
   "Each plan step is executed by the conscious agent (local LLM in an OpenCode session with full tool access). Plan concrete steps; each step.task names the action and step.goal describes the outcome."
@@ -226,6 +252,9 @@ export const runActivation = (config: ActivationConfig) =>
     // next tick re-orients even with no inbound events (a quiet world would otherwise
     // never re-trigger the forebrain). Consumed (cleared) after forcing one orient.
     let forceOrientNext = false
+    // Sliding-window fingerprint history for mechanical event dedup (Task 1).
+    // Entries older than DEDUP_WINDOW_TICKS are pruned each tick after use.
+    let recentEventFps: DedupWindowEntry[] = []
     let stepStartSnapshot = renderer.richSnapshot(state as never)
     // Orient headline of the in-progress plan — context for every step.
     let planHeadline = ""
@@ -437,8 +466,13 @@ export const runActivation = (config: ActivationConfig) =>
           wornSkill = yield* resolveWornSkill
           // wm (spec §2): seed the plan's steps as todos under a headline
           // todo, so intent survives replans. Seeding is best-effort — a wm
-          // failure yields empty ids and the plan proceeds regardless.
-          const seededDeltas = yield* planTodos.seed(orient.headline, planSteps(cortex.currentPlan))
+          // failure yields empty ids and the plan proceeds regardless. The
+          // headline is prefixed "(assessment) " (Task 3) so a confabulated
+          // orient narrative can't masquerade in WM.md as a committed plan.
+          const seededDeltas = yield* planTodos.seed(
+            planTitleFromHeadline(orient.headline),
+            planSteps(cortex.currentPlan),
+          )
           yield* appendWmDeltas(config.char.name, tick, seededDeltas)
         } else if (decideSteps(decide).length > 0) {
           // decideSteps is array-safe: a parseable `{"decision":"plan"}` with
@@ -452,8 +486,13 @@ export const runActivation = (config: ActivationConfig) =>
           wornSkill = yield* resolveWornSkill
           // wm (spec §2): seed the plan's steps as todos under a headline
           // todo, so intent survives replans. Seeding is best-effort — a wm
-          // failure yields empty ids and the plan proceeds regardless.
-          const seededDeltas = yield* planTodos.seed(orient.headline, planSteps(cortex.currentPlan))
+          // failure yields empty ids and the plan proceeds regardless. The
+          // headline is prefixed "(assessment) " (Task 3) so a confabulated
+          // orient narrative can't masquerade in WM.md as a committed plan.
+          const seededDeltas = yield* planTodos.seed(
+            planTitleFromHeadline(orient.headline),
+            planSteps(cortex.currentPlan),
+          )
           yield* appendWmDeltas(config.char.name, tick, seededDeltas)
         } else if (decide.decision === "plan") {
           // Issue 4 (fail loud): the model decided "plan" but produced no
@@ -619,14 +658,45 @@ export const runActivation = (config: ActivationConfig) =>
       for (const ev of tickEvents) {
         if (ev.inert) {
           appraisals.push({ event: ev.text, observe: INERT_APPRAISAL })
+          continue
+        }
+        // Mechanical dedup UPSTREAM of the 2B (Task 1): fingerprint the event,
+        // count its recent exact + type-family occurrences within the window,
+        // then record this occurrence.
+        const fp = eventFingerprint(ev.text)
+        const { exactCount, typeCount } = countRecentFingerprints(
+          recentEventFps,
+          fp,
+          tick,
+          DEDUP_WINDOW_TICKS,
+        )
+        recentEventFps.push({ full: fp.full, type: fp.type, tick })
+        const isChat = isChatEventType(fp.type)
+        if (!isChat && exactCount > 0) {
+          // Exact/near-identical repeat → synthesize a discard@0 appraisal with
+          // NO model call. Still pushed to `appraisals` so the normal per-tick
+          // appraisal behavior event fires (observability), exactly like INERT.
+          appraisals.push({ event: ev.text, observe: duplicateAppraisal(exactCount + 1) })
         } else {
-          yield* reflex.submit(ev.text, cortex.waitState)
+          // First-time-or-changed (or a chat, which is NEVER deduped-to-discard):
+          // pass through to the hindbrain. Annotate the event text with a
+          // `(seen Nx recently)` suffix when the type-family has been seen before
+          // — CONTRACT with the observe rubric: exactly this human-readable form.
+          const seenN = typeCount + 1
+          const text = seenN > 1 ? `${ev.text} (seen ${seenN}x recently)` : ev.text
+          yield* reflex.submit(text, cortex.waitState)
         }
       }
+      // Prune history entries that have aged out of the window (post-use, so this
+      // tick's count saw the full window; keeps the array bounded).
+      recentEventFps = recentEventFps.filter((e) => tick - e.tick <= DEDUP_WINDOW_TICKS)
       // Collect landed appraisals (this tick's + any earlier slow reflex). The
       // remember write moved into the scheduler, so nothing here awaits the 2B.
       const landed = yield* reflex.drainReady()
-      appraisals.push(...landed)
+      // Task 4b: a reflex that degraded on a hindbrain endpoint failure flags the
+      // tick's appraisal behavior event so the silent accumulate fallback is visible.
+      const anyDegraded = landed.some((l) => l.degraded === true)
+      appraisals.push(...landed.map(({ event, observe }) => ({ event, observe })))
       const esc =
         appraisals.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
       const nonDiscard = esc.accumulated.length > 0
@@ -636,6 +706,12 @@ export const runActivation = (config: ActivationConfig) =>
           disposition: esc.rung,
           weight: esc.maxWeight,
           escalated: esc.escalate,
+          // Task 4a: the dominant event's model reason + a compact type/summary,
+          // so distribution QA reads the "why" off the behavior stream without
+          // mining raw observe exchanges.
+          reason: esc.dominant?.reason ?? "",
+          summary: summarizeEventText(esc.dominantEvent),
+          ...(anyDegraded ? { degraded: true } : {}),
         })
         // Tick mood = the dominant (highest-weight) event's mood (§4.4).
         if (esc.dominant) cortex.emotionalWeight = esc.dominant.emotionalWeight

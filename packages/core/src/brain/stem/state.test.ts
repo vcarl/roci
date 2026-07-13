@@ -20,6 +20,12 @@ import {
   extractDomainMetrics,
   applyGroundTruthMetrics,
   renderDomainStateForPrompt,
+  eventFingerprint,
+  isChatEventType,
+  countRecentFingerprints,
+  summarizeEventText,
+  planTitleFromHeadline,
+  DEDUP_WINDOW_TICKS,
 } from "./state.js"
 import type { DecideResult, ObserveResult, OrientResult } from "../../skills/types.js"
 
@@ -132,6 +138,7 @@ describe("appraiseTick — per-tick escalation aggregation", () => {
     expect(esc.escalate).toBe(true)
     expect(esc.maxWeight).toBe(5)
     expect(esc.dominant?.reason).toBe("hull critical")
+    expect(esc.dominantEvent).toBe("threat") // raw text of the highest-weight event (Task 4a)
     expect(esc.accumulated).toEqual(["threat"]) // only the non-discard event
   })
 
@@ -635,10 +642,28 @@ describe("applyGroundTruthMetrics (D3 override)", () => {
     expect(out.confidence).toBe(orient.confidence)
     expect(out.emotionalState).toBe(orient.emotionalState)
   })
-  it("returns the orient UNCHANGED when ground truth is empty (never blanks synthesis metrics)", () => {
+  it("preserves synthesis metric VALUES when ground truth is empty (never blanks them)", () => {
     const orient = orientFixture({ situationType: "drifting", risk: "high" })
     const out = applyGroundTruthMetrics(orient, {})
-    expect(out).toBe(orient)
+    expect(out.metrics).toEqual({ situationType: "drifting", risk: "high" })
+  })
+  it("normalizes the model's OWN ratio floats even when ground truth is empty (run-3 regression: fuel=1 number → '100%')", () => {
+    // The exact live case: run-3's orient synthesized `fuel:1, hull:1` bare
+    // floats while the domain state carried no top-level `metrics`, so ground
+    // was empty. The old early-return let those bare floats reach the
+    // transition/episode records instead of a percent. Every consumer must see
+    // the "100%" style — including when the ONLY metrics are the model's own.
+    const orient = orientFixture({ situationType: "docked", fuel: 1, hull: 1 })
+    const out = applyGroundTruthMetrics(orient, {})
+    expect(out.metrics.fuel).toBe("100%")
+    expect(out.metrics.hull).toBe("100%")
+    expect(out.metrics.situationType).toBe("docked")
+  })
+  it("normalizes synthesis-only ratio keys the ground snapshot does not carry", () => {
+    // ground has no `shield`; the model's bare 0.5 must still render as percent.
+    const orient = orientFixture({ shield: 0.5 })
+    const out = applyGroundTruthMetrics(orient, extractDomainMetrics(summaryJsonFixture))
+    expect(out.metrics.shield).toBe("50%")
   })
 })
 
@@ -654,5 +679,100 @@ describe("renderDomainStateForPrompt (D2)", () => {
   })
   it("falls back to the raw string on a parse miss", () => {
     expect(renderDomainStateForPrompt("  raw non-json  ")).toBe("raw non-json")
+  })
+})
+
+// ── Mechanical event dedup (Task 1) ──────────────────────────────────────────
+
+// The loop's event text shape: a "type: <type>" first line + the raw JSON.
+const evText = (type: string, payload: Record<string, unknown>): string =>
+  `type: ${type}\n${JSON.stringify({ type, payload })}`
+
+describe("eventFingerprint", () => {
+  it("keys same-station observation_updates identically despite different transient deltas + tick", () => {
+    // The run-3 flood: same station announced ~35× while nearby-player deltas
+    // and the frame `tick` churn every frame. Salient scalar identity
+    // (poi_id/system_id) collapses them; arrays + volatile tick are dropped.
+    const a = evText("observation_update", {
+      poi_id: "first_step_memorial_station",
+      system_id: "first_step",
+      tick: 1274554,
+      system_changed: [{ player_id: "aaa" }],
+      unknown_signature: false,
+    })
+    const b = evText("observation_update", {
+      poi_id: "first_step_memorial_station",
+      system_id: "first_step",
+      tick: 1274999,
+      system_changed: [{ player_id: "bbb" }, { player_id: "ccc" }],
+      unknown_signature: false,
+    })
+    expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
+    expect(eventFingerprint(a).type).toBe("observation_update")
+  })
+  it("distinguishes a genuinely different station (changed salient payload)", () => {
+    const a = evText("observation_update", { poi_id: "station_a", system_id: "s1" })
+    const b = evText("observation_update", { poi_id: "station_b", system_id: "s1" })
+    expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
+    expect(eventFingerprint(a).type).toBe(eventFingerprint(b).type) // same family
+  })
+  it("falls back to exact-text keying on an unparseable payload", () => {
+    expect(eventFingerprint("type: raw\nnot json").full).toBe(eventFingerprint("type: raw\nnot json").full)
+    expect(eventFingerprint("type: raw\nnot json").full).not.toBe(eventFingerprint("type: raw\nother").full)
+  })
+})
+
+describe("isChatEventType", () => {
+  it("matches chat / message families, not others", () => {
+    expect(isChatEventType("chat")).toBe(true)
+    expect(isChatEventType("chat_message")).toBe(true)
+    expect(isChatEventType("player_message")).toBe(true)
+    expect(isChatEventType("observation_update")).toBe(false)
+    expect(isChatEventType("combat")).toBe(false)
+  })
+})
+
+describe("countRecentFingerprints (sliding window)", () => {
+  const fp = { type: "observation_update", full: "observation_update poi_id=x" }
+  it("counts exact + type-family occurrences within the window", () => {
+    const recent = [
+      { full: "observation_update poi_id=x", type: "observation_update", tick: 5 },
+      { full: "observation_update poi_id=y", type: "observation_update", tick: 6 }, // same type, different payload
+      { full: "chat abc", type: "chat", tick: 7 },
+    ]
+    const { exactCount, typeCount } = countRecentFingerprints(recent, fp, 8, DEDUP_WINDOW_TICKS)
+    expect(exactCount).toBe(1)
+    expect(typeCount).toBe(2)
+  })
+  it("excludes entries older than the window", () => {
+    const recent = [{ full: "observation_update poi_id=x", type: "observation_update", tick: 1 }]
+    const { exactCount, typeCount } = countRecentFingerprints(recent, fp, 1 + DEDUP_WINDOW_TICKS + 1, DEDUP_WINDOW_TICKS)
+    expect(exactCount).toBe(0)
+    expect(typeCount).toBe(0)
+  })
+})
+
+describe("summarizeEventText (Task 4a)", () => {
+  it("renders a compact `type: <first ~80 chars>` label", () => {
+    const s = summarizeEventText(evText("combat", { attacker: "pirate", damage: 12 }))
+    expect(s.startsWith("combat: ")).toBe(true)
+    expect(s.length).toBeLessThanOrEqual("combat: ".length + 81)
+  })
+  it("returns '' for a null event (no dominant)", () => {
+    expect(summarizeEventText(null)).toBe("")
+  })
+})
+
+describe("planTitleFromHeadline (Task 3)", () => {
+  it("prefixes the orient headline with '(assessment) '", () => {
+    expect(planTitleFromHeadline("Drifted to isolated Horizon system")).toBe(
+      "(assessment) Drifted to isolated Horizon system",
+    )
+  })
+  it("is idempotent (never double-prefixes)", () => {
+    expect(planTitleFromHeadline("(assessment) already tagged")).toBe("(assessment) already tagged")
+  })
+  it("tolerates an empty headline", () => {
+    expect(planTitleFromHeadline("   ")).toBe("(assessment)")
   })
 })

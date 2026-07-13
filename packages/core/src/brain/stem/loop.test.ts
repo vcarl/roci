@@ -1631,15 +1631,17 @@ describe("runActivation (conscious-session executor)", () => {
       const result = await Effect.runPromise(program)
       expect(result._tag).toBe("Completed")
 
-      // Store: headline todo (orient headline) + one child per plan step.
+      // Store: headline todo (orient headline, "(assessment) "-prefixed per
+      // Task 3 so a confabulated narrative can't masquerade as a plan) + one
+      // child per plan step.
       const wm = parseWmFile(fs.readFileSync(path.join(charDir, "wm.json"), "utf8"))
-      expect(wm.todos[0]).toMatchObject({ id: "t1", text: "act now", parent: null })
+      expect(wm.todos[0]).toMatchObject({ id: "t1", text: "(assessment) act now", parent: null })
       expect(wm.todos[1]).toMatchObject({ id: "t2", text: "act: do the thing", parent: "t1" })
       // Evaluate marked the step done; the (single-step) plan closed → headline done too.
       expect(wm.todos[1].state).toBe("done")
       expect(wm.todos[0].state).toBe("done")
       // WM.md was re-rendered by the harness mutations.
-      expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).toContain("- [x] t1 act now")
+      expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).toContain("- [x] t1 (assessment) act now")
 
       // Episodes: seeding recorded as a type:"wm" record; done deltas on the step-end.
       const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
@@ -2737,11 +2739,16 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
           // turn 1 enqueues steer-evt #1 and marks the session open (anchors the
           // deterministic bound below); the FIRST steer turn enqueues steer-evt #2.
           if (!resume) {
-            Queue.unsafeOffer(events, { type: "steer-evt" })
+            // Distinct payloads (n:1 vs n:2) so the two steer events model two
+            // GENUINELY distinct salient occurrences — the mechanical dedup (Task
+            // 1) would collapse byte-identical repeats to discard@0, which is not
+            // what this cadence-bypass test exercises. Both still observe as STEER
+            // (the branch keys on the "steer-evt" type substring).
+            Queue.unsafeOffer(events, { type: "steer-evt", n: 1 })
             sessionOpened.value = true
           } else {
             resumeCount++
-            if (resumeCount === 1) Queue.unsafeOffer(events, { type: "steer-evt" })
+            if (resumeCount === 1) Queue.unsafeOffer(events, { type: "steer-evt", n: 2 })
           }
           return { result: { output: "working", timedOut: false, durationMs: 1 }, sessionId: "ses_n2" }
         },

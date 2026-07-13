@@ -70,13 +70,17 @@ export interface HindbrainEscalation {
   readonly escalate: boolean
   /** The highest-weight event's appraisal — drives the tick mood. null when no events. */
   readonly dominant: ObserveResult | null
+  /** Raw text of the highest-weight (dominant) event — so the tick's appraisal
+   *  behavior event can carry a short human-readable summary without the reduce
+   *  re-mining the raw exchanges (§ QA visibility). null when no events. */
+  readonly dominantEvent: string | null
   /** Raw text of every non-discard event, for `accumulatedEvents`. */
   readonly accumulated: ReadonlyArray<string>
 }
 
 /** A well-formed, non-escalating escalation — the every-tick default and the empty result. */
 export function emptyEscalation(): HindbrainEscalation {
-  return { rung: "none", maxWeight: 0, escalate: false, dominant: null, accumulated: [] }
+  return { rung: "none", maxWeight: 0, escalate: false, dominant: null, dominantEvent: null, accumulated: [] }
 }
 
 const DISPOSITIONS: ReadonlySet<Disposition> = new Set(["discard", "accumulate", "escalate"])
@@ -159,6 +163,7 @@ export function appraiseTick(
   let rung: EscalationRung = "none"
   let maxWeight = 0
   let dominant: ObserveResult | null = null
+  let dominantEvent: string | null = null
   const accumulated: string[] = []
 
   for (const { event, observe } of results) {
@@ -168,6 +173,7 @@ export function appraiseTick(
     if (dominant === null || w > maxWeight) {
       maxWeight = w
       dominant = observe
+      dominantEvent = event
     }
     if (observe.disposition !== "discard") accumulated.push(event)
   }
@@ -177,8 +183,146 @@ export function appraiseTick(
     maxWeight,
     escalate: RUNG_RANK[rung] >= RUNG_RANK.steer,
     dominant,
+    dominantEvent,
     accumulated,
   }
+}
+
+/**
+ * A compact one-line summary of a raw event's text for the appraisal behavior
+ * event (QA visibility). The event text is the loop's `type: <type>\n<json>`
+ * shape; this pulls the type and the first ~80 chars of the payload so
+ * distribution QA reads a legible label off the behavior stream without mining
+ * the raw observe exchanges. Pure; tolerant of any shape.
+ */
+export function summarizeEventText(text: string | null): string {
+  if (!text) return ""
+  const fp = eventFingerprint(text)
+  const nl = text.indexOf("\n")
+  const payload = (nl >= 0 ? text.slice(nl + 1) : text).replace(/\s+/g, " ").trim()
+  const head = payload.length > 80 ? `${payload.slice(0, 80)}…` : payload
+  return head ? `${fp.type}: ${head}` : fp.type
+}
+
+// ── Mechanical event dedup (upstream of the hindbrain) ───────────────────────
+
+/**
+ * Sliding-window size (in ticks) for the per-event dedup fingerprint history.
+ * Run-3 appraised the same "New station … in-system" observation ~35× at
+ * w=2/accumulate — flooding accumulatedEvents/WM and burning 2B inference on a
+ * stimulus the agent had already habituated to. A ~40-tick window (≈ the forced
+ * orient cadence × several) is long enough to swallow a burst of near-identical
+ * frames yet short enough that a genuinely recurring condition re-surfaces once
+ * the window rolls past.
+ */
+export const DEDUP_WINDOW_TICKS = 40
+
+/**
+ * Payload keys whose value is inherently volatile (a monotonic clock / sequence
+ * / staleness age) and so must NOT distinguish two otherwise-identical events —
+ * an `observation_update` for the same station differs only by `tick` frame to
+ * frame. Stripped from the fingerprint so those near-identical frames collapse.
+ */
+const VOLATILE_FINGERPRINT_KEYS: ReadonlySet<string> = new Set([
+  "tick",
+  "timestamp",
+  "ts",
+  "time",
+  "server_time",
+  "servertime",
+  "seq",
+  "sequence",
+  "stateagesec",
+  "age",
+  "latency",
+  "latencyms",
+  "now",
+])
+
+/**
+ * The dedup fingerprint of one event: its coarse `type` (for the seen-N-times
+ * family count) and a finer `full` key (type + its salient scalar payload) for
+ * the exact/near-identical repeat test.
+ *
+ * "Salient" = the top-level SCALAR identity fields of the event payload
+ * (`poi_id`, `system_id`, `unknown_signature`, …), sorted and joined. Nested
+ * objects/ARRAYS are dropped — they carry the transient churn (the shifting
+ * `system_changed`/`nearby_changed` player lists) that made two "same station"
+ * frames look distinct — and volatile clock/seq keys are stripped. So two
+ * `observation_update`s announcing the same station collapse to one `full` key
+ * even as their player deltas differ. Pure; never throws (an unparseable
+ * payload falls back to the trimmed raw text so exact repeats still dedup).
+ */
+export interface EventFingerprint {
+  readonly type: string
+  readonly full: string
+}
+
+export function eventFingerprint(text: string): EventFingerprint {
+  const nl = text.indexOf("\n")
+  const firstLine = (nl >= 0 ? text.slice(0, nl) : text).trim()
+  const typeMatch = /^type:\s*(.+)$/i.exec(firstLine)
+  const type = typeMatch ? typeMatch[1].trim() : "unknown"
+  const jsonPart = nl >= 0 ? text.slice(nl + 1).trim() : ""
+  let sig = ""
+  try {
+    const obj = JSON.parse(jsonPart)
+    const base = isPlainObject(obj) && isPlainObject(obj.payload) ? obj.payload : obj
+    if (isPlainObject(base)) {
+      const parts: string[] = []
+      for (const [k, v] of Object.entries(base)) {
+        if (k === "type") continue
+        if (VOLATILE_FINGERPRINT_KEYS.has(k.toLowerCase())) continue
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+          parts.push(`${k}=${String(v)}`)
+        }
+      }
+      parts.sort()
+      sig = parts.join("|")
+    } else {
+      sig = String(obj)
+    }
+  } catch {
+    // Unparseable payload → key on the exact trimmed text (exact repeats still dedup).
+    sig = jsonPart
+  }
+  return { type, full: `${type} ${sig}` }
+}
+
+/** True for chat / player-message event types — NEVER deduped-to-discard (owner
+ *  directive: chats always accumulate); they are annotated but always passed
+ *  through to the hindbrain. */
+export function isChatEventType(type: string): boolean {
+  return /chat|message/i.test(type)
+}
+
+/** One entry in the loop's sliding fingerprint history. */
+export interface DedupWindowEntry {
+  readonly full: string
+  readonly type: string
+  readonly tick: number
+}
+
+/**
+ * Count, within the `window`-tick sliding history, how many prior entries share
+ * this event's exact `full` fingerprint (`exactCount`) and how many share its
+ * coarse `type` family (`typeCount`). Pure — the loop owns the mutable history
+ * and the discard/annotate decision; this only reads it.
+ */
+export function countRecentFingerprints(
+  recent: ReadonlyArray<DedupWindowEntry>,
+  fp: EventFingerprint,
+  tick: number,
+  window: number,
+): { exactCount: number; typeCount: number } {
+  let exactCount = 0
+  let typeCount = 0
+  for (const e of recent) {
+    if (tick - e.tick > window) continue
+    if (e.type === fp.type) typeCount++
+    if (e.full === fp.full) exactCount++
+  }
+  return { exactCount, typeCount }
 }
 
 /** Force an orient when events have piled up for `orientInterval` ticks without one. */
@@ -336,6 +480,25 @@ export function formatSteerDirective(orient: OrientResult): string {
   return parts.join("\n")
 }
 
+/**
+ * The title for a plan's headline WM todo (spec §2). Sourced from the orient
+ * `headline` — but the orient headline is a narrative ASSESSMENT of the
+ * situation, not a plan directive, and a small forebrain routinely confabulates
+ * a stale narrative there (run-3: WM.md carried the plan title "t23 Drifted to
+ * isolated Horizon system…", a confabulated headline, over a correct child
+ * step). `DecideResult` carries no title-shaped field — only free-form
+ * `reasoning` and the per-step task/goal — so the headline IS the only concise
+ * title source at the seed seam. Prefix it "(assessment) " so a stale narrative
+ * can never masquerade in WM.md as an actionable plan the agent committed to.
+ * Pure; idempotent (never double-prefixes); tolerant of an empty headline.
+ */
+export function planTitleFromHeadline(headline: string): string {
+  const trimmed = headline.trim()
+  if (trimmed === "") return "(assessment)"
+  if (trimmed.startsWith("(assessment)")) return trimmed
+  return `(assessment) ${trimmed}`
+}
+
 /** The instructions handed to the conscious agent for one plan step. */
 export function formatStepTask(step: PlanStep, headline: string, skillBody?: string): string {
   const skillSection =
@@ -449,9 +612,15 @@ export function extractDomainMetrics(
  *  - Every key the ground-truth metrics provides WINS over the synthesis value
  *    (fuel/hull/situationType/inCombat/…), unit-normalized (N2).
  *  - Synthesis-only metric keys the snapshot does not carry are LEFT ALONE — the
- *    model may surface a derived signal the classifier doesn't.
- *  - An empty ground-truth set (parse miss / no metrics) returns the orient
- *    UNCHANGED — it never blanks real synthesis metrics.
+ *    model may surface a derived signal the classifier doesn't — but they are
+ *    STILL unit-normalized (N2): a run-3 orient synthesized its OWN `fuel:1,
+ *    hull:1` bare floats while the domain state carried no top-level `metrics`,
+ *    so ground was empty; the old early-return left those floats un-normalized
+ *    and `fuel:1` (meaning full) reached the transition/episode records instead
+ *    of `"100%"`. Normalizing the FINAL merged object (not just the ground
+ *    subset) fixes every consumer — tier records included — at this one seam.
+ *  - An empty ground-truth set (parse miss / no metrics) still normalizes the
+ *    synthesis metrics; it never blanks or invents a value.
  *  - JUDGMENT fields (headline, sections, whatChanged, emotionalState,
  *    confidence) are untouched — only `metrics` is rewritten.
  */
@@ -459,8 +628,9 @@ export function applyGroundTruthMetrics(
   orient: OrientResult,
   ground: Record<string, string | number | boolean>,
 ): OrientResult {
-  if (Object.keys(ground).length === 0) return orient
-  return { ...orient, metrics: { ...orient.metrics, ...normalizeMetricUnits(ground) } }
+  const merged =
+    Object.keys(ground).length === 0 ? orient.metrics : { ...orient.metrics, ...ground }
+  return { ...orient, metrics: normalizeMetricUnits(merged) }
 }
 
 /**

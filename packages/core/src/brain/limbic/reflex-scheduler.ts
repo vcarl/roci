@@ -14,6 +14,10 @@ import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 export interface ReflexAppraisal {
   readonly event: string
   readonly observe: ObserveResult
+  /** True when this appraisal is the degraded fallback of a FAILED reflex (a
+   *  hindbrain endpoint error that silently fell back to accumulate). The loop
+   *  surfaces it on the tick's appraisal behavior event (`degraded:true`). */
+  readonly degraded?: boolean
 }
 
 /**
@@ -64,6 +68,22 @@ export interface ReflexScheduler {
  * event text still accumulates for the forebrain but earns no escalation —
  * a flaky reflex never freezes NOR falsely wakes the conductor.
  */
+/** English ordinal suffix for a positive integer (1→"st", 2→"nd", 20→"th"). */
+function ordinal(n: number): string {
+  const rem100 = n % 100
+  if (rem100 >= 11 && rem100 <= 13) return "th"
+  switch (n % 10) {
+    case 1:
+      return "st"
+    case 2:
+      return "nd"
+    case 3:
+      return "rd"
+    default:
+      return "th"
+  }
+}
+
 const REFLEX_ERROR_APPRAISAL: ObserveResult = {
   disposition: "accumulate",
   emotionalWeight: "😐",
@@ -81,9 +101,16 @@ const REFLEX_ERROR_APPRAISAL: ObserveResult = {
 export function makeReflexScheduler(config: ActivationRunnerConfig, containerId: string): ReflexScheduler {
   const char = config.char
   let inflight: Array<Fiber.RuntimeFiber<ReflexAppraisal, never>> = []
+  // Per-session hindbrain-reflex failure telemetry (Task 4b). Run-3 had 20/75
+  // (27%) "endpoint unreachable" reflexes silently degrade to accumulate. We
+  // don't retry/respawn tonight — just make the degrade VISIBLE: a running
+  // count/rate at the degrade site plus a `degraded:true` flag on the appraisal.
+  let submitted = 0
+  let failures = 0
 
   const submit = (event: string, waitState: WaitState | null) =>
     Effect.gen(function* () {
+      submitted++
       // The whole reflex — appraise + its memory write — runs on the forked
       // fiber, so nothing about it touches the conductor's hot path. Never-fail
       // (catchAll ⇒ error channel `never`), mirroring the loop's deliberation
@@ -96,12 +123,19 @@ export function makeReflexScheduler(config: ActivationRunnerConfig, containerId:
         }
         return { event, observe } satisfies ReflexAppraisal
       }).pipe(
-        Effect.catchAll((e) =>
-          logToConsole(char.name, "cortex", `hindbrain reflex failed; degraded to accumulate: ${e}`, "warn").pipe(
+        Effect.catchAll((e) => {
+          failures++
+          const rate = submitted > 0 ? Math.round((failures / submitted) * 100) : 0
+          return logToConsole(
+            char.name,
+            "cortex",
+            `hindbrain endpoint failure ${failures}${ordinal(failures)} this session (${rate}%); reflex degraded to accumulate: ${e}`,
+            "warn",
+          ).pipe(
             Effect.catchAll(() => Effect.void),
-            Effect.as({ event, observe: REFLEX_ERROR_APPRAISAL } satisfies ReflexAppraisal),
-          ),
-        ),
+            Effect.as({ event, observe: REFLEX_ERROR_APPRAISAL, degraded: true } satisfies ReflexAppraisal),
+          )
+        }),
       )
       const fiber = yield* Effect.fork(work)
       inflight.push(fiber)

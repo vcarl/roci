@@ -33,7 +33,20 @@ export type Behavior =
   | { type: "reflection"; stage: "dream" | "promote" | "retrospect" | "synthesisBootstrap" | "macro"; status: "start" | "done"; counts?: Record<string, number> }
   // ── Cognition (Wave 2) ──────────────────────────────────────
   | { type: "tier_call"; tier: "hindbrain" | "forebrain" | "conscious"; latencyMs: number; outcome: "ok" | "error" | "timeout"; attempt?: number }
-  | { type: "appraisal"; disposition: string; weight?: number; escalated: boolean }
+  | {
+      type: "appraisal"
+      disposition: string
+      weight?: number
+      escalated: boolean
+      /** The dominant event's model reason — so distribution QA reads the "why"
+       *  off the behavior stream without mining the raw observe exchanges. */
+      reason?: string
+      /** A compact `type: <first ~80 chars>` summary of the dominant event. */
+      summary?: string
+      /** True when at least one of this tick's reflexes degraded on a hindbrain
+       *  endpoint failure (silently fell back to accumulate). */
+      degraded?: boolean
+    }
   | { type: "orient"; headline: string }
   | { type: "decision"; disposition: "plan" | "wait" | "terminate" }
   | { type: "step"; phase: "start" | "done" | "salvage"; turn?: number; task?: string }
