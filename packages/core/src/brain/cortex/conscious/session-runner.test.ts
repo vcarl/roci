@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest"
-import { runOpenCodeSessionTurn, firstSessionId, sessionNotFoundMessage } from "./session-runner.js"
+import { Effect } from "effect"
+import { NodeContext } from "@effect/platform-node"
+import {
+  runOpenCodeSessionTurn,
+  firstSessionId,
+  sessionNotFoundMessage,
+  killWedgedInContainerTurn,
+  MAX_SILENCE_ATTEMPTS,
+} from "./session-runner.js"
 import { buildExecArgs } from "#brain/stem/transport/process-runner.js"
 import { openCodeBodyEnv } from "#brain/stem/transport/payload.js"
 import type { TurnConfig } from "#brain/stem/transport/types.js"
@@ -40,6 +48,24 @@ describe("runOpenCodeSessionTurn", () => {
     const flags = args.filter((_, i) => args[i - 1] === "-e")
     expect(flags).toContain("OPENCODE_DISABLE_MODELS_FETCH=1")
     expect(flags).toContain("OPENCODE_DISABLE_AUTOUPDATE=1")
+  })
+})
+
+describe("silence recovery", () => {
+  it("retries exactly once before aborting (attempt cap = 2)", () => {
+    expect(MAX_SILENCE_ATTEMPTS).toBe(2)
+  })
+
+  it("killWedgedInContainerTurn is best-effort — never fails even when docker errors", async () => {
+    // No such container (and docker may be absent): the kill either exits non-zero
+    // or fails to spawn. Either way the effect swallows it and returns void, so a
+    // reap failure degrades to a plain retry/abort rather than crashing the turn.
+    await Effect.runPromise(
+      Effect.provide(
+        killWedgedInContainerTurn("no-such-container-xyz", "ada"),
+        NodeContext.layer,
+      ),
+    )
   })
 })
 

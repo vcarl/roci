@@ -26,6 +26,14 @@ import {
   summarizeEventText,
   planTitleFromHeadline,
   DEDUP_WINDOW_TICKS,
+  isControlPlaneEventType,
+  clampControlPlaneAppraisal,
+  hasCombatEvidence,
+  downgradeUnsupportedThreat,
+  guardAppraisal,
+  scrubVolatileMetrics,
+  CONTROL_PLANE_MAX_WEIGHT,
+  UNSUPPORTED_THREAT_WEIGHT,
 } from "./state.js"
 import type { DecideResult, ObserveResult, OrientResult } from "../../skills/types.js"
 
@@ -906,5 +914,175 @@ describe("planTitleFromHeadline (Task 3)", () => {
   })
   it("tolerates an empty headline", () => {
     expect(planTitleFromHeadline("   ")).toBe("(assessment)")
+  })
+  it("scrubs volatile ship metrics from the persisted assessment line (Task 2)", () => {
+    expect(planTitleFromHeadline("Docked at First Step with full fuel and hull, planning trade run")).toBe(
+      "(assessment) Docked at First Step, planning trade run",
+    )
+  })
+})
+
+// Task 1 — control-plane clamp + unsupported-threat downgrade.
+const baseObserve = (over: Partial<ObserveResult> = {}): ObserveResult => ({
+  disposition: "accumulate",
+  emotionalWeight: "😐",
+  drive: null,
+  weight: 0,
+  interrupt: false,
+  reason: "",
+  ...over,
+})
+
+describe("isControlPlaneEventType", () => {
+  it("recognizes lifecycle/handshake frames (case-insensitive)", () => {
+    for (const t of ["welcome", "logged_in", "LOGGED_IN", "registered", "ok", "result", "action_result", "reconnected"]) {
+      expect(isControlPlaneEventType(t)).toBe(true)
+    }
+  })
+  it("excludes game-state and error frames", () => {
+    for (const t of ["full_state", "combat", "observation_update", "chat", "error", "action_error", "api_error"]) {
+      expect(isControlPlaneEventType(t)).toBe(false)
+    }
+  })
+})
+
+describe("clampControlPlaneAppraisal (Task 1 — control-plane cap)", () => {
+  it("clamps a hallucinated w=4 steer on a logged_in frame to a non-escalating accumulate", () => {
+    // The overnight-run defect: 2B appraised the logged_in handshake as a threat.
+    const event = 'type: logged_in\n{"player":{"pos":"first_step"},"ship":{"hull":100,"max_hull":100}}'
+    const { observe, clamped } = clampControlPlaneAppraisal(
+      event,
+      baseObserve({ disposition: "escalate", drive: "safety", weight: 4, interrupt: false, reason: "Hull damage taken — safety, must react." }),
+    )
+    expect(clamped).toBe(true)
+    expect(observe.weight).toBeLessThanOrEqual(CONTROL_PLANE_MAX_WEIGHT)
+    expect(observe.disposition).toBe("accumulate")
+    expect(observe.interrupt).toBe(false)
+  })
+  it("also strips a fabricated interrupt on a welcome frame", () => {
+    const { observe, clamped } = clampControlPlaneAppraisal(
+      'type: welcome\n{"tick_rate":30}',
+      baseObserve({ weight: 5, disposition: "escalate", interrupt: true }),
+    )
+    expect(clamped).toBe(true)
+    expect(observe.weight).toBeLessThanOrEqual(CONTROL_PLANE_MAX_WEIGHT)
+    expect(observe.interrupt).toBe(false)
+  })
+  it("leaves a well-behaved low-weight control-plane appraisal untouched (no spurious clamp)", () => {
+    const orig = baseObserve({ weight: 1, disposition: "accumulate" })
+    const { observe, clamped } = clampControlPlaneAppraisal('type: logged_in\n{}', orig)
+    expect(clamped).toBe(false)
+    expect(observe).toBe(orig)
+  })
+  it("does not touch a non-control-plane frame", () => {
+    const orig = baseObserve({ weight: 5, disposition: "escalate", interrupt: true })
+    const { clamped } = clampControlPlaneAppraisal('type: combat\n{"hull":-30}', orig)
+    expect(clamped).toBe(false)
+  })
+})
+
+describe("hasCombatEvidence (Task 1)", () => {
+  it("is true for a combat frame type", () => {
+    expect(hasCombatEvidence('type: combat\n{"event":"weapons_fire","target":"you","hull":-30}')).toBe(true)
+    expect(hasCombatEvidence('type: battle_update\n{}')).toBe(true)
+    expect(hasCombatEvidence('type: player_died\n{}')).toBe(true)
+  })
+  it("is true when a payload carries a negative hull/shield delta", () => {
+    expect(hasCombatEvidence('type: full_state\n{"ship":{"hull":-12}}')).toBe(true)
+  })
+  it("is false for a full-hull lifecycle/state frame (no delta)", () => {
+    expect(hasCombatEvidence('type: logged_in\n{"ship":{"hull":100,"max_hull":100}}')).toBe(false)
+    expect(hasCombatEvidence('type: full_state\n{"ship":{"hull":100,"shield":50}}')).toBe(false)
+  })
+})
+
+describe("downgradeUnsupportedThreat (Task 1)", () => {
+  it("downgrades a safety w=5 escalation with no supporting field", () => {
+    const event = 'type: full_state\n{"ship":{"hull":100,"max_hull":100},"docked":true}'
+    const { observe, downgraded } = downgradeUnsupportedThreat(
+      event,
+      baseObserve({ drive: "safety", weight: 5, disposition: "escalate", interrupt: false, reason: "Taking hull damage now — under attack." }),
+    )
+    expect(downgraded).toBe(true)
+    expect(observe.weight).toBe(UNSUPPORTED_THREAT_WEIGHT)
+    expect(observe.disposition).toBe("accumulate")
+    expect(observe.interrupt).toBe(false)
+  })
+  it("leaves a genuine combat escalation (hull delta) untouched", () => {
+    const event = 'type: combat\n{"event":"weapons_fire","target":"you","hull":-30}'
+    const orig = baseObserve({ drive: "safety", weight: 5, disposition: "escalate", interrupt: false, reason: "Taking hull fire now — under attack, must react." })
+    const { observe, downgraded } = downgradeUnsupportedThreat(event, orig)
+    expect(downgraded).toBe(false)
+    expect(observe).toBe(orig)
+  })
+  it("NEVER downgrades an interrupt:true appraisal, even with no recognizable combat evidence (protects the hard-interrupt path)", () => {
+    // A synthetic/unfamiliar attack frame the payload heuristic can't parse — the
+    // model's interrupt flag is authoritative; silencing it would suppress a real attack.
+    const event = 'type: attack-now\n{"from":"raider"}'
+    const orig = baseObserve({ drive: "safety", weight: 5, disposition: "escalate", interrupt: true, reason: "under fire right now" })
+    const { observe, downgraded } = downgradeUnsupportedThreat(event, orig)
+    expect(downgraded).toBe(false)
+    expect(observe).toBe(orig)
+  })
+  it("does not touch a non-safety or non-threat-claim escalation", () => {
+    // Sustenance escalation (fuel/quota) is a legitimate w=4 that must survive.
+    const event = 'type: api_error\n{"status":429,"message":"quota exceeded"}'
+    const { downgraded } = downgradeUnsupportedThreat(
+      event,
+      baseObserve({ drive: "sustenance", weight: 4, disposition: "escalate", reason: "Quota exhausted — pressing resource block." }),
+    )
+    expect(downgraded).toBe(false)
+  })
+})
+
+describe("guardAppraisal (Task 1 — combined)", () => {
+  it("control-plane frame with hallucinated threat → clamped, not double-corrected", () => {
+    const event = 'type: logged_in\n{"ship":{"hull":100,"max_hull":100}}'
+    const r = guardAppraisal(
+      event,
+      baseObserve({ drive: "safety", weight: 4, disposition: "escalate", reason: "Hull damage taken — safety, must react." }),
+    )
+    expect(r.clampedControlPlane).toBe(true)
+    expect(r.downgradedThreat).toBe(false)
+    expect(r.observe.weight).toBeLessThanOrEqual(CONTROL_PLANE_MAX_WEIGHT)
+    expect(r.observe.disposition).toBe("accumulate")
+  })
+  it("genuine combat event → untouched by either guard", () => {
+    const event = 'type: combat\n{"event":"weapons_fire","target":"you","hull":-30}'
+    const orig = baseObserve({ drive: "safety", weight: 5, disposition: "escalate", interrupt: true, reason: "Taking hull fire now." })
+    const r = guardAppraisal(event, orig)
+    expect(r.clampedControlPlane).toBe(false)
+    expect(r.downgradedThreat).toBe(false)
+    expect(r.observe).toBe(orig)
+  })
+  it("safety w=5, no supporting field, non-control-plane frame → downgraded", () => {
+    const event = 'type: full_state\n{"ship":{"hull":100}}'
+    const r = guardAppraisal(
+      event,
+      baseObserve({ drive: "safety", weight: 5, disposition: "escalate", interrupt: false, reason: "under attack, hull breach" }),
+    )
+    expect(r.clampedControlPlane).toBe(false)
+    expect(r.downgradedThreat).toBe(true)
+    expect(r.observe.weight).toBe(UNSUPPORTED_THREAT_WEIGHT)
+  })
+})
+
+describe("scrubVolatileMetrics (Task 2)", () => {
+  it("removes 'full fuel and hull'", () => {
+    expect(scrubVolatileMetrics("full fuel and hull")).toBe("")
+    expect(scrubVolatileMetrics("Docked with full fuel and hull")).toBe("Docked")
+  })
+  it("removes a 'fuel 71/100' numeric metric clause", () => {
+    expect(scrubVolatileMetrics("fuel 71/100")).toBe("")
+    expect(scrubVolatileMetrics("Idle at station, fuel 71/100, hull 100/100")).toBe("Idle at station")
+  })
+  it("removes '100% hull' / bare-percent forms", () => {
+    expect(scrubVolatileMetrics("100% hull")).toBe("")
+    expect(scrubVolatileMetrics("hull at 100%")).toBe("")
+  })
+  it("keeps goal/location content with no volatile metrics", () => {
+    expect(scrubVolatileMetrics("install CPU Co-Processor at First Step")).toBe(
+      "install CPU Co-Processor at First Step",
+    )
   })
 })

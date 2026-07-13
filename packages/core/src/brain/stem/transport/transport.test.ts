@@ -8,6 +8,9 @@ import * as path from "node:path"
 import {
   runTransport,
   runHeartbeat,
+  runSilenceWatch,
+  bodySilenceTimeoutMs,
+  DEFAULT_BODY_SILENCE_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   parseStreamJson,
   isAuthError,
@@ -99,6 +102,136 @@ describe("runHeartbeat", () => {
 
   it("threads the role through the logging callback (default interval is 30s)", () => {
     expect(HEARTBEAT_INTERVAL_MS).toBe(30_000)
+  })
+})
+
+describe("runSilenceWatch", () => {
+  // Threshold is a whole multiple of the poll cadence so the fire instant lands on
+  // a poll boundary — the deterministic virtual-time schedule.
+  const THRESHOLD = 300_000
+  const POLL = 30_000
+
+  it("resolves once stdout has been silent for a full threshold", async () => {
+    const program = Effect.gen(function* () {
+      const lastActivityAt = yield* Ref.make(yield* Clock.currentTimeMillis)
+      const fiber = yield* Effect.fork(runSilenceWatch(lastActivityAt, THRESHOLD, POLL))
+
+      // One poll short of the threshold: not resolved yet.
+      yield* TestClock.adjust(`${THRESHOLD - POLL} millis`)
+      expect(yield* Fiber.poll(fiber).pipe(Effect.map((o) => o._tag))).toBe("None")
+
+      // Cross the boundary on the next poll: it fires with the silent-ms.
+      yield* TestClock.adjust(`${POLL} millis`)
+      const silentMs = yield* Fiber.join(fiber)
+      expect(silentMs).toBeGreaterThanOrEqual(THRESHOLD)
+    }).pipe(Effect.provide(TestContext.TestContext))
+    await Effect.runPromise(program)
+  })
+
+  it("does NOT fire while output keeps arriving (each poll sees fresh activity)", async () => {
+    const program = Effect.gen(function* () {
+      const lastActivityAt = yield* Ref.make(yield* Clock.currentTimeMillis)
+      const fiber = yield* Effect.fork(runSilenceWatch(lastActivityAt, THRESHOLD, POLL))
+
+      // Emit output every poll (gap = POLL << THRESHOLD) for many windows.
+      for (let i = 0; i < 20; i++) {
+        yield* TestClock.adjust(`${POLL} millis`)
+        yield* Ref.set(lastActivityAt, yield* Clock.currentTimeMillis)
+      }
+      expect(yield* Fiber.poll(fiber).pipe(Effect.map((o) => o._tag))).toBe("None")
+
+      // Then go quiet for a full threshold: now it fires.
+      yield* TestClock.adjust(`${THRESHOLD} millis`)
+      const silentMs = yield* Fiber.join(fiber)
+      expect(silentMs).toBeGreaterThanOrEqual(THRESHOLD)
+    }).pipe(Effect.provide(TestContext.TestContext))
+    await Effect.runPromise(program)
+  })
+
+  it("resets when output resumes just before the threshold", async () => {
+    const program = Effect.gen(function* () {
+      const lastActivityAt = yield* Ref.make(yield* Clock.currentTimeMillis)
+      const fiber = yield* Effect.fork(runSilenceWatch(lastActivityAt, THRESHOLD, POLL))
+
+      // Silent to one poll before the threshold, then a line lands: the clock resets.
+      yield* TestClock.adjust(`${THRESHOLD - POLL} millis`)
+      yield* Ref.set(lastActivityAt, yield* Clock.currentTimeMillis)
+      // Another near-threshold silence — still not fired (the reset bought a full window).
+      yield* TestClock.adjust(`${THRESHOLD - POLL} millis`)
+      expect(yield* Fiber.poll(fiber).pipe(Effect.map((o) => o._tag))).toBe("None")
+
+      // Cross the reset window's boundary: fires.
+      yield* TestClock.adjust(`${POLL} millis`)
+      const silentMs = yield* Fiber.join(fiber)
+      expect(silentMs).toBeGreaterThanOrEqual(THRESHOLD)
+    }).pipe(Effect.provide(TestContext.TestContext))
+    await Effect.runPromise(program)
+  })
+})
+
+describe("bodySilenceTimeoutMs", () => {
+  const KEY = "ROCI_BODY_SILENCE_TIMEOUT_MS"
+  const saved = process.env[KEY]
+  afterEach(() => {
+    if (saved === undefined) delete process.env[KEY]
+    else process.env[KEY] = saved
+  })
+
+  it("defaults when unset, honors a positive override, rejects junk", () => {
+    delete process.env[KEY]
+    expect(bodySilenceTimeoutMs()).toBe(DEFAULT_BODY_SILENCE_TIMEOUT_MS)
+    process.env[KEY] = "120000"
+    expect(bodySilenceTimeoutMs()).toBe(120_000)
+    process.env[KEY] = "0"
+    expect(bodySilenceTimeoutMs()).toBe(DEFAULT_BODY_SILENCE_TIMEOUT_MS)
+    process.env[KEY] = "nonsense"
+    expect(bodySilenceTimeoutMs()).toBe(DEFAULT_BODY_SILENCE_TIMEOUT_MS)
+  })
+})
+
+describe("runTransport silence/hang", () => {
+  it("aborts a silent process as hung when silenceTimeoutMs is set", async () => {
+    // A process that stays silent then would run long; short silence budget trips it.
+    const command = Command.make("bash", "-c", "sleep 5")
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTransport({
+          command,
+          normalize: normalizeOpenCode,
+          runtimeTag: "opencode",
+          char,
+          role: "body",
+          timeoutMs: 60_000, // wall clock far away — silence must win
+          silenceTimeoutMs: 80,
+          heartbeatMs: 1000,
+        }),
+        deps,
+      ),
+    )
+    expect(result.hung).toBe(true)
+    expect(result.timedOut).toBe(false)
+    expect(result.silentMs).toBeGreaterThanOrEqual(80)
+  })
+
+  it("does NOT flag hung when the process emits output and exits within the silence budget", async () => {
+    const line = '{"type":"text","part":{"text":"hi"}}'
+    const command = Command.make("bash", "-c", `printf '%s\\n' '${line}'`)
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTransport({
+          command,
+          normalize: normalizeOpenCode,
+          runtimeTag: "opencode",
+          char,
+          role: "body",
+          timeoutMs: 5000,
+          silenceTimeoutMs: 2000,
+        }),
+        deps,
+      ),
+    )
+    expect(result.hung).toBe(false)
+    expect(result.output).toContain("hi")
   })
 })
 

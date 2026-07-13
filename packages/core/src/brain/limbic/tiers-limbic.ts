@@ -8,7 +8,7 @@ import { loadSkillSync } from "../../skills/loader.js"
 import { getCadenceGuidance } from "#brain/limbic/hypothalamus/cadence.js"
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
 import { TEMPLATE_DRIVES, parseDriveNames } from "#brain/limbic/hypothalamus/drives.js"
-import { appraise, applyGroundTruthMetrics, extractDomainMetrics } from "#brain/stem/state.js"
+import { appraise, applyGroundTruthMetrics, extractDomainMetrics, guardAppraisal } from "#brain/stem/state.js"
 import type { ObserveResult, OrientResult, WaitState } from "../../skills/types.js"
 import { parseOr, parseJsonSalvaging, isPlainObject } from "#brain/stem/parse.js"
 import { logToConsole, type CharacterLog } from "../../logging/log-writer.js"
@@ -51,8 +51,8 @@ export function runHindbrain(
   })
   const knownDrives = parseDriveNames(drives)
   return callTier(config, "hindbrain", "observe", prompt).pipe(
-    Effect.map((text) =>
-      appraise(
+    Effect.flatMap((text) => {
+      const raw = appraise(
         parseOr<Partial<ObserveResult>>(text, {
           disposition: "accumulate",
           emotionalWeight: "😐",
@@ -61,8 +61,30 @@ export function runHindbrain(
           reason: "parse failure — defaulting to accumulate",
         }),
         knownDrives,
-      ),
-    ),
+      )
+      // Post-model mechanical guards (Task 1): the 2B can't be prompt-guarded
+      // against fabricating a threat from a control-plane frame or inventing
+      // hull damage. Both guards only ever DOWNGRADE; when one fires we log it
+      // so the correction is visible on the behavior stream. A log failure must
+      // never crash the reflex, so each swallows its own error.
+      const { observe, clampedControlPlane, downgradedThreat } = guardAppraisal(event, raw)
+      if (!clampedControlPlane && !downgradedThreat) return Effect.succeed(observe)
+      const notes: string[] = []
+      if (clampedControlPlane) {
+        notes.push(
+          `appraisal clamped: control-plane event (was w=${raw.weight}/${raw.disposition}/int=${raw.interrupt}, reason "${raw.reason}")`,
+        )
+      }
+      if (downgradedThreat) {
+        notes.push(
+          `unsupported threat claim downgraded (was w=${raw.weight}/${raw.disposition}, reason "${raw.reason}"; payload has no combat evidence)`,
+        )
+      }
+      return logToConsole(config.char.name, "hindbrain", notes.join("; "), "warn").pipe(
+        Effect.catchAll(() => Effect.void),
+        Effect.as(observe),
+      )
+    }),
   )
 }
 

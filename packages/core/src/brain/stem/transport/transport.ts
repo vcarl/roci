@@ -15,6 +15,56 @@ import { appendToolEpisode, episodeContext, summarizeArgs } from "../../../loggi
 export const HEARTBEAT_INTERVAL_MS = 30_000
 
 /**
+ * Default stdout-silence threshold before a turn is treated as HUNG (wedged/stuck
+ * request that never returns — the conscious/opencode failure mode). Comfortably
+ * above the observed worst-case real conscious turn (~176s on this hardware) and
+ * far below the wall-clock backstop (60 min), so a genuinely-progressing turn is
+ * never touched while a stuck request is reaped in ~5 min instead of ~60. Only the
+ * silence-instrumented callers (the conscious session-runner) pass a threshold;
+ * brain/body claude turns leave it unset and keep their prior behavior.
+ */
+export const DEFAULT_BODY_SILENCE_TIMEOUT_MS = 300_000
+
+/**
+ * Effective body-silence threshold, overridable via `ROCI_BODY_SILENCE_TIMEOUT_MS`
+ * (whole ms). A missing/invalid/non-positive value falls back to the default.
+ */
+export function bodySilenceTimeoutMs(): number {
+  const raw = process.env.ROCI_BODY_SILENCE_TIMEOUT_MS
+  if (raw === undefined) return DEFAULT_BODY_SILENCE_TIMEOUT_MS
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_BODY_SILENCE_TIMEOUT_MS
+}
+
+/**
+ * Silence watchdog. Resolves with the whole-ms silence duration the first time
+ * stdout has been quiet (no `lastActivityAt` update) for at least `thresholdMs`.
+ * Unlike the heartbeat it fires ONCE and returns a value — the transport races it
+ * against process-exit and the wall-clock timeout, so a win means "treat as hung".
+ *
+ * Polls on a fixed `pollMs` cadence (default: every heartbeat interval, capped at
+ * the threshold) and checks `now - lastActivityAt`; any stdout line that reset
+ * `lastActivityAt` between polls keeps `silentMs` small so it never fires. A fixed
+ * cadence (not a shrinking sleep) means the poll schedule can't drift relative to
+ * activity resets. Detection latency is at most one `pollMs` past the threshold.
+ * Uses `Clock.currentTimeMillis` so a TestClock drives it deterministically.
+ */
+export const runSilenceWatch = (
+  lastActivityAt: Ref.Ref<number>,
+  thresholdMs: number,
+  pollMs: number = Math.min(thresholdMs, HEARTBEAT_INTERVAL_MS),
+): Effect.Effect<number> =>
+  Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(pollMs)
+      const now = yield* Clock.currentTimeMillis
+      const last = yield* Ref.get(lastActivityAt)
+      const silentMs = now - last
+      if (silentMs >= thresholdMs) return silentMs
+    }
+  })
+
+/**
  * Liveness heartbeat loop. Sleeps `intervalMs`, then checks how long it's been
  * since the last activity (recorded in `lastActivityAt` as an epoch-ms value);
  * if it's been silent for at least one full interval, invokes `onHeartbeat`
@@ -69,6 +119,13 @@ export interface TransportInput {
   captureFromRaw?: (raw: Record<string, unknown>) => string | null
   /** Optional override for the liveness heartbeat interval (default `HEARTBEAT_INTERVAL_MS`). */
   heartbeatMs?: number
+  /**
+   * When set, abort the turn as HUNG if stdout stays silent this long (whole ms).
+   * The conscious session-runner passes `bodySilenceTimeoutMs()`; brain/body claude
+   * turns leave it unset so their behavior is unchanged. On a hung abort the result
+   * carries `hung: true` + `silentMs`; the process is interrupted like a timeout.
+   */
+  silenceTimeoutMs?: number
 }
 
 /**
@@ -181,27 +238,59 @@ export const runTransport = (input: TransportInput): Effect.Effect<
       // Wait for the process to actually exit (not just stdout to drain).
       const exitFiber = yield* process.exitCode.pipe(Effect.fork)
 
-      const timeoutEffect = Effect.sleep(input.timeoutMs).pipe(
-        Effect.map(() => ({ timedOut: true as const })),
-      )
+      // Three-way race: process-exit vs the wall-clock cap vs the (optional)
+      // stdout-silence watchdog. `hung` (silence) is distinct from `timedOut`
+      // (wall clock): a stuck request wedges silent while the wall clock still has
+      // ~an hour to run, so silence is the fast, real guard and the wall clock a
+      // last-resort backstop. Silence is disabled (Effect.never — never wins) when
+      // no threshold is supplied.
+      type RaceOutcome =
+        | { kind: "exit"; exitCode: number }
+        | { kind: "timeout" }
+        | { kind: "hung"; silentMs: number }
       const completionEffect = Fiber.join(exitFiber).pipe(
-        Effect.map((exitCode) => ({ timedOut: false as const, exitCode: Number(exitCode) })),
+        Effect.map((exitCode): RaceOutcome => ({ kind: "exit", exitCode: Number(exitCode) })),
       )
+      const timeoutEffect = Effect.sleep(input.timeoutMs).pipe(
+        Effect.map((): RaceOutcome => ({ kind: "timeout" })),
+      )
+      const silenceEffect: Effect.Effect<RaceOutcome> =
+        input.silenceTimeoutMs !== undefined
+          ? runSilenceWatch(lastActivityAt, input.silenceTimeoutMs).pipe(
+              Effect.map((silentMs): RaceOutcome => ({ kind: "hung", silentMs })),
+            )
+          : Effect.never
 
-      const raceResult = yield* Effect.race(completionEffect, timeoutEffect)
+      const raceResult = yield* Effect.raceAll([completionEffect, timeoutEffect, silenceEffect])
 
-      let timedOut: boolean
-      if (raceResult.timedOut) {
-        timedOut = true
+      let timedOut = false
+      let hung = false
+      let silentMs: number | undefined
+      if (raceResult.kind === "timeout" || raceResult.kind === "hung") {
+        // Kill path (shared by wall-clock timeout and silence-hang): interrupt every
+        // fiber so the scoped block returns and the process finalizer reaps the
+        // host-side `docker exec` client. (The in-container process is a separate
+        // orphan the caller reaps — see session-runner's kill-in-container.)
         yield* Fiber.interrupt(heartbeatFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* Fiber.interrupt(exitFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* Fiber.interrupt(streamFiber).pipe(Effect.catchAll(() => Effect.void))
         yield* Fiber.interrupt(stderrFiber).pipe(Effect.catchAll(() => Effect.void))
-        yield* logToConsole(input.char.name, input.role, "TIMED OUT — interrupting")
+        if (raceResult.kind === "timeout") {
+          timedOut = true
+          yield* logToConsole(input.char.name, input.role, "TIMED OUT — interrupting")
+        } else {
+          hung = true
+          silentMs = raceResult.silentMs
+          yield* logToConsole(
+            input.char.name,
+            input.role,
+            `HUNG — no output for ${Math.round(raceResult.silentMs / 1000)}s (stuck request); killing turn`,
+            "warn",
+          )
+        }
       } else {
-        timedOut = false
         yield* Fiber.interrupt(heartbeatFiber).pipe(Effect.catchAll(() => Effect.void))
-        const exitCode = "exitCode" in raceResult ? (raceResult as { exitCode: number }).exitCode : -1
+        const exitCode = raceResult.exitCode
         const elapsed = Math.round((Date.now() - start) / 1000)
         yield* logToConsole(input.char.name, input.role, `Process exited (code=${exitCode}) after ${elapsed}s`)
         yield* Fiber.join(streamFiber).pipe(Effect.catchAll(() => Effect.void))
@@ -219,7 +308,7 @@ export const runTransport = (input: TransportInput): Effect.Effect<
       const output = textParts.join("\n")
       const durationMs = Date.now() - start
       const sessionId = yield* Ref.get(capturedSessionId)
-      return { output, timedOut, durationMs, sessionId: sessionId ?? undefined }
+      return { output, timedOut, hung, silentMs, durationMs, sessionId: sessionId ?? undefined }
     }),
   ).pipe(
     Effect.mapError((e) =>

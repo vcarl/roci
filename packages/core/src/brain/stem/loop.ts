@@ -298,6 +298,15 @@ export const runActivation = (config: ActivationConfig) =>
     // Guards against forking a fresh deliberation on the same tick one just landed/discarded.
     let deliberationSettledThisTick = false
 
+    // Wedge visibility (functional-freeze detector): epoch-ms the CURRENT in-flight
+    // conscious turn started, or null when no turn is running. Set when a turn is
+    // observed in flight with no start on record, cleared the tick a turn lands (or
+    // whenever no turn is in flight). Each tick with a turn in flight emits a
+    // `body_liveness` behavior note carrying how long it's been running, so an
+    // observer/QA sees a stuck body (turn wedged for minutes) even while state ticks
+    // keep flowing — the events-based wedge rule was blind to this for 30+ min.
+    let consciousTurnStartedAt: number | null = null
+
     // Drop the active plan and clear all per-session steering state, so the loop
     // re-orients from a clean slate. Shared by the in-session `reorient` and
     // `interrupt` rungs (§3.2); a closure so it can reset the loop-local lets, not
@@ -636,7 +645,11 @@ export const runActivation = (config: ActivationConfig) =>
       // owner: join, adopt sessionId, append to the step report, set the
       // done-signal on the completion marker). No-op when no turn is in flight.
       // While a turn runs, fall through to triage the world, then sleep.
+      const turnWasInFlight = session.turnInFlight()
       yield* session.poll()
+      // A turn that was in flight and is no longer landed this tick — reset the
+      // wedge clock so the next turn is timed from its own start (see below).
+      if (turnWasInFlight && !session.turnInFlight()) consciousTurnStartedAt = null
 
       // 4. HINDBRAIN per-event triage — ungated: runs whenever there are events,
       // even mid-session. Each state-changing event is appraised once by the 2B;
@@ -1060,6 +1073,23 @@ export const runActivation = (config: ActivationConfig) =>
             }
           }
         }
+      }
+
+      // 6c. Wedge visibility: if a conscious turn is in flight, emit how long it has
+      // been running. A healthy body cycles turns (each landing resets the clock via
+      // the poll-side reset, and idle cadence ticks leave no turn in flight), so this
+      // climbs monotonically only when a single turn is wedged — the freeze signal
+      // the events-based rule missed. Best-effort; never disturbs the tick.
+      if (session.turnInFlight()) {
+        if (consciousTurnStartedAt === null) consciousTurnStartedAt = Date.now()
+        const inFlightMs = Date.now() - consciousTurnStartedAt
+        yield* logBehavior(config.char.name, "cortex", "conscious", {
+          type: "note",
+          label: "body_liveness",
+          data: { inFlightMs, sessionOpen: session.isOpen(), tick },
+        })
+      } else {
+        consciousTurnStartedAt = null
       }
 
       // 7. Sleep one tick.

@@ -35,6 +35,15 @@ export interface TurnResult {
   output: string
   timedOut: boolean
   durationMs: number
+  /**
+   * True when the transport aborted the turn because stdout stayed silent past
+   * `TransportInput.silenceTimeoutMs` (a wedged/stuck request that never returns,
+   * distinct from `timedOut`'s wall-clock cap). Set only when silence detection is
+   * enabled; the conscious session-runner reacts to it (kill-in-container + retry).
+   */
+  hung?: boolean
+  /** Whole ms of stdout silence at the moment a `hung` abort fired (for logging). */
+  silentMs?: number
   /** First captured stream value (e.g. OpenCode sessionID), when a capture hook ran. */
   sessionId?: string
 }

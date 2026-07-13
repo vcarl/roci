@@ -71,6 +71,7 @@ Name the ACTUAL thing in the event, then your call. No boilerplate. Never write 
 - Good: "Memorial station notice seen 34x already — repeat, nothing new."
 - Bad: "A neutral update from a distant station with no change in plans." (this is a discard, not an accumulate — distant churn is noise)
 - Bad: "Hull damage taken — safety, must react." (WHEN THE EVENT SHOWS FULL HULL — never invent damage the text does not report)
+- Bad: treating a `welcome` / `logged_in` / `ok` handshake frame as a threat. These are control-plane lifecycle acks — they carry no combat; at most accumulate@1–2, never escalate.
 - Bad: "A successful API response indicates a resource quota was satisfied."
 
 ## Emotional palette (paint your gut reaction as emoji, no words)

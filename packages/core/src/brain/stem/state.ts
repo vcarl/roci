@@ -134,6 +134,209 @@ export function appraise(
   }
 }
 
+// ── Mechanical appraisal guards (Task 1 — post-model clamps) ─────────────────
+//
+// The 2B hindbrain cannot be reliably prompt-guarded against fabricating a
+// threat (overnight run: it appraised a `logged_in` handshake — hull 100/100,
+// no hull field in the payload — as `w=4, steer, "Hull damage taken"`). These
+// two pure guards run AFTER the model returns and only ever DOWNGRADE: a
+// control-plane/lifecycle frame is capped so it can never escalate, and a
+// safety-drive escalation whose reason claims damage must have real combat
+// evidence in the payload or it is knocked back to a plain accumulate.
+
+/**
+ * Control-plane / lifecycle frame types (SpaceMolt `ServerEvent` control frames,
+ * plus the `reconnected` lifecycle notification). These are handshake / ack /
+ * session-lifecycle frames that carry NO threat semantics — a `logged_in` or
+ * `welcome` can never be an attack. They may still accumulate at low weight
+ * (they mark a real state transition worth remembering) but must NEVER escalate.
+ *
+ * DELIBERATELY EXCLUDES the error frames (`error`, `action_error`, and the
+ * synthetic `api_error`): a 429/quota/blocked frame is a genuine agency/
+ * sustenance pressure the ladder is meant to surface (observe.md's own w=4
+ * escalate example), so capping it would suppress a real signal.
+ */
+export const CONTROL_PLANE_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "welcome",
+  "logged_in",
+  "registered",
+  "ok",
+  "result",
+  "action_result",
+  "reconnected",
+])
+
+/** The hard weight cap a control-plane frame's appraisal may keep (accumulate band). */
+export const CONTROL_PLANE_MAX_WEIGHT = 2
+
+/** The weight a downgraded unsupported-threat appraisal is knocked back to. */
+export const UNSUPPORTED_THREAT_WEIGHT = 2
+
+/** True for a control-plane / lifecycle frame type (case-insensitive). */
+export function isControlPlaneEventType(type: string): boolean {
+  return CONTROL_PLANE_EVENT_TYPES.has(type.trim().toLowerCase())
+}
+
+/**
+ * Cap a control-plane / lifecycle frame's appraisal (Task 1). Such a frame may
+ * accumulate at ≤2 weight but must never escalate: weight is clamped to
+ * `CONTROL_PLANE_MAX_WEIGHT`, an `escalate` disposition is demoted to
+ * `accumulate` (a `discard` stays a discard), and `interrupt` is forced false —
+ * so `eventRung` can only ever award it `accumulate`. Only fires when the model
+ * actually exceeded the cap; a well-behaved low-weight appraisal passes through
+ * untouched (`clamped:false`) so no spurious log is emitted. Pure; never throws.
+ */
+export function clampControlPlaneAppraisal(
+  event: string,
+  observe: ObserveResult,
+): { observe: ObserveResult; clamped: boolean } {
+  if (!isControlPlaneEventType(eventFingerprint(event).type)) return { observe, clamped: false }
+  const overCap =
+    observe.weight > CONTROL_PLANE_MAX_WEIGHT ||
+    observe.disposition === "escalate" ||
+    observe.interrupt === true
+  if (!overCap) return { observe, clamped: false }
+  const disposition: Disposition = observe.disposition === "escalate" ? "accumulate" : observe.disposition
+  return {
+    observe: {
+      ...observe,
+      weight: Math.min(observe.weight, CONTROL_PLANE_MAX_WEIGHT),
+      disposition,
+      interrupt: false,
+    },
+    clamped: true,
+  }
+}
+
+/** Event types that are inherently combat/threat frames — their mere arrival is threat evidence. */
+const COMBAT_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "combat",
+  "battle_update",
+  "battle_damage",
+  "player_died",
+  "scan_detected",
+])
+
+/** A reason clause that claims physical damage / attack (the only claims the threat guard vets). */
+const DAMAGE_CLAIM_RE =
+  /\b(damage|damaged|attack|attacked|under\s*fire|taking\s*fire|incoming\s*fire|weapons?|hostile|boarded|boarding|breach|breached|destroy|destroyed|hull\s*(down|critical|breach)|shields?\s*down|being\s*hit)\b/i
+
+/** Resource keys whose NEGATIVE reading is a harm delta. */
+const HARM_RESOURCE_KEYS: ReadonlySet<string> = new Set([
+  "hull",
+  "shield",
+  "shields",
+  "health",
+  "hp",
+  "armor",
+  "integrity",
+])
+
+/** Event-descriptor string values that name a harmful action. */
+const HARM_EVENT_WORDS_RE = /\b(fire|attack|hit|damage|board|destroy|breach|explo|weapon|hostile|kill)\b/i
+
+/** Extract the payload object of an event's `type: <t>\n<json>` text, or null. */
+function parseEventPayload(event: string): Record<string, unknown> | null {
+  const nl = event.indexOf("\n")
+  const jsonPart = (nl >= 0 ? event.slice(nl + 1) : "").trim()
+  if (!jsonPart) return null
+  try {
+    const obj = JSON.parse(jsonPart)
+    if (!isPlainObject(obj)) return null
+    return isPlainObject(obj.payload) ? obj.payload : obj
+  } catch {
+    return null
+  }
+}
+
+/** Bounded recursive scan for a harm signal (a negative resource delta, a positive
+ *  damage figure, an attacker field, or a harmful event-descriptor word). */
+function objectShowsHarm(obj: Record<string, unknown>, depth: number): boolean {
+  if (depth > 3) return false
+  for (const [k, v] of Object.entries(obj)) {
+    const key = k.toLowerCase()
+    if (typeof v === "number") {
+      // A resource reading below zero, or a delta/damage field, is a harm signal.
+      if ((HARM_RESOURCE_KEYS.has(key) || key.endsWith("_delta") || key === "delta") && v < 0) return true
+      if ((key === "damage" || key === "damage_taken" || key === "damage_dealt") && v !== 0) return true
+    }
+    if ((key === "attacker" || key === "attacked_by" || key === "hostile") && v != null && v !== false && v !== "") {
+      return true
+    }
+    if (
+      (key === "event" || key === "action" || key === "kind" || key === "reason") &&
+      typeof v === "string" &&
+      HARM_EVENT_WORDS_RE.test(v)
+    ) {
+      return true
+    }
+    if (isPlainObject(v) && objectShowsHarm(v, depth + 1)) return true
+  }
+  return false
+}
+
+/** True when the event's payload carries real evidence of combat/damage. */
+export function hasCombatEvidence(event: string): boolean {
+  if (COMBAT_EVENT_TYPES.has(eventFingerprint(event).type)) return true
+  const payload = parseEventPayload(event)
+  return payload !== null && objectShowsHarm(payload, 0)
+}
+
+/**
+ * Downgrade an UNSUPPORTED threat escalation (Task 1). A safety-drive appraisal
+ * that escalates (weight ≥ steer, an `escalate` disposition, or `interrupt`) and
+ * whose reason claims damage/attack must be backed by real combat evidence in
+ * the event payload (a hull/shield negative delta, a damage figure, a combat
+ * frame type). Absent that evidence the model fabricated the threat, so the
+ * appraisal is knocked back to a plain `accumulate` at `UNSUPPORTED_THREAT_WEIGHT`.
+ * Conservative — only DOWNGRADES, only when the payload contradicts (lacks) the
+ * claim, and NEVER touches an `interrupt:true` appraisal: that flag is the
+ * model's rarest, strongest "physical emergency in progress" assertion, and the
+ * amygdala/hard-interrupt path treats it specially — a false NEGATIVE there
+ * (silencing a real boarding/attack the heuristic just doesn't recognize) is far
+ * worse than a rare false interrupt. The primary fabrication case (the overnight
+ * `logged_in` steer) carried `interrupt:false`, so it is still fully caught. The
+ * control-plane clamp — which runs first — is what strips a fabricated interrupt
+ * off a lifecycle frame. Pure; never throws.
+ */
+export function downgradeUnsupportedThreat(
+  event: string,
+  observe: ObserveResult,
+  thresholds: AppraisalThresholds = DEFAULT_APPRAISAL_THRESHOLDS,
+): { observe: ObserveResult; downgraded: boolean } {
+  if (observe.interrupt === true) return { observe, downgraded: false }
+  const claimsThreat = observe.drive === "safety" && DAMAGE_CLAIM_RE.test(observe.reason)
+  const escalating = observe.weight >= thresholds.steer || observe.disposition === "escalate"
+  if (!claimsThreat || !escalating) return { observe, downgraded: false }
+  if (hasCombatEvidence(event)) return { observe, downgraded: false }
+  return {
+    observe: {
+      ...observe,
+      weight: Math.min(observe.weight, UNSUPPORTED_THREAT_WEIGHT),
+      disposition: "accumulate",
+      interrupt: false,
+    },
+    downgraded: true,
+  }
+}
+
+/**
+ * Apply both post-model appraisal guards (Task 1), control-plane clamp first so
+ * a lifecycle frame's fabricated escalation is capped before the threat guard
+ * (which then no-ops on the already-lowered weight — no double correction).
+ * Returns the guarded appraisal plus which guard(s) fired, so the caller can log
+ * each firing. Pure; never throws.
+ */
+export function guardAppraisal(
+  event: string,
+  observe: ObserveResult,
+  thresholds: AppraisalThresholds = DEFAULT_APPRAISAL_THRESHOLDS,
+): { observe: ObserveResult; clampedControlPlane: boolean; downgradedThreat: boolean } {
+  const cp = clampControlPlaneAppraisal(event, observe)
+  const dt = downgradeUnsupportedThreat(event, cp.observe, thresholds)
+  return { observe: dt.observe, clampedControlPlane: cp.clamped, downgradedThreat: dt.downgraded }
+}
+
 /** The escalation rung a single appraised event earns (§3.2). */
 function eventRung(o: ObserveResult, thresholds: AppraisalThresholds): EscalationRung {
   // Hard-interrupt is gated behind an explicit `interrupt:true` — never weight
@@ -584,10 +787,57 @@ export function formatSteerDirective(orient: OrientResult): string {
  * Pure; idempotent (never double-prefixes); tolerant of an empty headline.
  */
 export function planTitleFromHeadline(headline: string): string {
-  const trimmed = headline.trim()
+  const trimmed = scrubVolatileMetrics(headline.trim())
   if (trimmed === "") return "(assessment)"
   if (trimmed.startsWith("(assessment)")) return trimmed
   return `(assessment) ${trimmed}`
+}
+
+// ── Volatile-metric scrub for the persisted assessment line (Task 2) ─────────
+//
+// The WM assessment line is composed from the orient headline at write time and
+// then read back verbatim by every later orient. When a headline hardcodes a
+// volatile ship metric ("...with full fuel and hull", "fuel 71/100"), that
+// number FREEZES at write time and orient faithfully restates it long after the
+// live value has moved (overnight run: every orient said "full fuel and hull"
+// while live fuel was 71%). Live telemetry already reaches orient via Current
+// Domain State, so WM should carry intent/history — never telemetry. This scrub
+// drops volatile ship-metric clauses (fuel/hull/shield/cargo, whether phrased as
+// "full fuel", "fuel 71/100", or "100% hull"), keeping the goal/location/
+// situation content. Conservative: it drops the metric clause rather than
+// rewriting it, and leaves everything else untouched. Pure; never throws.
+
+const _METRIC = "(?:fuel|hull|shields?|cargo)"
+// "full fuel and hull", "low hull", "empty cargo" — a state adjective + one or
+// more metrics chained by "and".
+const ADJ_METRIC_RE = new RegExp(
+  `\\b(?:full|empty|low|half|topped[-\\s]?off|maxed?|max|depleted|critical|no|zero)\\s+${_METRIC}(?:\\s+and\\s+(?:full\\s+|empty\\s+|low\\s+|half\\s+)?${_METRIC})*`,
+  "gi",
+)
+// "fuel 71/100", "hull at 100%", "shield 50/50", "cargo: 2/10", "fuel 71 units".
+const METRIC_NUM_RE = new RegExp(
+  `\\b${_METRIC}\\b(?:\\s+(?:at|is|of))?\\s*[:=]?\\s*\\d+(?:\\s*/\\s*\\d+|\\s*%|\\s*units?)?`,
+  "gi",
+)
+// "71/100 fuel", "100% hull".
+const NUM_METRIC_RE = new RegExp(`\\b\\d+(?:\\s*/\\s*\\d+|\\s*%)?\\s+${_METRIC}\\b`, "gi")
+
+export function scrubVolatileMetrics(text: string): string {
+  let out = text
+    .replace(ADJ_METRIC_RE, " ")
+    .replace(METRIC_NUM_RE, " ")
+    .replace(NUM_METRIC_RE, " ")
+  // Tidy connectors orphaned by a removed clause ("... with , planning" →
+  // "..., planning"; a trailing "with"/"and"/"at"/"of").
+  out = out
+    .replace(/\s+(?:with|and|at|of)\s*(?=[,;.]|$)/gi, "")
+    .replace(/\s+([,;.])/g, "$1")
+    .replace(/([,;])\s*(?=[,;.])/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[\s,;:.\-–—]+/, "")
+    .replace(/[\s,;:\-–—]+$/, "")
+    .trim()
+  return out
 }
 
 /** The instructions handed to the conscious agent for one plan step. */
