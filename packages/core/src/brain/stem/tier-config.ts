@@ -34,6 +34,28 @@ export interface ActivationRunnerConfig {
   drives?: string
 }
 
+/**
+ * Was a model completion cut off at its token ceiling? True when the reported
+ * completion-token count reached (or passed) `maxTokens`, or when the provider
+ * explicitly signalled a length stop (`finish_reason: "length"`). Either signal
+ * means the response is likely partial — the prime cause of downstream JSON
+ * parse failures on orient — so it is flagged on the exchange record. Pure.
+ */
+export function isResponseTruncated(
+  usage: { completionTokens?: number } | undefined,
+  maxTokens: number | undefined,
+  finishReason: string | undefined,
+): boolean {
+  if (finishReason === "length") return true
+  const completion = usage?.completionTokens
+  return (
+    typeof completion === "number" &&
+    typeof maxTokens === "number" &&
+    maxTokens > 0 &&
+    completion >= maxTokens
+  )
+}
+
 /** Map a tier-call failure to a tier_call outcome. Pure. */
 export function classifyTierOutcome(error: unknown): "error" | "timeout" {
   if (error instanceof ReadinessError && error.timedOut) return "timeout"
@@ -76,10 +98,17 @@ export const callTier = (
       outcome: "ok",
     })
     // Full prompt+response archive (debug level; jsonl-complete). Never crash the loop.
+    // `truncated` flags a completion cut off at maxTokens (a partial response that
+    // silently breaks JSON parsing); `finishReason` records the provider's stop reason.
+    const maxTokens = handle.params?.maxTokens
+    const truncated = isResponseTruncated(res.usage, maxTokens, res.finishReason)
     yield* logExchange(config.char.name, "cortex", step, prompt, res.text, {
       tier,
       model: handle.model,
       usage: res.usage,
+      ...(res.finishReason ? { finishReason: res.finishReason } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+      truncated,
     }).pipe(Effect.catchAll(() => Effect.void))
     return res.text
   })

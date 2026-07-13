@@ -10,7 +10,7 @@ import { TEMPLATE_PALETTE } from "../../core/palette.js"
 import { TEMPLATE_DRIVES, parseDriveNames } from "#brain/limbic/hypothalamus/drives.js"
 import { appraise } from "#brain/stem/state.js"
 import type { ObserveResult, OrientResult, WaitState } from "../../skills/types.js"
-import { parseOr, tryParseJson, isPlainObject } from "#brain/stem/parse.js"
+import { parseOr, parseJsonSalvaging, isPlainObject } from "#brain/stem/parse.js"
 import { logToConsole, type CharacterLog } from "../../logging/log-writer.js"
 import type { EpisodeAttribution } from "../../logging/episodes.js"
 import { callTier, emitTier, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
@@ -118,7 +118,7 @@ export function runForebrain(
   const fallback = orientFallback(emotionalWeight)
   return callTier(config, "forebrain", "orient", prompt).pipe(
     Effect.flatMap((text) => {
-      const parsed = tryParseJson<OrientResult>(text)
+      const parsed = parseJsonSalvaging<OrientResult>(text)
       if (parsed.ok && isPlainObject(parsed.value)) {
         // Merge over the fallback so any field the model omitted is filled with
         // a safe default — the tolerant extractor now recovers parseable-but-
@@ -129,10 +129,26 @@ export function runForebrain(
         // `sections` to an array even if the model emitted a wrong type
         // (string/null), since downstream `.map`s it.
         const merged = { ...fallback, ...parsed.value }
-        return Effect.succeed<OrientResult>({
+        const sections = Array.isArray(merged.sections) ? merged.sections : []
+        // When the raw output was truncated at the token cap, parseJsonSalvaging
+        // recovered it by dropping the incomplete trailing field. Stamp a metrics
+        // marker (visible in the emitted tier record / synthesis) so downstream
+        // and logs can tell the assessment was reconstructed rather than pristine.
+        if (!parsed.salvaged) return Effect.succeed<OrientResult>({ ...merged, sections })
+        const result: OrientResult = {
           ...merged,
-          sections: Array.isArray(merged.sections) ? merged.sections : [],
-        })
+          sections,
+          metrics: { ...merged.metrics, salvaged: "truncation-recovered" },
+        }
+        return logToConsole(
+          config.char.name,
+          "cortex",
+          `tier=forebrain step=orient truncation-salvaged; recovered ${sections.length} section(s) from a cut-off response`,
+          "warn",
+        ).pipe(
+          Effect.catchAll(() => Effect.void),
+          Effect.as<OrientResult>(result),
+        )
       }
       // Parse miss: log the FULL raw forebrain output so the failure is fully
       // diagnosable. The console truncates long lines for display; events.jsonl

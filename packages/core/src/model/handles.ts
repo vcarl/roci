@@ -93,11 +93,20 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   },
   // forebrain (orient) — like hindbrain, thinking is now DISABLED. Measured:
   // thinking-ON ran 41-213s and hit finish=length on complex inputs (no JSON
-  // emitted). Thinking-OFF is ~10x faster (4-7s, 326-579 tokens) and equal-or-
-  // better quality. maxTokens 1024 is ~1.8x the observed OFF maximum — ample
-  // headroom at ~11s warm, well inside the 300s client timeout even at contended
-  // 8 tok/s (~128s). Epistemic discipline (hedging on ambiguity) is enforced via
-  // the orient prompt, not the CoT monologue.
+  // emitted). Thinking-OFF is ~10x faster (4-7s) and equal-or-better quality.
+  // The initial 5-scenario spike saw 326-579 tokens OFF, so the cap was set to
+  // 1024. A live run falsified that as the ceiling: on a real orient the OFF
+  // output ran to exactly completionTokens=1024 (finish=length), cutting the
+  // JSON mid-string — the parser discarded the whole assessment and fell back to
+  // "situation unknown", wasting the deliberative tier re-discovering known
+  // state. The cap is now 2048 (headroom, not a cliff) and paired with two
+  // defenses so verbose output degrades gracefully instead of failing hard:
+  // (1) orient.md instructs a terse <~600-token response, and (2) the orient
+  // parse path (tiers-limbic.ts → parseJsonSalvaging) conservatively salvages a
+  // truncated object by dropping the partial trailing field. 2048 tokens is well
+  // inside the 300s client timeout even at contended 8 tok/s (~256s). Epistemic
+  // discipline (hedging on ambiguity) is enforced via the orient prompt, not the
+  // CoT monologue.
   forebrain: {
     tier: "forebrain",
     provider: "mlx",
@@ -105,7 +114,7 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
     model: "mlx-community/Qwen3.5-9B-4bit",
     params: {
       temperature: 0.5,
-      maxTokens: 1024,
+      maxTokens: 2048,
       extraBody: { chat_template_kwargs: { enable_thinking: false } },
     },
   },

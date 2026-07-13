@@ -496,7 +496,7 @@ describe("runBreak — event-processing error path", () => {
     )
     const interrupts = Layer.succeed(
       InterruptRegistryTag,
-      InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals: () => [] }),
+      InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals: () => [], explain: () => [] }),
     )
     // A tiny break window so the loop drains the bad event then exits promptly.
     const tempo = { breakDurationMs: 1, breakPollIntervalSec: 0 } as unknown as PlannedActionTempo

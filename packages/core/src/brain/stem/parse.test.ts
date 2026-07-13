@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { extractJson, parseOr, tryParseJson } from "./parse.js"
+import { extractJson, parseOr, tryParseJson, salvageTruncatedJson, parseJsonSalvaging } from "./parse.js"
 
 describe("extractJson — tolerant extraction", () => {
   it("returns bare JSON unchanged (parseable)", () => {
@@ -131,5 +131,93 @@ describe("parseOr", () => {
       decision: "plan",
       reasoning: "fb",
     })
+  })
+})
+
+describe("salvageTruncatedJson — conservative truncation repair", () => {
+  it("returns null for a balanced object (nothing to salvage)", () => {
+    expect(salvageTruncatedJson('{"a":1,"b":2}')).toBe(null)
+  })
+
+  it("returns null when there is no object", () => {
+    expect(salvageTruncatedJson("the model rambled with no json")).toBe(null)
+  })
+
+  it("returns null for a balanced-but-invalid object (does not touch trailing commas)", () => {
+    // Braces balance, so it is not a truncation — a different failure this leaves alone.
+    expect(salvageTruncatedJson('{"a":1,}')).toBe(null)
+  })
+
+  it("drops a trailing field cut off mid-value-string, keeping the completed fields", () => {
+    const repaired = salvageTruncatedJson('{"a":1,"b":"this got cut of')
+    expect(repaired).not.toBe(null)
+    expect(JSON.parse(repaired as string)).toEqual({ a: 1 })
+  })
+
+  it("drops a trailing field cut off mid-key, keeping the completed fields", () => {
+    const repaired = salvageTruncatedJson('{"a":1,"bcd')
+    expect(repaired).not.toBe(null)
+    expect(JSON.parse(repaired as string)).toEqual({ a: 1 })
+  })
+
+  it("preserves completed nested-array elements, dropping the incomplete one", () => {
+    // Two complete section objects, then a third cut off mid-body — the third's
+    // completed fields (id, heading) survive; only the partial `body` is dropped.
+    const raw =
+      '{"headline":"h","sections":[{"id":"s1","heading":"A","body":"x"},' +
+      '{"id":"s2","heading":"B","body":"y"},{"id":"s3","heading":"C","body":"partial text tha'
+    const repaired = salvageTruncatedJson(raw)
+    expect(repaired).not.toBe(null)
+    expect(JSON.parse(repaired as string)).toEqual({
+      headline: "h",
+      sections: [
+        { id: "s1", heading: "A", body: "x" },
+        { id: "s2", heading: "B", body: "y" },
+        { id: "s3", heading: "C" },
+      ],
+    })
+  })
+
+  it("drops a trailing number that may itself be truncated", () => {
+    // 45 could really be 456 — guessing is forbidden, so the whole `b` field goes.
+    const repaired = salvageTruncatedJson('{"a":1,"b":45')
+    expect(JSON.parse(repaired as string)).toEqual({ a: 1 })
+  })
+
+  it("does not split early on a brace inside a truncated string", () => {
+    const repaired = salvageTruncatedJson('{"a":"has a } brace","b":"cut of')
+    expect(JSON.parse(repaired as string)).toEqual({ a: "has a } brace" })
+  })
+})
+
+describe("parseJsonSalvaging — clean-first, salvage-on-failure", () => {
+  it("parses clean JSON and marks it not salvaged", () => {
+    expect(parseJsonSalvaging<{ a: number }>('{"a":1}')).toEqual({ ok: true, value: { a: 1 }, salvaged: false })
+  })
+
+  it("parses clean JSON wrapped in prose without marking salvaged", () => {
+    expect(parseJsonSalvaging<{ a: number }>('here: {"a":1} done')).toEqual({
+      ok: true,
+      value: { a: 1 },
+      salvaged: false,
+    })
+  })
+
+  it("salvages a truncated-mid-string object and marks it salvaged", () => {
+    const r = parseJsonSalvaging<{ a: number; b?: string }>('{"a":1,"b":"was cut of')
+    expect(r).toEqual({ ok: true, value: { a: 1 }, salvaged: true })
+  })
+
+  it("salvages a truncated-mid-key object and marks it salvaged", () => {
+    const r = parseJsonSalvaging<{ a: number }>('{"a":1,"bc')
+    expect(r).toEqual({ ok: true, value: { a: 1 }, salvaged: true })
+  })
+
+  it("falls back to ok:false on genuine garbage", () => {
+    expect(parseJsonSalvaging("the model rambled")).toEqual({ ok: false })
+  })
+
+  it("falls back to ok:false on a balanced-but-invalid object (trailing comma)", () => {
+    expect(parseJsonSalvaging('{"a":1,}')).toEqual({ ok: false })
   })
 })

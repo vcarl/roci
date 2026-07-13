@@ -59,6 +59,8 @@ Distinguish confirmed facts (directly grounded in the events and state above) fr
 
 You say "here is what's happening" — never "here is what you should do."
 
+**Output budget.** Keep the entire response under ~600 tokens. Be an editor: a handful of `sections` at most, each `body` a terse fragment or two (sentence fragments are fine — drop filler, articles, and restatement). A tight assessment the decision-maker can read at a glance beats an exhaustive one. This budget is a hard headroom — an over-long response risks being cut off before the JSON closes.
+
 Respond with ONLY this JSON:
 ```json
 {

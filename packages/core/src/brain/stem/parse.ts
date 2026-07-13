@@ -83,6 +83,125 @@ export function tryParseJson<T>(text: string): ParseResult<T> {
 }
 
 /**
+ * Repair a *truncated* JSON object into a parseable one, or return null.
+ *
+ * A small local model with a hard token cap (e.g. the forebrain orient tier
+ * at maxTokens) can be cut off mid-token, leaving an object whose strings and
+ * braces never close — `JSON.parse` then rejects the whole thing and the caller
+ * loses an otherwise-good assessment. This performs a CONSERVATIVE repair: it
+ * walks the candidate tracking container nesting, locates the end of the last
+ * fully-completed element in the innermost open container, DROPS everything
+ * after it (the partial trailing field/value), and appends the closers needed
+ * to balance the still-open containers. It never guesses the content of the
+ * dropped field — a truncated `"b":"par` or `"b":45` (which could really be
+ * `456`) is discarded whole, not completed.
+ *
+ * Returns null when there is nothing to salvage: no leading `{`, or the object
+ * is already balanced. A balanced-but-invalid object (e.g. a trailing comma) is
+ * a different failure this deliberately does not touch.
+ */
+export function salvageTruncatedJson(text: string): string | null {
+  const start = text.indexOf("{")
+  if (start === -1) return null
+
+  type Frame = { type: "obj" | "arr"; safeEnd: number; sawColon: boolean }
+  const stack: Frame[] = []
+  let inString = false
+  let escaped = false
+  let inScalar = false
+  let balanced = false
+
+  // Mark the current innermost container's "last completed element" boundary.
+  const completeTop = (endExclusive: number): void => {
+    const top = stack[stack.length - 1]
+    if (!top) return
+    top.safeEnd = endExclusive
+    top.sawColon = false
+  }
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === "\\") escaped = true
+      else if (ch === '"') {
+        inString = false
+        const top = stack[stack.length - 1]
+        // A closed string is a completed value only inside an array, or inside
+        // an object once its `:` has been seen. An object key (no colon yet)
+        // completes nothing — its value is still to come.
+        if (top && (top.type === "arr" || top.sawColon)) completeTop(i + 1)
+      }
+      continue
+    }
+    if (inScalar) {
+      // A number / true / false / null runs until a structural delimiter.
+      if (ch === "," || ch === "}" || ch === "]" || /\s/.test(ch)) {
+        completeTop(i)
+        inScalar = false
+        // fall through to handle the delimiter char itself
+      } else {
+        continue
+      }
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === "{") {
+      stack.push({ type: "obj", safeEnd: i + 1, sawColon: false })
+    } else if (ch === "[") {
+      stack.push({ type: "arr", safeEnd: i + 1, sawColon: false })
+    } else if (ch === "}" || ch === "]") {
+      stack.pop()
+      completeTop(i + 1)
+      if (stack.length === 0) {
+        // Root closed → the object was balanced, not truncated.
+        balanced = true
+        break
+      }
+    } else if (ch === ":") {
+      const top = stack[stack.length - 1]
+      if (top && top.type === "obj") top.sawColon = true
+    } else if (ch !== "," && !/\s/.test(ch)) {
+      inScalar = true
+    }
+  }
+
+  if (balanced || stack.length === 0) return null
+
+  const top = stack[stack.length - 1]
+  const closers = stack
+    .map((f) => (f.type === "obj" ? "}" : "]"))
+    .reverse()
+    .join("")
+  return text.slice(start, top.safeEnd) + closers
+}
+
+/** A parse that also reports whether truncation salvage was needed. */
+export type SalvageResult<T> = { ok: true; value: T; salvaged: boolean } | { ok: false }
+
+/**
+ * Parse JSON from model output, first cleanly, then falling back to a
+ * conservative truncation salvage. Never throws.
+ *
+ *  - Clean parse succeeds → `{ ok: true, value, salvaged: false }`.
+ *  - Clean parse fails but the output is a recoverable truncated object →
+ *    `{ ok: true, value, salvaged: true }` (see `salvageTruncatedJson`).
+ *  - Neither works (genuine garbage, or a balanced-but-invalid object) →
+ *    `{ ok: false }`, so callers keep their existing parse-miss behavior.
+ */
+export function parseJsonSalvaging<T>(text: string): SalvageResult<T> {
+  const clean = tryParseJson<T>(text)
+  if (clean.ok) return { ok: true, value: clean.value, salvaged: false }
+  const repaired = salvageTruncatedJson(text)
+  if (repaired === null) return { ok: false }
+  try {
+    return { ok: true, value: JSON.parse(repaired) as T, salvaged: true }
+  } catch {
+    return { ok: false }
+  }
+}
+
+/**
  * Parse JSON from model output, returning `fallback` if extraction/parse fails.
  *
  * On a successful parse of a plain object the result is `{ ...fallback, ...parsed }`

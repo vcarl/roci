@@ -20,6 +20,26 @@ export interface InterruptRule {
 }
 
 /**
+ * A per-rule evaluation record for one tick — the audit trail of what the
+ * amygdala saw and did. Emitted only for rules whose condition MATCHED (a
+ * matched-but-not-acted-on rule is the interesting, previously-invisible case).
+ */
+export interface InterruptEvaluation {
+  /** The rule that matched. */
+  readonly ruleName: string
+  readonly priority: Alert["priority"]
+  /**
+   * What happened to the match:
+   * - `fired`: a critical rule that cuts the line and drives replanning.
+   * - `suppressed-by-task:<task>`: skipped because the current step's task matches `suppressWhenTaskIs`.
+   * - `below-threshold`: matched but non-critical, so it does not drive replanning (soft alert).
+   */
+  readonly outcome: string
+  /** Where the match routes: critical → the conscious tier; everything else → `none`. */
+  readonly tier: "conscious" | "none"
+}
+
+/**
  * Registry of all interrupt rules. Evaluated on each state update to
  * detect conditions that warrant replanning.
  */
@@ -31,6 +51,12 @@ export interface InterruptRegistry {
   criticals(state: DomainState, situation: DomainSituation, currentTask?: string): Alert[]
   /** Return non-critical alerts (high, medium, low). */
   softAlerts(state: DomainState, situation: DomainSituation, currentTask?: string): Alert[]
+  /**
+   * Diagnostic: one record per rule whose condition MATCHED this tick, capturing
+   * its outcome (fired / suppressed / below-threshold) and destination tier.
+   * Returns `[]` when no rule matched, so callers can log only on active ticks.
+   */
+  explain(state: DomainState, situation: DomainSituation, currentTask?: string): InterruptEvaluation[]
 }
 
 const priorityOrder: Record<Alert["priority"], number> = {
@@ -70,6 +96,26 @@ export function createInterruptRegistry(rules: ReadonlyArray<InterruptRule>): In
 
     softAlerts(state, situation, currentTask?) {
       return this.evaluate(state, situation, currentTask).filter((a) => a.priority !== "critical")
+    },
+
+    explain(state, situation, currentTask?) {
+      const records: InterruptEvaluation[] = []
+      for (const rule of rules) {
+        if (!rule.condition(state, situation)) continue
+        const suppressed = currentTask !== undefined && rule.suppressWhenTaskIs === currentTask
+        const outcome = suppressed
+          ? `suppressed-by-task:${currentTask}`
+          : rule.priority === "critical"
+            ? "fired"
+            : "below-threshold"
+        records.push({
+          ruleName: rule.name,
+          priority: rule.priority,
+          outcome,
+          tier: !suppressed && rule.priority === "critical" ? "conscious" : "none",
+        })
+      }
+      return records
     },
   }
 }

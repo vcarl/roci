@@ -102,6 +102,7 @@ describe("normalizeOpenCode", () => {
     })
     expect(events).toEqual([
       { type: "tool_use", id: "prt_abc", name: "bash", input: { command: "ls", description: "list" }, status: "completed" },
+      { type: "tool_result", toolUseId: "prt_abc", text: "..." },
     ])
   })
 
@@ -131,11 +132,43 @@ describe("normalizeOpenCode", () => {
     })
     expect(events).toEqual([
       { type: "tool_use", id: "prt_1", name: "bash", input: { command: "ls" }, status: "completed", durationMs: 250 },
+      { type: "tool_result", toolUseId: "prt_1", text: "..." },
     ])
   })
 
   it("omits status/durationMs when the tool state carries none", () => {
     const events = normalizeOpenCode({ type: "tool_use", part: { id: "p", tool: "read", state: { input: {} } } })
     expect(events).toEqual([{ type: "tool_use", id: "p", name: "read", input: {} }])
+  })
+
+  it("emits a tool_result alongside tool_use when a completed state carries output", () => {
+    const events = normalizeOpenCode({
+      type: "tool_use",
+      part: {
+        id: "prt_9",
+        tool: "spacemolt",
+        state: { status: "completed", input: { cmd: "refuel" }, output: "fuel=100%" },
+      },
+    })
+    expect(events).toEqual([
+      { type: "tool_use", id: "prt_9", name: "spacemolt", input: { cmd: "refuel" }, status: "completed" },
+      { type: "tool_result", toolUseId: "prt_9", text: "fuel=100%" },
+    ])
+  })
+
+  it("emits a tool_result for an errored tool state", () => {
+    const events = normalizeOpenCode({
+      type: "tool_use",
+      part: { id: "prt_e", tool: "bash", state: { status: "error", input: {}, output: "command failed" } },
+    })
+    expect(events).toContainEqual({ type: "tool_result", toolUseId: "prt_e", text: "command failed" })
+  })
+
+  it("does not emit a tool_result for a non-terminal (running) tool state", () => {
+    const events = normalizeOpenCode({
+      type: "tool_use",
+      part: { id: "prt_r", tool: "bash", state: { status: "running", input: {} } },
+    })
+    expect(events).toEqual([{ type: "tool_use", id: "prt_r", name: "bash", input: {}, status: "running" }])
   })
 })

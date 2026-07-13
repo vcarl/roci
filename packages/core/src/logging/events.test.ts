@@ -1,6 +1,40 @@
 import { describe, it, expect } from "vitest"
-import { toUnifiedEvents } from "./events.js"
+import { toUnifiedEvents, truncateToolResult, TOOL_RESULT_MAX_CHARS } from "./events.js"
 import { renderEvent } from "./console-renderer.js"
+
+describe("truncateToolResult", () => {
+  it("passes short output through untouched", () => {
+    const r = truncateToolResult("refuel ok, fuel=100%")
+    expect(r).toEqual({ text: "refuel ok, fuel=100%", truncated: false })
+  })
+  it("truncates over-limit output and appends an explicit marker", () => {
+    const r = truncateToolResult("A".repeat(TOOL_RESULT_MAX_CHARS + 500))
+    expect(r.truncated).toBe(true)
+    expect(r.text.startsWith("A".repeat(TOOL_RESULT_MAX_CHARS))).toBe(true)
+    expect(r.text).toContain("[truncated 500 chars]")
+  })
+  it("keeps output at exactly the limit untruncated", () => {
+    const r = truncateToolResult("A".repeat(TOOL_RESULT_MAX_CHARS))
+    expect(r.truncated).toBe(false)
+  })
+})
+
+describe("toUnifiedEvents tool_result", () => {
+  it("emits a tool_result event with the toolUseId and text", () => {
+    const [e] = toUnifiedEvents([{ type: "tool_result", toolUseId: "prt_1", text: "ok" }], "c", "body", "opencode")
+    expect(e).toMatchObject({ kind: "tool_result", toolUseId: "prt_1", text: "ok" })
+    expect("truncated" in e).toBe(false)
+  })
+  it("truncates a large tool_result and sets truncated:true", () => {
+    const big = "X".repeat(TOOL_RESULT_MAX_CHARS + 10)
+    const [e] = toUnifiedEvents([{ type: "tool_result", toolUseId: "t", text: big }], "c", "body", "opencode")
+    expect(e.kind).toBe("tool_result")
+    if (e.kind === "tool_result") {
+      expect(e.truncated).toBe(true)
+      expect(e.text).toContain("[truncated 10 chars]")
+    }
+  })
+})
 
 describe("toUnifiedEvents level assignment", () => {
   it("marks opencode init (system) as debug", () => {

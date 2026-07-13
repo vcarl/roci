@@ -545,6 +545,23 @@ export const runActivation = (config: ActivationConfig) =>
       const summary = classifier.summarize(state as never)
       const bar = renderer.formatStateBar(summary.metrics)
       if (bar) yield* logToConsole(config.char.name, "state", bar)
+      // Amygdala audit trail: which rules matched this tick, and what became of
+      // each (fired / suppressed / below-threshold) + destination tier. Emitted
+      // only on ticks where at least one rule matched, so a rule that condition-
+      // matched every tick yet never drove a replan (e.g. a low-priority soft
+      // alert) is now visibly accounted for instead of silently invisible.
+      const currentStepTask =
+        cortex.currentPlan !== null
+          ? planSteps(cortex.currentPlan)[cortex.currentStepIndex]?.task
+          : undefined
+      const interruptEvals = interrupts.explain(state as never, summary.situation, currentStepTask)
+      if (interruptEvals.length > 0) {
+        yield* logBehavior(config.char.name, "cortex", "amygdala", {
+          type: "note",
+          label: "interrupt_eval",
+          data: { tick, evaluations: interruptEvals },
+        })
+      }
       const criticals = interrupts.criticals(state as never, summary.situation)
       if (criticals.length > 0) {
         yield* logBehavior(config.char.name, "cortex", "amygdala", {

@@ -23,6 +23,7 @@ let mode:
   | "reasoning-content-field"
   | "reasoning-empty-content"
   | "reasoning-and-content"
+  | "length-stop"
   | "truly-empty" = "ok"
 
 beforeAll(async () => {
@@ -78,6 +79,16 @@ beforeAll(async () => {
         JSON.stringify({
           choices: [{ message: { role: "assistant", content: "real-answer", reasoning: "thinking..." } }],
           usage: { prompt_tokens: 3, completion_tokens: 2 },
+        }),
+      )
+      return
+    }
+    // A completion cut off at the token ceiling: content present, finish_reason "length".
+    if (mode === "length-stop") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "partial…" }, finish_reason: "length" }],
+          usage: { prompt_tokens: 3, completion_tokens: 256 },
         }),
       )
       return
@@ -216,6 +227,18 @@ describe("ModelClient.complete", () => {
     )
     expect(result.text).toBe("pong")
     expect(result.usage?.completionTokens).toBe(1)
+  })
+
+  it("surfaces the provider finish_reason on the completion result", async () => {
+    mode = "length-stop"
+    const result = await run(
+      Effect.gen(function* () {
+        const client = yield* ModelClient
+        return yield* client.complete(handle(port), [{ role: "user", content: "ping" }])
+      }),
+    )
+    expect(result.finishReason).toBe("length")
+    expect(result.usage?.completionTokens).toBe(256)
   })
 
   it("fails with ModelError on a non-2xx response", async () => {

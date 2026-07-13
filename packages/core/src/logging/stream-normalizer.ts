@@ -83,14 +83,25 @@ export function normalizeOpenCode(raw: RawEvent): InternalEvent[] {
     const time = state?.time as RawEvent | undefined
     const start = typeof time?.start === "number" ? time.start : undefined
     const end = typeof time?.end === "number" ? time.end : undefined
-    return [{
+    const status = typeof state?.status === "string" ? state.status : undefined
+    const id = (part?.id as string) ?? ""
+    const events: InternalEvent[] = [{
       type: "tool_use",
-      id: (part?.id as string) ?? "",
+      id,
       name: (part?.tool as string) ?? "",
       input: (state?.input as Record<string, unknown>) ?? {},
-      ...(typeof state?.status === "string" ? { status: state.status } : {}),
+      ...(status !== undefined ? { status } : {}),
       ...(start !== undefined && end !== undefined ? { durationMs: end - start } : {}),
     }]
+    // A terminal tool state carries the tool's OUTPUT in `state.output` — the
+    // actual game/CLI result. OpenCode surfaces it only on the completed/error
+    // event, so emit a matching tool_result InternalEvent so the body's tool
+    // outputs land in the log stream (they were previously dropped). Truncation
+    // to a bounded size happens downstream in toUnifiedEvents.
+    if ((status === "completed" || status === "error") && state?.output != null) {
+      events.push({ type: "tool_result", toolUseId: id, text: String(state.output) })
+    }
+    return events
   }
 
   if (type === "error") {

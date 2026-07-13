@@ -136,6 +136,7 @@ const fakeDomain = Layer.mergeAll(
       evaluate: () => [],
       criticals: () => [],
       softAlerts: () => [],
+      explain: () => [],
     }),
   ),
   Layer.succeed(
@@ -886,7 +887,7 @@ describe("runActivation (conscious-session executor)", () => {
       ),
       Layer.succeed(
         InterruptRegistryTag,
-        InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals: () => [] }),
+        InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals: () => [], explain: () => [] }),
       ),
       Layer.succeed(
         StateRendererTag,
@@ -932,6 +933,7 @@ describe("runActivation (conscious-session executor)", () => {
           evaluate: () => [],
           softAlerts: () => [],
           criticals: () => [{ priority: "critical", message: "hull critical" }],
+          explain: () => [],
         }),
       ),
       Layer.succeed(
@@ -989,6 +991,7 @@ describe("runActivation (conscious-session executor)", () => {
           evaluate: () => [],
           softAlerts: () => [],
           criticals: () => (turnStarted.value ? [{ priority: "critical", message: "hull critical" }] : []),
+          explain: () => [],
         }),
       ),
       Layer.succeed(
@@ -1922,7 +1925,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       ),
       Layer.succeed(
         InterruptRegistryTag,
-        InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals }),
+        InterruptRegistryTag.of({ rules: [], evaluate: () => [], softAlerts: () => [], criticals, explain: () => [] }),
       ),
       Layer.succeed(
         StateRendererTag,

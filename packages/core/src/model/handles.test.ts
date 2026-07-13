@@ -29,12 +29,14 @@ describe("DEFAULT_CORTEX_MODELS", () => {
   })
 
   // Every tier must declare an explicit maxTokens so the server default can never
-  // silently truncate output. Forebrain thinking is OFF: 1024 is ~1.8x the observed
-  // max for thinking-off orient responses (326-579 tokens). Hindbrain is 4096;
-  // conscious is 16384.
+  // silently truncate output. Forebrain thinking is OFF: the initial spike saw
+  // 326-579 token orient responses, but a live run hit finish=length at 1024 and
+  // lost the assessment, so the cap is now 2048 (headroom, paired with a terse
+  // prompt budget + truncation salvage in the orient parse path). Hindbrain is
+  // 1024; conscious is 16384.
   it("pins an explicit maxTokens budget on every local tier", () => {
     expect(DEFAULT_CORTEX_MODELS.hindbrain.params?.maxTokens).toBeGreaterThanOrEqual(1024)
-    expect(DEFAULT_CORTEX_MODELS.forebrain.params?.maxTokens).toBe(1024)
+    expect(DEFAULT_CORTEX_MODELS.forebrain.params?.maxTokens).toBe(2048)
     expect(DEFAULT_CORTEX_MODELS.conscious.params?.maxTokens).toBeGreaterThanOrEqual(1024)
   })
 

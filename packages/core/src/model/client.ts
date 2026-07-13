@@ -10,6 +10,8 @@ export interface ChatMessage {
 export interface CompletionResult {
   text: string
   usage?: { promptTokens?: number; completionTokens?: number }
+  /** The provider's stop/finish reason for the choice (e.g. "stop", "length"). */
+  finishReason?: string
   raw: unknown
 }
 
@@ -25,6 +27,7 @@ export interface CompletionResult {
 interface OpenAIChatResponse {
   choices?: Array<{
     message?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null }
+    finish_reason?: string | null
   }>
   usage?: { prompt_tokens?: number; completion_tokens?: number }
 }
@@ -180,12 +183,14 @@ const attempt = (
             )
           }
 
+          const finishReason = json?.choices?.[0]?.finish_reason
           return {
             text,
             usage: {
               promptTokens: json.usage?.prompt_tokens,
               completionTokens: json.usage?.completion_tokens,
             },
+            ...(typeof finishReason === "string" ? { finishReason } : {}),
             raw: json,
           }
         } finally {

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Stream, Chunk } from "effect"
+import { Context, Effect, Layer, Stream, Chunk, Fiber } from "effect"
 import { Command, CommandExecutor } from "@effect/platform"
 import { execSync } from "node:child_process"
 
@@ -90,6 +90,19 @@ export class Docker extends Context.Tag("Docker")<
   }
 >() {}
 
+/**
+ * Redact secret-bearing env args (`KEY=value`) in a docker argv before it lands
+ * in an error message. Non-sensitive pairs (e.g. `OPENCODE_DISABLE_MODELS_FETCH=1`)
+ * pass through, so the diagnostic argv stays useful without leaking tokens/keys.
+ */
+export function redactDockerArg(arg: string): string {
+  const m = /^([A-Za-z0-9_]+)=([\s\S]*)$/.exec(arg)
+  if (m && /TOKEN|KEY|SECRET|PASSWORD|AUTH|CREDENTIAL/i.test(m[1])) {
+    return `${m[1]}=<redacted>`
+  }
+  return arg
+}
+
 const runDockerCommand = (
   args: string[],
   executor: CommandExecutor.CommandExecutor,
@@ -98,6 +111,15 @@ const runDockerCommand = (
     Effect.gen(function* () {
       const cmd = Command.make("docker", ...args)
       const process = yield* executor.start(cmd)
+      // Drain stderr CONCURRENTLY with stdout. Collecting it lazily only after the
+      // process exits can yield an empty string (the closed stream produces nothing),
+      // which is exactly how failures surfaced as "docker exec failed (exit 1): "
+      // with no diagnostic text. Forking the drain captures whatever the child wrote.
+      const stderrFiber = yield* process.stderr.pipe(
+        Stream.decodeText(),
+        Stream.runCollect,
+        Effect.map(Chunk.join("")),
+      ).pipe(Effect.fork)
       const stdout = yield* process.stdout.pipe(
         Stream.decodeText(),
         Stream.runCollect,
@@ -105,15 +127,20 @@ const runDockerCommand = (
       )
       const exitCode = yield* process.exitCode
       if (exitCode !== 0) {
-        const stderr = yield* process.stderr.pipe(
-          Stream.decodeText(),
-          Stream.runCollect,
-          Effect.map(Chunk.join("")),
-        )
+        const stderr = yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.succeed("")))
+        // Include the exec'd argv (secrets redacted) and any stdout so a failure
+        // with empty stderr is still diagnosable (which command, what it printed).
+        const cmdStr = ["docker", ...args].map(redactDockerArg).join(" ")
+        const errText = stderr.trim() || "<empty stderr>"
+        const outText = stdout.trim()
         return yield* Effect.fail(
-          new DockerError(`docker ${args[0]} failed (exit ${exitCode}): ${stderr.trim()}`),
+          new DockerError(
+            `docker ${args[0]} failed (exit ${exitCode}): ${errText} | cmd=[${cmdStr}]` +
+              (outText ? ` | stdout=${outText}` : ""),
+          ),
         )
       }
+      yield* Fiber.join(stderrFiber).pipe(Effect.catchAll(() => Effect.void))
       return stdout.trim()
     }),
   ).pipe(Effect.mapError((e) => (e instanceof DockerError ? e : new DockerError("Docker command failed", e))))
