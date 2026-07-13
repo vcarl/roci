@@ -16,6 +16,10 @@ import {
   emptyEscalation,
   DEFAULT_APPRAISAL_THRESHOLDS,
   sanitizeDecideSkill,
+  normalizeMetricUnits,
+  extractDomainMetrics,
+  applyGroundTruthMetrics,
+  renderDomainStateForPrompt,
 } from "./state.js"
 import type { DecideResult, ObserveResult, OrientResult } from "../../skills/types.js"
 
@@ -540,5 +544,115 @@ describe("sanitizeDecideSkill", () => {
       const d = sanitizeDecideSkill({ decision: "continue", reasoning: "r", skill: raw } as unknown as DecideResult)
       expect("skill" in d).toBe(false)
     }
+  })
+})
+
+// ── Ground-truth metrics / domain-state rendering (D2/D3/N2) ────────────────
+
+// A well-formed OrientResult with judgment fields set, for the override tests.
+const orientFixture = (metrics: OrientResult["metrics"]): OrientResult => ({
+  headline: "some headline",
+  sections: [{ id: "s1", heading: "H", body: "B" }],
+  whatChanged: "delta",
+  emotionalState: "😐😐",
+  confidence: "medium",
+  metrics,
+})
+
+// The observed run-2 snapshot shape (SituationSummary): situation/headline/sections/metrics.
+const summaryJsonFixture = JSON.stringify({
+  situation: { type: "docked", flags: { lowFuel: false } },
+  headline: "docked — docked",
+  sections: [
+    {
+      id: "briefing",
+      heading: "Briefing",
+      body: "You are docked at First Step Memorial Station in the First Step system. Fuel: 49/100. Hull: 100/100.",
+    },
+  ],
+  metrics: {
+    situationType: "docked",
+    fuel: 0.49,
+    hull: 1,
+    cargoUsed: 2,
+    cargoCapacity: 50,
+    inCombat: false,
+    tick: 1274554,
+  },
+})
+
+describe("normalizeMetricUnits (N2 — unambiguous units)", () => {
+  it("renders ratio-convention keys (fuel/hull/shield) in [0,1] as percent", () => {
+    const out = normalizeMetricUnits({ fuel: 0.49, hull: 1, shield: 0 })
+    expect(out).toEqual({ fuel: "49%", hull: "100%", shield: "0%" })
+  })
+  it("leaves an already-absolute ratio-key value (>1) untouched", () => {
+    // A domain that emits absolute fuel (49, not 0.49) must not be mangled.
+    const out = normalizeMetricUnits({ fuel: 49, hull: 100 })
+    expect(out).toEqual({ fuel: 49, hull: 100 })
+  })
+  it("leaves non-ratio keys and non-number values untouched", () => {
+    const out = normalizeMetricUnits({ cargoUsed: 2, situationType: "docked", inCombat: false, fuel: "49%" })
+    expect(out).toEqual({ cargoUsed: 2, situationType: "docked", inCombat: false, fuel: "49%" })
+  })
+})
+
+describe("extractDomainMetrics", () => {
+  it("pulls the scalar metrics object out of a serialized summary", () => {
+    const m = extractDomainMetrics(summaryJsonFixture)
+    expect(m.situationType).toBe("docked")
+    expect(m.fuel).toBe(0.49)
+    expect(m.inCombat).toBe(false)
+  })
+  it("returns {} on a parse miss or an absent/non-object metrics field", () => {
+    expect(extractDomainMetrics("not json")).toEqual({})
+    expect(extractDomainMetrics(JSON.stringify({ headline: "x" }))).toEqual({})
+    expect(extractDomainMetrics(JSON.stringify({ metrics: "nope" }))).toEqual({})
+  })
+})
+
+describe("applyGroundTruthMetrics (D3 override)", () => {
+  it("overwrites confabulated factual metrics with ground truth (unit-normalized)", () => {
+    // The run-2 confabulation: model said drifting/Phase Drift while docked/full fuel.
+    const orient = orientFixture({ situationType: "drifting", location: "Phase Drift", fuel: 1 })
+    const out = applyGroundTruthMetrics(orient, extractDomainMetrics(summaryJsonFixture))
+    expect(out.metrics.situationType).toBe("docked")
+    expect(out.metrics.fuel).toBe("49%") // ground truth 0.49, N2-normalized
+    expect(out.metrics.hull).toBe("100%")
+  })
+  it("preserves synthesis-only metric keys the snapshot does not carry", () => {
+    const orient = orientFixture({ situationType: "drifting", location: "Phase Drift" })
+    const out = applyGroundTruthMetrics(orient, extractDomainMetrics(summaryJsonFixture))
+    // ground truth has no `location`, so the model's value survives untouched.
+    expect(out.metrics.location).toBe("Phase Drift")
+  })
+  it("leaves judgment fields (headline/sections/whatChanged/confidence/emotionalState) untouched", () => {
+    const orient = orientFixture({ situationType: "drifting" })
+    const out = applyGroundTruthMetrics(orient, extractDomainMetrics(summaryJsonFixture))
+    expect(out.headline).toBe(orient.headline)
+    expect(out.sections).toEqual(orient.sections)
+    expect(out.whatChanged).toBe(orient.whatChanged)
+    expect(out.confidence).toBe(orient.confidence)
+    expect(out.emotionalState).toBe(orient.emotionalState)
+  })
+  it("returns the orient UNCHANGED when ground truth is empty (never blanks synthesis metrics)", () => {
+    const orient = orientFixture({ situationType: "drifting", risk: "high" })
+    const out = applyGroundTruthMetrics(orient, {})
+    expect(out).toBe(orient)
+  })
+})
+
+describe("renderDomainStateForPrompt (D2)", () => {
+  it("renders situation, headline, section prose, and a unit-normalized metrics line", () => {
+    const rendered = renderDomainStateForPrompt(summaryJsonFixture)
+    expect(rendered).toContain("Situation: docked")
+    expect(rendered).toContain("docked — docked")
+    expect(rendered).toContain("First Step Memorial Station")
+    expect(rendered).toContain("Fuel: 49/100") // absolute ground truth from the briefing prose
+    expect(rendered).toContain("fuel=49%") // N2: no bare 0.49 float in the metrics line
+    expect(rendered).not.toContain("fuel=0.49")
+  })
+  it("falls back to the raw string on a parse miss", () => {
+    expect(renderDomainStateForPrompt("  raw non-json  ")).toBe("raw non-json")
   })
 })

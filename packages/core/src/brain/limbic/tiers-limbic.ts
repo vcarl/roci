@@ -8,7 +8,7 @@ import { loadSkillSync } from "../../skills/loader.js"
 import { getCadenceGuidance } from "#brain/limbic/hypothalamus/cadence.js"
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
 import { TEMPLATE_DRIVES, parseDriveNames } from "#brain/limbic/hypothalamus/drives.js"
-import { appraise } from "#brain/stem/state.js"
+import { appraise, applyGroundTruthMetrics, extractDomainMetrics } from "#brain/stem/state.js"
 import type { ObserveResult, OrientResult, WaitState } from "../../skills/types.js"
 import { parseOr, parseJsonSalvaging, isPlainObject } from "#brain/stem/parse.js"
 import { logToConsole, type CharacterLog } from "../../logging/log-writer.js"
@@ -132,15 +132,23 @@ export function runForebrain(
         // (string/null), since downstream `.map`s it.
         const merged = { ...fallback, ...parsed.value }
         const sections = Array.isArray(merged.sections) ? merged.sections : []
+        // D3: stamp the domain's authoritative structured metrics over the model's
+        // synthesis so stale-narrative confabulation (wrong location/fuel/situationType)
+        // can never reach the decider. Judgment fields (headline/sections/confidence)
+        // are untouched; a no-metrics snapshot is a no-op. Units are made unambiguous
+        // here too (N2 — fuel/hull rendered as percent, not a bare 0–1 float).
+        const grounded = applyGroundTruthMetrics(
+          { ...merged, sections },
+          extractDomainMetrics(domainState),
+        )
         // When the raw output was truncated at the token cap, parseJsonSalvaging
         // recovered it by dropping the incomplete trailing field. Stamp a metrics
         // marker (visible in the emitted tier record / synthesis) so downstream
         // and logs can tell the assessment was reconstructed rather than pristine.
-        if (!parsed.salvaged) return Effect.succeed<OrientResult>({ ...merged, sections })
+        if (!parsed.salvaged) return Effect.succeed<OrientResult>(grounded)
         const result: OrientResult = {
-          ...merged,
-          sections,
-          metrics: { ...merged.metrics, salvaged: "truncation-recovered" },
+          ...grounded,
+          metrics: { ...grounded.metrics, salvaged: "truncation-recovered" },
         }
         return logToConsole(
           config.char.name,

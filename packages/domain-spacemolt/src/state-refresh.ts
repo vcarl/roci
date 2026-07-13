@@ -39,6 +39,14 @@ export interface StateRefreshDeps {
   readonly timeoutGraceMs?: number
   /** Max age of the last SUCCESSFUL refresh before the watchdog escalates. */
   readonly staleCeilingMs: number
+  /**
+   * Recovery action the watchdog FORKS when it detects staleness. Defaults to a
+   * single `refreshOnce` (cheap re-poll of the current socket). The live wiring
+   * overrides this to trigger a full hard-reconnect (tear down the dead socket,
+   * dial a fresh one) — because a persistently-stale socket is usually a dead
+   * one, and re-polling a corpse throws "Cannot send on a closed socket".
+   */
+  readonly onStale?: Effect.Effect<void>
 }
 
 const DEFAULT_TIMEOUT_GRACE_MS = 2_000
@@ -120,8 +128,9 @@ export const makeStateRefreshLoop = (
       )
       // (b) defensively reset the latch in case a wedged refresh held it.
       yield* Ref.set(refreshInFlight, false)
-      // (c) trigger one immediate recovery refresh without blocking the watchdog.
-      yield* Effect.fork(refreshOnce)
+      // (c) trigger recovery WITHOUT blocking the watchdog. Defaults to a cheap
+      // re-poll; the live wiring overrides this to hard-reconnect the socket.
+      yield* Effect.fork(deps.onStale ?? refreshOnce)
     })
 
     const runPeriodic = Effect.forever(

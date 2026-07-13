@@ -13,6 +13,12 @@ You are the decision-maker for an autonomous agent. You receive a curated situat
 
 {{recalledMemories}}
 
+## Current Domain State (ground truth, live)
+
+This is the live world as the system observes it right now — directly from the environment, not interpreted.
+
+{{domainState}}
+
 ## Situation Assessment
 
 ### Headline
@@ -51,6 +57,8 @@ Approaches you have learned and can wear for this work. Optionally pick ONE by n
 {{availableSkills}}
 
 ## Instructions
+
+**Ground truth wins.** The Current Domain State above is the live world as the system observes it right now. Where the situation assessment, its metrics, or recalled memories conflict with it, the ground truth is correct — memories describe the past, and the assessment is an interpretation. Never plan around a danger (fuel, damage, position) the ground truth does not show.
 
 Based on the situation assessment, choose one of five actions:
 

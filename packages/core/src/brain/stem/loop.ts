@@ -358,6 +358,9 @@ export const runActivation = (config: ActivationConfig) =>
           identity.workingMemory,
           skillIndex,
           snap.attribution,
+          // D2: hand decide the same ground-truth snapshot the orient ran over so it
+          // grounds its choice in the live world, not the synthesis's narrative.
+          snap.summaryJson,
         )
         for (const w of decideMemories(decide)) yield* memory.remember(config.containerId, config.char, w)
         yield* (decide.decision === "plan" || decide.decision === "wait" || decide.decision === "terminate"

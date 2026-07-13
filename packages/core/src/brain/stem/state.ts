@@ -1,5 +1,6 @@
 import type { DecideResult, Disposition, ObserveResult, WaitState, OrientResult } from "../../skills/types.js"
 import type { PlanStep } from "../../core/types.js"
+import { isPlainObject } from "./parse.js"
 
 export interface ActivationState {
   accumulatedEvents: string[]
@@ -366,4 +367,145 @@ export function formatStepTask(step: PlanStep, headline: string, skillBody?: str
 export function formatExecutionReport(output: string): string {
   const trimmed = output.trim()
   return trimmed.length > 0 ? trimmed : "Worker produced no output."
+}
+
+// ── Ground-truth domain state (D2/D3/N2) ─────────────────────────────────────
+
+/**
+ * Metric keys whose value is conventionally a 0–1 ratio of a resource to its
+ * capacity — the domain classifier emits `fuel = ship.fuel / ship.max_fuel`,
+ * `hull = ship.hull / ship.max_hull`, etc. Rendered as a bare float, a small
+ * model misreads `0.49` as "49 units" or `1` as "1 unit — critical" (observed
+ * run-2, 03:42). These are rendered as an unambiguous percent wherever they feed
+ * a prompt.
+ *
+ * NOTE: the normalization itself happens DOMAIN-SIDE
+ * (packages/domain-spacemolt/src/situation-classifier.ts derives the ratios; the
+ * domain's `summarize` puts them in `metrics.fuel`/`metrics.hull`). Core cannot
+ * make the domain emit absolute X/Y, so it renders unambiguously at the
+ * prompt-construction seam instead.
+ */
+const RATIO_METRIC_KEYS: ReadonlySet<string> = new Set(["fuel", "hull", "shield"])
+
+/**
+ * Render metric units unambiguously (N2). A ratio-convention key
+ * (fuel/hull/shield) holding a number in [0,1] becomes a percent string
+ * (`0.49` → `"49%"`, `1` → `"100%"`). Every other key/value passes through
+ * untouched — an already-absolute value (fuel `49`, cargoUsed `2`) is out of
+ * [0,1] so it is left as-is, and a value already rendered as a string (`"49%"`)
+ * is not a number so it is left as-is. Pure; returns a new record.
+ */
+export function normalizeMetricUnits(
+  metrics: Record<string, string | number | boolean>,
+): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {}
+  for (const [k, v] of Object.entries(metrics)) {
+    out[k] = RATIO_METRIC_KEYS.has(k) && typeof v === "number" && v >= 0 && v <= 1
+      ? `${Math.round(v * 100)}%`
+      : v
+  }
+  return out
+}
+
+/**
+ * Extract the domain classifier's structured metrics object from a serialized
+ * situation summary (`JSON.stringify(SituationSummary)` — the `summaryJson`
+ * threaded through the loop). Returns `{}` on any parse miss or when `.metrics`
+ * is absent / not an object, so callers never throw on a malformed snapshot.
+ * Only scalar (string|number|boolean) values survive.
+ */
+export function extractDomainMetrics(
+  summaryJson: string,
+): Record<string, string | number | boolean> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(summaryJson)
+  } catch {
+    return {}
+  }
+  if (!isPlainObject(parsed)) return {}
+  const m = (parsed as { metrics?: unknown }).metrics
+  if (!isPlainObject(m)) return {}
+  const out: Record<string, string | number | boolean> = {}
+  for (const [k, v] of Object.entries(m)) {
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[k] = v
+  }
+  return out
+}
+
+/**
+ * D3 override — stamp the domain's authoritative structured metrics over a
+ * forebrain synthesis so downstream consumers (decide, steer directive, tier
+ * logs) never see a confabulated value for a fact the system already knows.
+ *
+ * The 9B forebrain routinely lets stale diary/WM/recalled-memory narrative
+ * override its freshly-injected state: run-2 (03:42) emitted metrics
+ * `{situationType:"drifting", location:"Phase Drift", system:"Horizon"}` while
+ * the injected ground truth said docked at First Step, fuel 100/100.
+ * Instructions alone do not fix a model this small, so it is corrected
+ * mechanically.
+ *
+ * Contract:
+ *  - Every key the ground-truth metrics provides WINS over the synthesis value
+ *    (fuel/hull/situationType/inCombat/…), unit-normalized (N2).
+ *  - Synthesis-only metric keys the snapshot does not carry are LEFT ALONE — the
+ *    model may surface a derived signal the classifier doesn't.
+ *  - An empty ground-truth set (parse miss / no metrics) returns the orient
+ *    UNCHANGED — it never blanks real synthesis metrics.
+ *  - JUDGMENT fields (headline, sections, whatChanged, emotionalState,
+ *    confidence) are untouched — only `metrics` is rewritten.
+ */
+export function applyGroundTruthMetrics(
+  orient: OrientResult,
+  ground: Record<string, string | number | boolean>,
+): OrientResult {
+  if (Object.keys(ground).length === 0) return orient
+  return { ...orient, metrics: { ...orient.metrics, ...normalizeMetricUnits(ground) } }
+}
+
+/**
+ * D2 render — a compact, human-readable "ground truth, live" view of the domain
+ * summary for the decide prompt. The forebrain synthesis the decider reads can
+ * confabulate the present (run-2: "stranded, fuel critical" while docked with
+ * full fuel); this section hands decide the live snapshot directly so it can
+ * ground its choice. Prefers the rich section prose (the briefing carries
+ * absolute "Fuel: 49/100" plus location/station), then appends a unit-normalized
+ * metrics line. Falls back to the raw JSON string on a parse miss — still ground
+ * truth, just unformatted. Pure; never throws.
+ */
+export function renderDomainStateForPrompt(summaryJson: string): string {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(summaryJson)
+  } catch {
+    return summaryJson.trim()
+  }
+  if (!isPlainObject(parsed)) return summaryJson.trim()
+
+  const lines: string[] = []
+  const situation = parsed.situation
+  const metricsObj = extractDomainMetrics(summaryJson)
+  const situationType =
+    (isPlainObject(situation) && typeof situation.type === "string" ? situation.type : undefined) ??
+    (typeof metricsObj.situationType === "string" ? metricsObj.situationType : undefined)
+  if (situationType) lines.push(`Situation: ${situationType}`)
+  if (typeof parsed.headline === "string" && parsed.headline.trim()) lines.push(parsed.headline)
+
+  const sections = parsed.sections
+  if (Array.isArray(sections)) {
+    for (const s of sections) {
+      if (isPlainObject(s) && typeof s.heading === "string" && typeof s.body === "string") {
+        lines.push(`\n${s.heading}:\n${s.body}`)
+      }
+    }
+  }
+
+  if (Object.keys(metricsObj).length > 0) {
+    const flat = Object.entries(normalizeMetricUnits(metricsObj))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("  ")
+    lines.push(`\nMetrics: ${flat}`)
+  }
+
+  return lines.length > 0 ? lines.join("\n") : summaryJson.trim()
 }

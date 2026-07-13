@@ -137,6 +137,38 @@ describe("state-refresh — staleness watchdog (Change 2)", () => {
     expect(calls.filter((c) => c.kind === "error")).toHaveLength(0)
   })
 
+  it("forks the injected onStale recovery (not refreshOnce) when provided", async () => {
+    const { emit } = makeEmitSink()
+    const clock = makeClock(0)
+    let refreshes = 0
+    let staleRecoveries = 0
+    const program = Effect.gen(function* () {
+      const loop = yield* makeStateRefreshLoop(
+        baseDeps({
+          emit,
+          now: clock.now,
+          // performRefresh would bump this if the watchdog re-polled the socket…
+          performRefresh: Effect.sync(() => {
+            refreshes += 1
+            return false
+          }),
+          // …but with onStale wired, recovery must run THIS instead.
+          onStale: Effect.sync(() => {
+            staleRecoveries += 1
+          }),
+          staleCeilingMs: 100,
+        }),
+      )
+      clock.set(200)
+      yield* loop.checkStale
+      yield* Effect.sleep("20 millis") // let the forked recovery run
+    })
+    await Effect.runPromise(program)
+    expect(staleRecoveries).toBe(1)
+    // The default refreshOnce recovery must NOT have fired.
+    expect(refreshes).toBe(0)
+  })
+
   it("throttles: at most one escalation per ceiling window while continuously stale", async () => {
     const { calls, emit } = makeEmitSink()
     const clock = makeClock(0)

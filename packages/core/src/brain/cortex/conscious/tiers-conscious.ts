@@ -7,7 +7,7 @@ import type { SpawnError, ReadinessError } from "../../../services/model-backend
 import type { CharacterLog } from "../../../logging/log-writer.js"
 import type { EpisodeAttribution } from "../../../logging/episodes.js"
 import { loadSkillSync } from "../../../skills/loader.js"
-import { sanitizeDecideSkill } from "#brain/stem/state.js"
+import { sanitizeDecideSkill, renderDomainStateForPrompt } from "#brain/stem/state.js"
 import { parseOr, isPlainObject } from "#brain/stem/parse.js"
 import type { DecideResult, EvaluateResult, EvaluateTransition, OrientResult } from "../../../skills/types.js"
 import { callTier, emitTier, getCadenceGuidance, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
@@ -54,10 +54,18 @@ export function runConsciousDecide(
   skillIndex = "",
   /** Fork-time attribution capture (see runForebrain); absent on the in-session path. */
   attribution?: EpisodeAttribution,
+  /**
+   * D2: the live domain snapshot (`summaryJson`) the orient ran over. Rendered as
+   * an authoritative "ground truth, live" section so the decider grounds its
+   * choice in the observed world rather than the synthesis's (occasionally
+   * confabulated) narrative. Empty string ⇒ the section is omitted.
+   */
+  domainState = "",
 ): Effect.Effect<DecideResult, ModelError | SpawnError | ReadinessError, ModelClient | ModelService | CharacterLog> {
   const prompt = skills.decide.render({
     cadence: config.cadence,
     cadenceGuidance: getCadenceGuidance("decide", config.cadence),
+    domainState: domainState.trim() ? renderDomainStateForPrompt(domainState) : "_No live domain snapshot available._",
     headline: orient.headline,
     whatChanged: orient.whatChanged,
     emotionalState: orient.emotionalState,
