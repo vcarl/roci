@@ -18,14 +18,24 @@ import * as fsp from "node:fs/promises"
 import * as path from "node:path"
 import { Effect } from "effect"
 import type { Judgment } from "../skills/types.js"
+import type { InternalEvent } from "./stream-normalizer.js"
 
 export const ARGS_SUMMARY_MAX = 200
+/** Max chars of a tool `command` field before ellipsis (mechanical trace). */
+export const COMMAND_MAX = 120
 /** Rotation: retain the last N reflection cycles (spec §1 "Rotation"). */
 export const EPISODE_RETAIN_CYCLES = 5
 export const TOOL_EPISODE_FILE = "episodes-tool.jsonl"
 export const TRANSITION_EPISODE_FILE = "episodes-transition.jsonl"
 
-/** One record per OpenCode tool call. Full tool responses are never stored. */
+/**
+ * One record per OpenCode tool call. Full tool responses are never stored.
+ *
+ * The `description`/`command`/`outputChars`/`exitCode` fields are an append-only
+ * enrichment (the mechanical tool trace fed to the conscious evaluate tier):
+ * all OPTIONAL, so records written before the enrichment (and calls that don't
+ * carry the source field) still parse unchanged.
+ */
 export interface ToolEpisode {
   ts: string
   tick: number | null
@@ -36,6 +46,18 @@ export interface ToolEpisode {
   /** Terminal tool state, e.g. "completed" | "error". */
   status: string
   durationMs: number | null
+  /** The tool call's self-description, if the runtime provides one (bash `input.description`). */
+  description?: string
+  /**
+   * A compact command string for the trace: for bash-like tools the raw
+   * `input.command`; for other tools the `argsSummary` — either truncated to
+   * COMMAND_MAX chars with an ellipsis.
+   */
+  command?: string
+  /** Character size of the tool's OUTPUT (pre-truncation), joined from the matching tool_result. */
+  outputChars?: number
+  /** Bash exit code when the runtime exposes one, or an error class/name on failure; absent otherwise. */
+  exitCode?: number | string
 }
 
 /** One record per OODA tier call: full rendered prompt + parsed output. */
@@ -345,6 +367,56 @@ export function summarizeArgs(input: unknown): string {
   return s.length <= ARGS_SUMMARY_MAX ? s : `${s.slice(0, ARGS_SUMMARY_MAX)}…`
 }
 
+/** Truncate a command string to COMMAND_MAX chars, appending an ellipsis when cut. */
+export function truncateCommand(s: string): string {
+  return s.length <= COMMAND_MAX ? s : `${s.slice(0, COMMAND_MAX)}…`
+}
+
+/**
+ * Build the tool-episode records for one batch of normalized events (the join
+ * seam). A single OpenCode tool call surfaces its `tool_use` (input/status/
+ * duration) and its `tool_result` (output) in the SAME normalize batch, so the
+ * output size is joined in-batch by `toolUseId`: index the tool_result text
+ * lengths first, then attach each to its terminal tool_use. A tool_use without a
+ * matching tool_result simply carries no `outputChars`; a tool_result without a
+ * prior tool_use yields no record (only terminal tool_use events become
+ * episodes). Pure + defensive — never throws; `now` is injectable for tests.
+ */
+export function buildToolEpisodes(
+  internal: readonly InternalEvent[],
+  ctx: { tick: number | null; stepId: string | null },
+  now: () => string = () => new Date().toISOString(),
+): ToolEpisode[] {
+  const outputChars = new Map<string, number>()
+  for (const ie of internal) {
+    if (ie.type === "tool_result") outputChars.set(ie.toolUseId, ie.text.length)
+  }
+  const records: ToolEpisode[] = []
+  for (const ie of internal) {
+    if (ie.type !== "tool_use") continue
+    // Only terminal tool calls become episodes (a running/undefined status is skipped).
+    if (ie.status !== "completed" && ie.status !== "error") continue
+    const input = ie.input && typeof ie.input === "object" ? (ie.input as Record<string, unknown>) : {}
+    const description = typeof input.description === "string" ? input.description : undefined
+    const command = typeof input.command === "string" ? input.command : summarizeArgs(ie.input)
+    const size = outputChars.get(ie.id)
+    records.push({
+      ts: now(),
+      tick: ctx.tick,
+      stepId: ctx.stepId,
+      tool: ie.name,
+      argsSummary: summarizeArgs(ie.input),
+      status: ie.status,
+      durationMs: ie.durationMs ?? null,
+      ...(description !== undefined ? { description } : {}),
+      command: truncateCommand(command),
+      ...(size !== undefined ? { outputChars: size } : {}),
+      ...(ie.exitCode !== undefined ? { exitCode: ie.exitCode } : {}),
+    })
+  }
+  return records
+}
+
 // ── Append writers (swallow-and-log; never fail) ─────────────
 const append = (character: string, file: string, record: unknown): Effect.Effect<void> => {
   const root = episodeRoot
@@ -519,6 +591,25 @@ export const readCurrentCycleEpisodes = (
     tool: await readCurrentStream<ToolEpisode>(root, character, TOOL_EPISODE_FILE),
     transition: await readCurrentStream<TransitionEpisode>(root, character, TRANSITION_EPISODE_FILE),
   }))
+}
+
+/**
+ * The current step's tool episodes: this cycle's tool records filtered to
+ * `stepId`, chronological (as appended). Powers the conscious evaluate tier's
+ * mechanical `## Tool Calls This Step` trace. Never fails: an unset root or a
+ * missing file degrades to an empty array. Reads only the current cycle, so it
+ * is cheap and self-bounding.
+ */
+export const readCurrentStepToolEpisodes = (
+  character: string,
+  stepId: string,
+): Effect.Effect<ToolEpisode[]> => {
+  const root = episodeRoot
+  if (root === null) return Effect.succeed([])
+  return Effect.promise(async () => {
+    const all = await readCurrentStream<ToolEpisode>(root, character, TOOL_EPISODE_FILE)
+    return all.filter((e) => e.stepId === stepId)
+  })
 }
 
 /**

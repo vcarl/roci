@@ -6,7 +6,7 @@ import type { InternalEvent } from "../../../logging/stream-normalizer.js"
 import { ClaudeError } from "../../../services/Claude.js"
 import { toUnifiedEvents, eventBase } from "../../../logging/events.js"
 import { CharacterLog, logToConsole } from "../../../logging/log-writer.js"
-import { appendToolEpisode, episodeContext, summarizeArgs } from "../../../logging/episodes.js"
+import { appendToolEpisode, buildToolEpisodes, episodeContext } from "../../../logging/episodes.js"
 
 /**
  * How long a body/brain turn may stay silent (no stdout) before the heartbeat
@@ -190,27 +190,26 @@ export const runTransport = (input: TransportInput): Effect.Effect<
               // Episode substrate (spec §1): one low-fidelity record per OpenCode
               // tool call that reached a terminal state. Only normalizeOpenCode
               // sets `status`, so claude-runtime brain turns are naturally
-              // excluded. Never store the tool output. appendToolEpisode is
-              // swallow-and-log — it can never disturb the transport.
-              for (const ie of internal) {
-                if (ie.type === "tool_use" && (ie.status === "completed" || ie.status === "error")) {
-                  const ctx = episodeContext(input.char.name)
-                  yield* appendToolEpisode(input.char.name, {
-                    ts: new Date().toISOString(),
-                    tick: ctx.tick,
-                    stepId: ctx.stepId,
-                    tool: ie.name,
-                    argsSummary: summarizeArgs(ie.input),
-                    status: ie.status,
-                    durationMs: ie.durationMs ?? null,
-                  })
-                }
+              // excluded. buildToolEpisodes joins each terminal tool_use to its
+              // in-batch tool_result for the output size and derives the
+              // description/command/exitCode enrichment (never storing the full
+              // output). appendToolEpisode is swallow-and-log — it can never
+              // disturb the transport.
+              const ctx = episodeContext(input.char.name)
+              for (const rec of buildToolEpisodes(internal, ctx)) {
+                yield* appendToolEpisode(input.char.name, rec)
               }
             } else if (line.trim()) {
+              // A non-empty line that isn't JSON (malformed / non-stream-json
+              // output). parseStreamJson already swallowed the parse error, so
+              // this can never crash the turn — surface it as a single bounded
+              // warn with a truncated sample rather than dumping an unbounded line.
+              const sample = line.length > 200 ? `${line.slice(0, 200)}… [${line.length - 200} more chars]` : line
               yield* log.emit(input.char, {
                 ...eventBase(input.char.name, input.role, input.runtimeTag),
                 kind: "system",
-                message: line,
+                message: `non-JSON stream line: ${sample}`,
+                level: "warn",
               })
             }
           }),

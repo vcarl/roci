@@ -171,4 +171,71 @@ describe("normalizeOpenCode", () => {
     })
     expect(events).toEqual([{ type: "tool_use", id: "prt_r", name: "bash", input: {}, status: "running" }])
   })
+
+  // ── Hardening: gracefully handle ALL log output from OpenCode ──────────────
+  it("surfaces an unknown event type as a passthrough (never silently dropped)", () => {
+    const events = normalizeOpenCode({ type: "totally_new_kind", part: {} })
+    expect(events).toEqual([{ type: "passthrough", rawType: "totally_new_kind" }])
+  })
+
+  it("passes through a missing/non-string event type as 'unknown'", () => {
+    expect(normalizeOpenCode({ part: {} })).toEqual([{ type: "passthrough", rawType: "unknown" }])
+    expect(normalizeOpenCode({ type: 42 } as Record<string, unknown>)).toEqual([
+      { type: "passthrough", rawType: "unknown" },
+    ])
+  })
+
+  it("does not throw on a non-object line (bare value survived JSON.parse)", () => {
+    expect(() => normalizeOpenCode(5 as unknown as Record<string, unknown>)).not.toThrow()
+    expect(normalizeOpenCode("str" as unknown as Record<string, unknown>)).toEqual([
+      { type: "passthrough", rawType: "unknown" },
+    ])
+  })
+
+  it("does not throw when a tool_use is missing its state / part entirely", () => {
+    expect(normalizeOpenCode({ type: "tool_use" })).toEqual([{ type: "tool_use", id: "", name: "", input: {} }])
+    expect(normalizeOpenCode({ type: "tool_use", part: { id: "p", tool: "bash" } })).toEqual([
+      { type: "tool_use", id: "p", name: "bash", input: {} },
+    ])
+  })
+
+  it("does not throw when tool state fields are the wrong type", () => {
+    const events = normalizeOpenCode({
+      type: "tool_use",
+      part: { id: "p", tool: "bash", state: { status: "completed", input: "not-an-object", time: "nope", output: 7 } },
+    })
+    // input coerced to {}, no durationMs (time not an object), output stringified.
+    expect(events).toEqual([
+      { type: "tool_use", id: "p", name: "bash", input: {}, status: "completed" },
+      { type: "tool_result", toolUseId: "p", text: "7" },
+    ])
+  })
+
+  it("extracts a numeric exit code from state.metadata.exit", () => {
+    const [toolUse] = normalizeOpenCode({
+      type: "tool_use",
+      part: { id: "p", tool: "bash", state: { status: "error", input: {}, output: "boom", metadata: { exit: 2 } } },
+    })
+    expect(toolUse).toMatchObject({ type: "tool_use", exitCode: 2 })
+  })
+
+  it("names the error class on a failed tool state that carries state.error", () => {
+    const [toolUse] = normalizeOpenCode({
+      type: "tool_use",
+      part: { id: "p", tool: "bash", state: { status: "error", input: {}, output: "x", error: { name: "TimeoutError" } } },
+    })
+    expect(toolUse).toMatchObject({ exitCode: "TimeoutError" })
+  })
+
+  it("omits exitCode when the state exposes no code and no named error", () => {
+    const [toolUse] = normalizeOpenCode({
+      type: "tool_use",
+      part: { id: "p", tool: "bash", state: { status: "error", input: {}, output: "plain failure" } },
+    })
+    expect(toolUse).not.toHaveProperty("exitCode")
+  })
+
+  it("does not throw on a malformed error event (missing error object)", () => {
+    expect(normalizeOpenCode({ type: "error" })).toEqual([{ type: "error", message: "unknown error" }])
+  })
 })

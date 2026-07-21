@@ -12,7 +12,9 @@ import type { EvaluateResult } from "../../../skills/types.js"
 import type { TurnResult } from "#brain/stem/transport/types.js"
 import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import { detectCompletion, formatExecutionReport } from "#brain/stem/state.js"
+import { episodeContext, readCurrentStepToolEpisodes } from "../../../logging/episodes.js"
 import type { ConsciousThought } from "./conscious-thought.js"
+import { renderToolTrace } from "./tool-trace.js"
 import { runConsciousEvaluate, runDiaryTurn, type EvaluateInput, type DiaryTurnInput } from "./tiers-conscious.js"
 
 /**
@@ -23,10 +25,11 @@ import { runConsciousEvaluate, runDiaryTurn, type EvaluateInput, type DiaryTurnI
  */
 export const DEFAULT_STEER_CADENCE_TICKS = 3
 
-/** The conscious/evaluate context the loop assembles minus the accumulated step
- * report — the session owns `stepReport` and fills `executionReport` itself, so
- * the loop never touches the turn transcript. */
-export type SessionEvaluateInput = Omit<EvaluateInput, "executionReport">
+/** The conscious/evaluate context the loop assembles minus the session-owned
+ * fields: the session owns `stepReport` (→ `executionReport`) and reads the
+ * step's tool episodes itself (→ `toolTrace`), so the loop never touches the
+ * turn transcript or the mechanical trace. */
+export type SessionEvaluateInput = Omit<EvaluateInput, "executionReport" | "toolTrace">
 /** As {@link SessionEvaluateInput}: the diary context minus the session-owned report. */
 export type SessionDiaryInput = Omit<DiaryTurnInput, "executionReport">
 
@@ -191,7 +194,19 @@ export function makeConsciousSession(deps: ConsciousSessionDeps): ConsciousSessi
   }
 
   const evaluate = (input: SessionEvaluateInput) =>
-    runConsciousEvaluate(runnerConfig, { ...input, executionReport: formatExecutionReport(stepReport) })
+    Effect.gen(function* () {
+      // Read THIS step's mechanical tool trace (the loop's episode context still
+      // holds the current stepId at evaluate time — it advances only after the
+      // step-end record). The trace is a bounded read of the current cycle's tool
+      // episodes filtered to the step; a missing stepId/root degrades to empty.
+      const stepId = episodeContext(char.name).stepId
+      const episodes = stepId === null ? [] : yield* readCurrentStepToolEpisodes(char.name, stepId)
+      return yield* runConsciousEvaluate(runnerConfig, {
+        ...input,
+        executionReport: formatExecutionReport(stepReport),
+        toolTrace: renderToolTrace(episodes),
+      })
+    })
 
   const diary = (input: SessionDiaryInput) =>
     runDiaryTurn(runnerConfig, { ...input, executionReport: formatExecutionReport(stepReport) })

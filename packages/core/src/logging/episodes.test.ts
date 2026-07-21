@@ -22,11 +22,16 @@ import {
   appendTransitionEpisode,
   sliceCurrentCycle,
   readCurrentCycleEpisodes,
+  readCurrentStepToolEpisodes,
   retainLastCycles,
   finishEpisodeCycle,
+  buildToolEpisodes,
+  truncateCommand,
+  COMMAND_MAX,
   type ToolEpisode,
   type WmTransitionEpisode,
 } from "./episodes.js"
+import type { InternalEvent } from "./stream-normalizer.js"
 
 const toolRecord = (over: Partial<ToolEpisode> = {}): ToolEpisode => ({
   ts: "2026-07-02T00:00:00.000Z",
@@ -420,5 +425,120 @@ describe("sliceCurrentCycle / readCurrentCycleEpisodes", () => {
   it("returns empty arrays when the episode root is unset", async () => {
     setEpisodeLogRoot(null)
     expect(await Effect.runPromise(readCurrentCycleEpisodes("ghost"))).toEqual({ tool: [], transition: [] })
+  })
+})
+
+// ── Mechanical trace enrichment (buildToolEpisodes + read helper) ────────────
+describe("truncateCommand", () => {
+  it("passes a short command through unchanged", () => {
+    expect(truncateCommand("ls -la")).toBe("ls -la")
+  })
+  it("truncates at COMMAND_MAX and appends an ellipsis", () => {
+    const long = "x".repeat(COMMAND_MAX + 80)
+    const out = truncateCommand(long)
+    expect(out).toBe(`${"x".repeat(COMMAND_MAX)}…`)
+    expect(out.length).toBe(COMMAND_MAX + 1)
+  })
+  it("keeps a command exactly at the cap intact", () => {
+    const exact = "y".repeat(COMMAND_MAX)
+    expect(truncateCommand(exact)).toBe(exact)
+  })
+})
+
+describe("buildToolEpisodes", () => {
+  const ctx = { tick: 5, stepId: "c1-s5-0" }
+  const now = () => "2026-07-21T00:00:00.000Z"
+
+  it("captures description + command and joins the tool_result output size", () => {
+    const internal: InternalEvent[] = [
+      { type: "tool_use", id: "prt_1", name: "bash", input: { command: "spacemolt storage/view", description: "Check storage" }, status: "completed", durationMs: 7 },
+      { type: "tool_result", toolUseId: "prt_1", text: "Storage at frontier_station\nItems (2):" },
+    ]
+    const [rec] = buildToolEpisodes(internal, ctx, now)
+    expect(rec).toEqual({
+      ts: "2026-07-21T00:00:00.000Z",
+      tick: 5,
+      stepId: "c1-s5-0",
+      tool: "bash",
+      argsSummary: '{"command":"spacemolt storage/view","description":"Check storage"}',
+      status: "completed",
+      durationMs: 7,
+      description: "Check storage",
+      command: "spacemolt storage/view",
+      outputChars: "Storage at frontier_station\nItems (2):".length,
+    })
+  })
+
+  it("truncates a long command to COMMAND_MAX with an ellipsis", () => {
+    const command = `spacemolt ${"a".repeat(200)}`
+    const [rec] = buildToolEpisodes(
+      [{ type: "tool_use", id: "p", name: "bash", input: { command }, status: "completed" }],
+      ctx,
+      now,
+    )
+    expect(rec.command).toBe(`${command.slice(0, COMMAND_MAX)}…`)
+  })
+
+  it("falls back to a truncated argsSummary for a non-bash tool (no input.command)", () => {
+    const [rec] = buildToolEpisodes(
+      [{ type: "tool_use", id: "p", name: "read", input: { file: "x.ts" }, status: "completed" }],
+      ctx,
+      now,
+    )
+    expect(rec.description).toBeUndefined()
+    expect(rec.command).toBe('{"file":"x.ts"}')
+  })
+
+  it("captures a numeric exit code and an error class name", () => {
+    const [num] = buildToolEpisodes(
+      [{ type: "tool_use", id: "p", name: "bash", input: { command: "false" }, status: "error", exitCode: 1 }],
+      ctx,
+      now,
+    )
+    expect(num.exitCode).toBe(1)
+    const [named] = buildToolEpisodes(
+      [{ type: "tool_use", id: "p", name: "bash", input: {}, status: "error", exitCode: "TimeoutError" }],
+      ctx,
+      now,
+    )
+    expect(named.exitCode).toBe("TimeoutError")
+  })
+
+  it("a terminal tool_use WITHOUT a matching tool_result carries no outputChars", () => {
+    const [rec] = buildToolEpisodes(
+      [{ type: "tool_use", id: "lonely", name: "bash", input: { command: "ls" }, status: "completed" }],
+      ctx,
+      now,
+    )
+    expect(rec.outputChars).toBeUndefined()
+    expect(rec.durationMs).toBeNull()
+  })
+
+  it("a tool_result WITHOUT a prior tool_use yields no episode", () => {
+    expect(buildToolEpisodes([{ type: "tool_result", toolUseId: "ghost", text: "orphan" }], ctx, now)).toEqual([])
+  })
+
+  it("skips non-terminal (running / status-less) tool calls", () => {
+    const internal: InternalEvent[] = [
+      { type: "tool_use", id: "a", name: "bash", input: {}, status: "running" },
+      { type: "tool_use", id: "b", name: "bash", input: {} },
+    ]
+    expect(buildToolEpisodes(internal, ctx, now)).toEqual([])
+  })
+})
+
+describe("readCurrentStepToolEpisodes", () => {
+  it("returns only the requested step's tool records, chronologically", async () => {
+    setEpisodeStep("ada", "c1-s1-0")
+    await Effect.runPromise(appendToolEpisode("ada", toolRecord({ stepId: "c1-s1-0", command: "a" })))
+    await Effect.runPromise(appendToolEpisode("ada", toolRecord({ stepId: "c1-s1-0", command: "b" })))
+    await Effect.runPromise(appendToolEpisode("ada", toolRecord({ stepId: "c1-s2-0", command: "other" })))
+    const step = await Effect.runPromise(readCurrentStepToolEpisodes("ada", "c1-s1-0"))
+    expect(step.map((e) => e.command)).toEqual(["a", "b"])
+  })
+
+  it("degrades to an empty array when the root is unset", async () => {
+    setEpisodeLogRoot(null)
+    expect(await Effect.runPromise(readCurrentStepToolEpisodes("ghost", "s"))).toEqual([])
   })
 })

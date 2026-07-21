@@ -26,6 +26,13 @@ export interface EvaluateInput {
   ticksBudgeted: number
   ticksConsumed: number
   executionReport: string
+  /**
+   * The mechanical `## Tool Calls This Step` trace (rendered by
+   * {@link ./tool-trace.ts#renderToolTrace}). Session-filled; optional so
+   * standalone callers/tests may omit it — the renderer supplies the empty
+   * placeholder when it is absent/blank.
+   */
+  toolTrace?: string
   stateDiff: string
   conditionCheck: string
   emotionalState: string
@@ -143,6 +150,7 @@ export function runConsciousEvaluate(
     secondsConsumed: String(secondsConsumed),
     overrunWarning,
     executionReport: input.executionReport,
+    toolTrace: input.toolTrace?.trim() ? input.toolTrace : "_No tool calls recorded this step._",
     stateDiff: input.stateDiff,
     conditionCheck: input.conditionCheck,
     emotionalState: input.emotionalState,

@@ -26,6 +26,12 @@ You are evaluating whether a step in your plan was completed successfully. Based
 
 {{executionReport}}
 
+## Tool Calls This Step
+
+This is the mechanical record of the tools actually invoked (with outcomes, exit codes, runtimes, and output sizes) — when it disagrees with the narrative above, weigh this record more heavily, because it is what actually happened.
+
+{{toolTrace}}
+
 ## State Changes (before → after)
 
 {{stateDiff}}
