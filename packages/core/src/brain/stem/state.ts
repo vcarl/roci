@@ -613,6 +613,25 @@ export function isChatEventType(type: string): boolean {
   return /chat|message/i.test(type)
 }
 
+/**
+ * Compose the model-facing event text with the domain's STATUS digest. The
+ * digest goes UNDER the `type:` line and ABOVE the raw JSON, so the observe
+ * rubric's "read the event `type:` first" contract holds (an above-type prepend
+ * measurably broke the 2B's `(seen Nx recently)` discard reflex). An empty
+ * digest returns the text unchanged; text without a leading `type:` line gets
+ * the digest prepended. Called AFTER fingerprinting — the digest never
+ * participates in dedup identity. Shared with tools/appraisal-eval so the
+ * offline harness assembles byte-identically.
+ */
+export function composeDigestedEventText(text: string, digest: string): string {
+  if (digest === "") return text
+  const nl = text.indexOf("\n")
+  if (nl >= 0 && /^type:/i.test(text.slice(0, nl).trim())) {
+    return `${text.slice(0, nl)}\n${digest}${text.slice(nl)}`
+  }
+  return `${digest}\n${text}`
+}
+
 /** One entry in the loop's sliding fingerprint history. */
 export interface DedupWindowEntry {
   readonly full: string

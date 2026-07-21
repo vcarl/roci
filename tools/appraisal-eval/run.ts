@@ -29,10 +29,18 @@ import { execSync } from "node:child_process"
 
 import { loadSkillSync } from "../../packages/core/src/skills/loader.ts"
 import { parseOr } from "../../packages/core/src/brain/stem/parse.ts"
-import { appraise, guardAppraisal } from "../../packages/core/src/brain/stem/state.ts"
+import { appraise, guardAppraisal, composeDigestedEventText } from "../../packages/core/src/brain/stem/state.ts"
 import { TEMPLATE_DRIVES, parseDriveNames } from "../../packages/core/src/brain/limbic/hypothalamus/drives.ts"
 import { DEFAULT_CORTEX_MODELS } from "../../packages/core/src/model/handles.ts"
 import type { ObserveResult } from "../../packages/core/src/skills/types.ts"
+// Digest assembly mirror (see README "Assembly fidelity"): the SAME domain
+// functions the runtime uses. `formatEventDigest` is the exact function the
+// StateRenderer delegates to; `spaceMoltEventProcessor` reconstructs a GameState
+// from a fixture's raw event via the SAME reducer the loop drives — no
+// hand-written digest, no hand-rolled state.
+import { formatEventDigest, isSnapshotEventType } from "../../packages/domain-spacemolt/src/event-digest.ts"
+import { spaceMoltEventProcessor } from "../../packages/domain-spacemolt/src/event-processor.ts"
+import type { GameState } from "../../packages/domain-spacemolt/src/types.ts"
 
 const HERE = import.meta.dirname
 const REPO = path.resolve(HERE, "..", "..")
@@ -93,8 +101,119 @@ const PALETTE = (() => {
 const DRIVES = TEMPLATE_DRIVES // vcarl has no me/DRIVES.md → runtime uses TEMPLATE_DRIVES
 const KNOWN_DRIVES = parseDriveNames(DRIVES)
 
+// ── digest assembly (mirrors loop.ts submit seam) ────────────────────────────
+// A minimal healthy base GameState. Snapshot fixtures (full_state / logged_in)
+// overwrite ship+location wholesale via applyFullState, so their digest reflects
+// the fixture. An observation_update carries no ship fields, so its fuel/hull
+// fall back to this healthy base — a documented stateless divergence (README §6):
+// live, those numbers come from the accumulated prior full_state.
+const BASE_STATE: GameState = {
+  player: {
+    id: "",
+    username: "vcarl",
+    empire: "",
+    credits: 0,
+    current_system: "",
+    current_poi: "",
+    current_ship_id: "",
+    home_base: "",
+    docked_at_base: null,
+    faction_id: null,
+    faction_rank: null,
+    status_message: "",
+    clan_tag: "",
+    is_cloaked: false,
+    anonymous: false,
+    skills: {},
+    skill_xp: {},
+    stats: {},
+  },
+  ship: {
+    id: "",
+    class_id: "",
+    name: "",
+    hull: 100,
+    max_hull: 100,
+    shield: 0,
+    max_shield: 0,
+    shield_recharge: 0,
+    armor: 0,
+    speed: 0,
+    fuel: 100,
+    max_fuel: 100,
+    cargo_used: 0,
+    cargo_capacity: 0,
+    cpu_used: 0,
+    cpu_capacity: 0,
+    power_used: 0,
+    power_capacity: 0,
+    weapon_slots: 0,
+    defense_slots: 0,
+    utility_slots: 0,
+    modules: [],
+    cargo: [],
+  },
+  poi: null,
+  system: null,
+  cargo: [],
+  nearby: [],
+  notifications: [],
+  travelProgress: null,
+  inCombat: false,
+  tick: 0,
+  timestamp: 0,
+}
+
+/**
+ * Parse a fixture's `type: X\n<json>` event text into { type, event-object }.
+ * Some dedup/nav fixtures preserve a real trailing ` (seen Nx recently)` suffix
+ * AFTER the JSON, so slice the object by its outer braces rather than parsing the
+ * whole remainder (the suffix carries no braces).
+ */
+function parseFixtureEvent(text: string): { type: string; obj: Record<string, unknown> } | null {
+  const nl = text.indexOf("\n")
+  if (nl < 0) return null
+  const typeMatch = /^type:\s*(.+)$/i.exec(text.slice(0, nl).trim())
+  const type = typeMatch ? typeMatch[1].trim() : "unknown"
+  const rest = text.slice(nl + 1)
+  const open = rest.indexOf("{")
+  const close = rest.lastIndexOf("}")
+  if (open < 0 || close <= open) return null
+  try {
+    const obj = JSON.parse(rest.slice(open, close + 1)) as Record<string, unknown>
+    return { type, obj }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Reconstruct the STATUS digest the loop would prepend for this fixture, via the
+ * REAL code path: run the fixture event through spaceMoltEventProcessor to fold
+ * it onto BASE_STATE, then call the REAL formatEventDigest. Returns "" for
+ * non-snapshot events (chat, combat, discrete) exactly like the runtime.
+ */
+function digestForFixture(fx: Fixture): string {
+  const parsed = parseFixtureEvent(fx.event)
+  if (!parsed || !isSnapshotEventType(parsed.type)) return ""
+  let state: GameState = BASE_STATE
+  try {
+    const result = spaceMoltEventProcessor.processEvent(parsed.obj as never, state as never)
+    if (result.stateUpdate) state = result.stateUpdate(state as never) as GameState
+  } catch {
+    return ""
+  }
+  return formatEventDigest(parsed.type, state)
+}
+
 function renderPrompt(fx: Fixture): string {
-  return skill.render({ event: fx.event, waitState: fx.waitState, palette: PALETTE, drives: DRIVES })
+  // Mirror loop.ts: compose the STATUS digest into the model-facing text via the
+  // SAME composeDigestedEventText the loop uses (digest under the `type:` line,
+  // above the raw JSON). Composed on a copy of the fixture text (the fixture on
+  // disk stays the raw payload) — same as the runtime composing it only after
+  // fingerprinting.
+  const event = composeDigestedEventText(fx.event, digestForFixture(fx))
+  return skill.render({ event, waitState: fx.waitState, palette: PALETTE, drives: DRIVES })
 }
 
 // Worked-example reason strings, parsed from the prompt template, for echo-rate.

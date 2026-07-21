@@ -6,6 +6,7 @@ import {
   richSnapshot,
   stateDiff,
 } from "./state-renderer.js"
+import { formatEventDigest } from "./event-digest.js"
 
 export const spaceMoltStateRenderer: StateRenderer = {
   richSnapshot(state) {
@@ -28,6 +29,10 @@ export const spaceMoltStateRenderer: StateRenderer = {
     // climbing age even as ticks advance, making the staleness visible in logs.
     if (typeof metrics.stateAgeSec === "number") parts.push(`age:${metrics.stateAgeSec}s`)
     return parts.join(" ")
+  },
+
+  formatEventDigest(eventType, state) {
+    return formatEventDigest(eventType, state as GameState)
   },
 }
 

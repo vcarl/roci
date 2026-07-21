@@ -127,6 +127,7 @@ reimplementation) directly from `packages/core/src`, run under `bun`:
 
 | runtime seam (`brain/limbic/tiers-limbic.ts` → `runHindbrain`) | harness |
 | --- | --- |
+| loop composes the model-facing text: inserts the domain **STATUS digest** under the snapshot event's `type:` line (`brain/stem/loop.ts` submit seam, `renderer.formatEventDigest(type, state)` + `composeDigestedEventText`) | imports the SAME `formatEventDigest` (domain `event-digest.ts`) and `composeDigestedEventText`, reconstructing the fixture's `state` through the SAME `spaceMoltEventProcessor.processEvent` reducer — no hand-written digest, no hand-rolled state |
 | `skills.observe.render({ event, waitState, palette, drives })` | `loadSkillSync(promptPath).render({ event, waitState, palette, drives })` — same `loadSkillSync`, same template engine |
 | `config.palette` ← `readPalette` (`players/vcarl/me/PALETTE.md`) | reads the same file verbatim |
 | `config.drives` ← `readDrives`, falls back to `TEMPLATE_DRIVES` (vcarl has no `DRIVES.md`) | imports `TEMPLATE_DRIVES` |
@@ -160,3 +161,14 @@ reimplementation) directly from `packages/core/src`, run under `bun`:
    tick history, so `dedup-eligible` / `dedup-chain` fixtures measure how the
    model would behave if it *did* see the repeat (the `(seen Nx recently)` suffix
    on real events is preserved in the fixture text where present).
+6. **Stateless digest reconstruction.** The runtime STATUS digest is built from
+   the loop's *accumulated* `GameState`. The harness reconstructs each fixture's
+   state by folding ONLY that fixture's event onto a healthy base state (via the
+   real `spaceMoltEventProcessor`), so:
+   - `full_state` / `logged_in` fixtures carry the ship+location wholesale → their
+     digest fuel/hull/dock/location is exact (this is the fuel-low path).
+   - `observation_update` fixtures carry no ship fields → their digest fuel/hull
+     fall back to the healthy base (100%). Live, those numbers come from the prior
+     accumulated `full_state`; the digest's *nearby* clause and location ARE from
+     the fixture. The fingerprint is unaffected either way: the loop composes the
+     digest AFTER fingerprinting `ev.text`, so the digest never perturbs dedup.

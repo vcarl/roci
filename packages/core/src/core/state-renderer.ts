@@ -13,6 +13,16 @@ export interface StateRenderer {
   stateDiff(before: Record<string, unknown> | null, after: Record<string, unknown>): string
   /** Compact console output line per tick. Returns the metric body string (no name prefix); empty string when there are no parts. */
   formatStateBar(metrics: Record<string, string | number | boolean>): string
+  /**
+   * Optional. A compact structured STATUS digest prepended above the raw JSON of
+   * a snapshot-type event before it reaches the reflex tier, so a small model can
+   * key on salient facts (e.g. banded fuel/hull) instead of mining a large blob.
+   * Returns "" for event types that should carry no digest (chat, discrete, and
+   * anything the domain doesn't treat as a state snapshot). Domains without a
+   * digest simply omit this method — the loop then prepends nothing. Composed by
+   * the loop AFTER event fingerprinting, so it never affects dedup.
+   */
+  formatEventDigest?(eventType: string, state: DomainState): string
 }
 
 /**

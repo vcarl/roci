@@ -52,6 +52,7 @@ import {
   STEP_DONE_MARKER,
   eventFingerprint,
   isChatEventType,
+  composeDigestedEventText,
   countRecentFingerprints,
   summarizeEventText,
   planTitleFromHeadline,
@@ -716,8 +717,20 @@ export const runActivation = (config: ActivationConfig) =>
           // must arrive UNANNOTATED. CONTRACT with the observe rubric: exactly
           // this human-readable form, N = total exact occurrences incl. this one.
           const seenN = exactCount + 1
-          const text = exactCount > 0 ? `${ev.text} (seen ${seenN}x recently)` : ev.text
-          yield* reflex.submit(text, cortex.waitState)
+          const suffixed = exactCount > 0 ? `${ev.text} (seen ${seenN}x recently)` : ev.text
+          // Insert the domain's compact STATUS digest under the `type:` line of
+          // snapshot-type frames (fuel/hull banded + location + nearby), so the
+          // 2B keys on a salient line instead of extracting numbers from a ~9KB
+          // JSON blob (the measured failure mode: a low-fuel full_state discarded
+          // because the model never reads `"fuel":6`). Composed HERE, AFTER the
+          // fingerprint above (which keys on raw `ev.text`), so the digest never
+          // perturbs dedup; and it is deterministic w.r.t. the same `state` the
+          // situation summary reads (no timestamps). Under — not above — the
+          // `type:` line because the observe rubric reads the type first (an
+          // above-type prepend measurably broke the repeat-discard reflex).
+          // Domains without a digest omit `formatEventDigest` → text unchanged.
+          const digest = renderer.formatEventDigest?.(fp.type, state as never) ?? ""
+          yield* reflex.submit(composeDigestedEventText(suffixed, digest), cortex.waitState)
         }
       }
       // Prune history entries that have aged out of the window (post-use, so this

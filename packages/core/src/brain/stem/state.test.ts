@@ -22,6 +22,7 @@ import {
   renderDomainStateForPrompt,
   eventFingerprint,
   isChatEventType,
+  composeDigestedEventText,
   countRecentFingerprints,
   summarizeEventText,
   planTitleFromHeadline,
@@ -869,6 +870,28 @@ describe("isChatEventType", () => {
     expect(isChatEventType("player_message")).toBe(true)
     expect(isChatEventType("observation_update")).toBe(false)
     expect(isChatEventType("combat")).toBe(false)
+  })
+})
+
+describe("composeDigestedEventText", () => {
+  it("inserts the digest under the `type:` line, above the raw JSON", () => {
+    const text = 'type: full_state\n{"ship":{"fuel":6}}'
+    expect(composeDigestedEventText(text, "STATUS: fuel 6% (LOW)")).toBe(
+      'type: full_state\nSTATUS: fuel 6% (LOW)\n{"ship":{"fuel":6}}',
+    )
+  })
+  it("keeps a trailing dedup suffix at the end", () => {
+    const text = "type: full_state\n{} (seen 6x recently)"
+    expect(composeDigestedEventText(text, "STATUS: fuel 84%")).toBe(
+      "type: full_state\nSTATUS: fuel 84%\n{} (seen 6x recently)",
+    )
+  })
+  it("returns the text unchanged for an empty digest", () => {
+    const text = "type: chat\n{}"
+    expect(composeDigestedEventText(text, "")).toBe(text)
+  })
+  it("prepends when the text has no leading `type:` line", () => {
+    expect(composeDigestedEventText("bare event", "STATUS: x")).toBe("STATUS: x\nbare event")
   })
 })
 

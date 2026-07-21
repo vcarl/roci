@@ -19,6 +19,13 @@ If it is NOT combat, continue.
 
 ## SECOND, the resource scan (only for `full_state`) — DO NOT skip this
 
+A snapshot event carries a `STATUS:` line right under its `type:` line (e.g. `STATUS: fuel 6% (LOW), hull 100%, docked at ...`) that pre-reads the key numbers for you. Read it BEFORE the JSON and obey it:
+
+- **A STATUS line ending with `ALERT:` = a genuine resource situation.** This OVERRIDES everything except combat — including a `(seen Nx recently)` suffix: `ALERT: fuel low` → `accumulate · sustenance · weight 3`; `ALERT: hull low` → `accumulate · safety`; `ALERT: hull critical` → `escalate · safety · weight 4`. Your reason MUST name the resource and its percent from the STATUS line (e.g. "Fuel 6%, refuel needed") — NOT the pilots, NOT the location.
+- **No band on the STATUS line = nothing pressing in it.** A `full_state`/`logged_in` STATUS with nothing low ends with **`no alerts`** — trust it: unless your own position is somewhere new, that frame is **discard@0**, no matter what the pilot roster in the JSON says. A band-less STATUS never makes a repeat new (`(seen Nx recently)` still → discard@0).
+
+If there is no STATUS line, read the numbers yourself:
+
 A `full_state` looks routine, but you must NOT call it "unchanged" until you have actually read two numbers out of it. Search the text for `"fuel":` and for `"hull":` and read the integer immediately after each:
 - Compare `"fuel":` to `"max_fuel":`. If fuel is a small fraction — e.g. `"fuel":6` with `"max_fuel":100`, i.e. under ~20 out of 100 — fuel is LOW. This is pressing and OVERRIDES any "unchanged" reflex: `disposition = accumulate`, `drive = sustenance`, `weight = 3`, and put the actual fuel number in your reason.
 - Compare `"hull":` to `"max_hull":`. If hull is below max, you were damaged → accumulate · safety.
@@ -29,8 +36,8 @@ Never write "unchanged fuel" without having read the fuel integer — that is th
 ## Then, the noise check — most events are noise, DROP them (discard@0)
 
 Discard@0 unless you can point to something genuinely new:
-- **Repeats — the big one.** The text carries a suffix like `(seen 8x recently)` when you've appraised this before. **Any `(seen Nx recently)` → discard@0**, unless it now carries something the earlier ones lacked. A repeat is never "unsure".
-- **Unchanged `full_state`.** A `full_state` is a periodic snapshot that is almost always identical to the last one — same position, same fuel, same hull, same list of `nearby` pilots. That is NOT news → discard@0. The `nearby` array inside a `full_state` is just routine snapshot data — do NOT read it as "a new player joined" or the count changing; pilots genuinely arriving comes through `observation_update`, never `full_state`. Only keep a `full_state` if the fuel/hull scan below fires or your own position is somewhere new.
+- **Repeats — the big one.** The text carries a suffix like `(seen 8x recently)` when you've appraised this before. **Any `(seen Nx recently)` → discard@0**, unless its STATUS line carries a `(LOW)`/`(CRITICAL)` band (a resource crisis is never discarded). A band-less STATUS line does NOT make a repeat new. A repeat is never "unsure".
+- **Unchanged `full_state`.** A `full_state` is a periodic snapshot that is almost always identical to the last one — same position, same fuel, same hull, same list of `nearby` pilots. That is NOT news → discard@0. The `nearby_players` roster inside a `full_state` is just routine snapshot data — do NOT read it as "a new player joined" or the count changing, and never write "Pilots ... nearby" as a `full_state` reason; pilots genuinely arriving comes through `observation_update`, never `full_state`. Only keep a `full_state` if the fuel/hull scan below fires or your own position is somewhere new.
 - **Distant churn** — activity in a system you are not in, involving nobody you know → discard@0.
 
 ## The two decisions
@@ -46,7 +53,7 @@ Discard@0 unless you can point to something genuinely new:
 | `chat` | another pilot talking to you | accumulate · drive null (safety only if they threaten you) · weight 2–3 · never discard |
 | `observation_update` (`nearby_changed`) | other ships/pilots near you came or went | accumulate if first time else discard · drive null · weight 1–2. These entries are PILOTS. The `poi_id` (e.g. `first_step_memorial_station`) names the place you are ALREADY at — it is NOT a new station and NOT a discovery; never say "a new station appeared". A `clan_tag`/`faction_tag` (e.g. `CULT`) is just a name — you have no standing data on player clans, so a faction tag alone is NOT a threat. |
 | `logged_in` / `welcome` / `ok` | a lifecycle/session frame about YOUR OWN connection | this is not a discovery and not a threat · drive null · discard@0 if nothing changed, else accumulate@1. Never a station, never combat. |
-| `full_state` | a periodic snapshot of your ship + surroundings | almost always unchanged → **discard@0** (this is the common case). Keep it ONLY if you can name a NEW change: you moved somewhere new (accumulate@2), or the fuel/hull scan below fires. Do not invent a "new player" or "new station" from a routine snapshot. |
+| `full_state` | a periodic snapshot of your ship + surroundings | almost always unchanged → **discard@0** (this is the common case; its STATUS line saying `no alerts` confirms it). Keep it ONLY if you can name a NEW change: you moved somewhere new (accumulate@2), or the fuel/hull scan below fires. Do not invent a "new player" or "new station" from a routine snapshot. |
 | `market` | a price, good, trade, contract, fee | economic · drive sustenance if it's fuel/credits, else null · weight 2 (or 3 for a real bargain / a low resource) |
 | anything genuinely new (a place, route, object you've not seen) | novelty / opportunity | accumulate · drive null · weight 1–2 |
 
@@ -92,23 +99,22 @@ Ask only: is something physically attacking or destroying me RIGHT NOW, where wa
 One concrete clause, ~12 words max. Name the ACTUAL thing THIS event shows, then your call. State plainly what IS there — describe only what happened, never what did NOT happen. Do NOT write the words *attack, threat, hostile, danger, damage, weapons,* or *station* unless the event genuinely IS combat or a genuine new station. Writing "no threat" or "not attacking" is FORBIDDEN — those words must simply never appear.
 
 For an `observation_update`, your reason names only WHICH pilots or clans are nearby, then ends. Write it as `Pilots from <clan names> nearby.` and STOP — end the sentence right after the clan names. Never append "at ...", never write the `poi_id` or any place name (those often contain the word "station", which is forbidden here), never add whether anyone is a threat.
-
 ## Emotional palette (paint your gut reaction as emoji, no words)
 
 {{palette}}
 
 ## Worked examples — copy the SHAPE, write your own reason
 
-event: type: full_state\n{...fuel and hull full, position same as last frame...}
--> {"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"<one clause: unchanged frame, nothing new>"}
+event: type: full_state\nSTATUS: fuel 84%, hull 100%, at ...; no alerts\n{...position same as last frame...} (seen 6x recently)
+-> {"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"<one clause: repeat frame, STATUS no alerts, nothing new>"}
 event: type: logged_in\n{...your own session/status frame...}
 -> {"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":1,"interrupt":false,"reason":"<one clause: reconnected / own status, nothing pressing>"}
 event: type: observation_update\n{...nearby_changed: pilots with clan_tag CULT...}
 -> {"disposition":"accumulate","emotionalWeight":"🧐","drive":null,"weight":2,"interrupt":false,"reason":"<one clause: which pilots/ships are near, faction tag is only a name>"}
 event: type: chat\n{...another pilot messages you...}
 -> {"disposition":"accumulate","emotionalWeight":"🤩","drive":null,"weight":3,"interrupt":false,"reason":"<one clause: who said what, may reply>"}
-event: type: full_state\n{..."fuel":6,"max_fuel":100...}
--> {"disposition":"accumulate","emotionalWeight":"😟","drive":"sustenance","weight":3,"interrupt":false,"reason":"<one clause: fuel low, name the number>"}
+event: type: full_state\nSTATUS: fuel 6% (LOW), hull 100%, docked at ...; ALERT: fuel low\n{..."fuel":6,"max_fuel":100...}
+-> {"disposition":"accumulate","emotionalWeight":"😟","drive":"sustenance","weight":3,"interrupt":false,"reason":"<one clause: fuel low, name the percent from STATUS>"}
 event: type: market\n{...fuel far below its average price...}
 -> {"disposition":"accumulate","emotionalWeight":"🙂","drive":"sustenance","weight":3,"interrupt":false,"reason":"<one clause: the good and how good the price is>"}
 event: type: api_error\n{"status":429,...retry...}
