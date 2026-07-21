@@ -958,6 +958,12 @@ describe("clampControlPlaneAppraisal (Task 1 — control-plane cap)", () => {
     expect(observe.weight).toBeLessThanOrEqual(CONTROL_PLANE_MAX_WEIGHT)
     expect(observe.disposition).toBe("accumulate")
     expect(observe.interrupt).toBe(false)
+    // Fix 3: the fabricated "Hull damage taken…" claim must NOT survive verbatim.
+    // The rewritten reason leads with an accurate control-plane clause and keeps
+    // the model's claim only as a truncated `model claimed:` provenance suffix.
+    expect(observe.reason.startsWith("control-plane event (guard: clamped from w4;")).toBe(true)
+    expect(observe.reason).toContain("model claimed: Hull damage taken")
+    expect(observe.reason.startsWith("Hull damage")).toBe(false)
   })
   it("also strips a fabricated interrupt on a welcome frame", () => {
     const { observe, clamped } = clampControlPlaneAppraisal(
@@ -1007,6 +1013,12 @@ describe("downgradeUnsupportedThreat (Task 1)", () => {
     expect(observe.weight).toBe(UNSUPPORTED_THREAT_WEIGHT)
     expect(observe.disposition).toBe("accumulate")
     expect(observe.interrupt).toBe(false)
+    // Fix 3: the fabricated safety claim must not persist — drive nulled, reason
+    // rewritten to lead with an accurate clause + truncated provenance suffix.
+    expect(observe.drive).toBeNull()
+    expect(observe.reason.startsWith("unsupported threat (guard: downgraded from w5;")).toBe(true)
+    expect(observe.reason).toContain("model claimed: Taking hull damage now")
+    expect(observe.reason.startsWith("Taking hull")).toBe(false)
   })
   it("leaves a genuine combat escalation (hull delta) untouched", () => {
     const event = 'type: combat\n{"event":"weapons_fire","target":"you","hull":-30}'
@@ -1064,6 +1076,32 @@ describe("guardAppraisal (Task 1 — combined)", () => {
     expect(r.clampedControlPlane).toBe(false)
     expect(r.downgradedThreat).toBe(true)
     expect(r.observe.weight).toBe(UNSUPPORTED_THREAT_WEIGHT)
+    // Fix 3 contract: a guarded appraisal never LEADS with the fabricated claim.
+    expect(r.observe.reason.startsWith("unsupported threat")).toBe(true)
+    expect(r.observe.drive).toBeNull()
+  })
+
+  // Fix 3 — provenance suffix behavior.
+  it("truncates a long fabricated claim to a ~60-char provenance suffix", () => {
+    const longClaim =
+      "Hull breach across all decks, boarding party inbound, shields collapsing, total loss imminent — abandon ship now immediately"
+    const { observe } = clampControlPlaneAppraisal(
+      'type: logged_in\n{}',
+      baseObserve({ weight: 5, disposition: "escalate", drive: "safety", reason: longClaim }),
+    )
+    // The suffix carries at most ~60 chars of the claim (ellipsis on overflow),
+    // so the full fabricated sentence never lands in logs/memory verbatim.
+    const suffix = observe.reason.split("model claimed: ")[1] ?? ""
+    expect(suffix.length).toBeLessThanOrEqual(61) // 59 chars + "…"
+    expect(observe.reason).toContain("model claimed: Hull breach")
+    expect(observe.reason.endsWith("…)")).toBe(true)
+  })
+  it("renders (none) when the model supplied no reason", () => {
+    const { observe } = clampControlPlaneAppraisal(
+      'type: welcome\n{}',
+      baseObserve({ weight: 5, disposition: "escalate", reason: "" }),
+    )
+    expect(observe.reason).toContain("model claimed: (none)")
   })
 })
 

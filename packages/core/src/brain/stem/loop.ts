@@ -582,6 +582,19 @@ export const runActivation = (config: ActivationConfig) =>
               ),
             ),
           )
+          // Chat inert-gate exemption (fix 2): a chat/message event carries no
+          // `stateUpdate` from the domain (handleChatMessage returns context
+          // only), so the stateUpdate-only inert test above would classify it
+          // INERT and fast-path-discard it UPSTREAM of the hindbrain's chat dedup
+          // exemption — which was therefore unreachable for real chat (zero chat
+          // ever reached observe). Force a chat-typed event non-inert so it flows
+          // to the hindbrain and the existing chat exemptions govern. (The deeper
+          // fix — the domain emitting a state append for chat — is deferred.)
+          const eventType =
+            typeof event === "object" && event !== null
+              ? String((event as Record<string, unknown>).type ?? "")
+              : ""
+          if (inert && isChatEventType(eventType)) inert = false
           tickEvents.push({
             text:
               typeof event === "object" && event !== null
@@ -674,10 +687,11 @@ export const runActivation = (config: ActivationConfig) =>
           continue
         }
         // Mechanical dedup UPSTREAM of the 2B (Task 1): fingerprint the event,
-        // count its recent exact + type-family occurrences within the window,
-        // then record this occurrence.
+        // count its recent EXACT occurrences within the window (the type-family
+        // count is no longer used — the annotation keys on exact repeats only,
+        // fix 1), then record this occurrence.
         const fp = eventFingerprint(ev.text)
-        const { exactCount, typeCount } = countRecentFingerprints(
+        const { exactCount } = countRecentFingerprints(
           recentEventFps,
           fp,
           tick,
@@ -693,10 +707,16 @@ export const runActivation = (config: ActivationConfig) =>
         } else {
           // First-time-or-changed (or a chat, which is NEVER deduped-to-discard):
           // pass through to the hindbrain. Annotate the event text with a
-          // `(seen Nx recently)` suffix when the type-family has been seen before
-          // — CONTRACT with the observe rubric: exactly this human-readable form.
-          const seenN = typeCount + 1
-          const text = seenN > 1 ? `${ev.text} (seen ${seenN}x recently)` : ev.text
+          // `(seen Nx recently)` suffix ONLY when the EXACT content genuinely
+          // repeated (exactCount > 0) — NOT the type-family count. Keying on
+          // typeCount mislabeled a genuinely-changed frame (a post-jump
+          // full_state whose location.system_id shifted) as "(seen 10x recently)"
+          // because full_state arrives every tick; the rubric-obedient 2B then
+          // discarded a real change as unchanged. A changed frame (exactCount 0)
+          // must arrive UNANNOTATED. CONTRACT with the observe rubric: exactly
+          // this human-readable form, N = total exact occurrences incl. this one.
+          const seenN = exactCount + 1
+          const text = exactCount > 0 ? `${ev.text} (seen ${seenN}x recently)` : ev.text
           yield* reflex.submit(text, cortex.waitState)
         }
       }

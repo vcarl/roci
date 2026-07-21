@@ -2008,6 +2008,109 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     expect(observeCount).toBe(2)
   }, 20_000)
 
+  const ACCUM =
+    '{"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":2,"interrupt":false,"reason":"a greeting"}'
+
+  // Fix 2: a chat event carries NO stateUpdate from the domain (handleChatMessage
+  // returns context only), so the stateUpdate-only inert gate would fast-path
+  // DISCARD it upstream of the hindbrain's chat dedup exemption — which was
+  // therefore unreachable for real chat (zero chat ever reached observe). The
+  // chat inert-gate exemption forces it non-inert so it reaches the 2B.
+  it("fix 2: a chat event with NO stateUpdate is not fast-path-discarded — it reaches the 2B", async () => {
+    let observeCount = 0
+    const bound = { n: 0 }
+    const client = limbicClient({
+      observe: () => ACCUM,
+      decide: () => '{"decision":"terminate","reasoning":"stop"}',
+      onObserve: () => observeCount++,
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      // Chat is in inertTypes → domain returns NO stateUpdate for it. Under the
+      // buggy gate this makes it INERT (observeCount stays 0); the fix reaches observe.
+      yield* Queue.offer(events, { type: "chat", from: "ada", text: "hello" })
+      const domain = domainWith(["chat"], () => (++bound.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []))
+      return yield* runActivation({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    await Effect.runPromise(program)
+    // Under the buggy stateUpdate-only inert gate this is 0.
+    expect(observeCount).toBeGreaterThanOrEqual(1)
+  }, 20_000)
+
+  // Fix 1 + Fix 2: chat is NEVER deduped-to-discard, and an EXACT repeat is
+  // annotated with the exact-occurrence count `(seen 2x recently)` — the only
+  // path where the annotation now fires (non-chat exact repeats are discarded
+  // before observe; changed frames arrive unannotated).
+  it("fix 1: an exact-repeat chat reaches the 2B BOTH times and the repeat carries '(seen 2x recently)'", async () => {
+    let observeCount = 0
+    const prompts: string[] = []
+    const bound = { n: 0 }
+    const client = limbicClient({
+      observe: (p) => { prompts.push(p); return ACCUM },
+      decide: () => '{"decision":"terminate","reasoning":"stop"}',
+      onObserve: () => observeCount++,
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      // Two byte-identical chats → same fingerprint. A non-chat exact repeat would
+      // be discarded@0; chat is exempt, so BOTH reach observe and the 2nd is annotated.
+      yield* Queue.offer(events, { type: "chat", from: "ada", text: "hi" })
+      yield* Queue.offer(events, { type: "chat", from: "ada", text: "hi" })
+      const domain = domainWith(["chat"], () => (++bound.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []))
+      return yield* runActivation({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    await Effect.runPromise(program)
+    // Neither chat was mechanically discarded — both reached the model.
+    expect(observeCount).toBeGreaterThanOrEqual(2)
+    // The exact repeat carries the exact-count suffix (N = total incl. this one).
+    expect(prompts.some((p) => p.includes("(seen 2x recently)"))).toBe(true)
+  }, 20_000)
+
+  // Fix 1: a genuinely-CHANGED full_state (its nested location.system_id shifted)
+  // must arrive UNANNOTATED. The old code keyed the "(seen Nx recently)" suffix on
+  // the TYPE-family count, so every post-jump full_state (full_state arrives ~every
+  // tick) was mislabeled "(seen 2x recently)" and the rubric-obedient 2B discarded
+  // a real location change as unchanged. The suffix now keys on the EXACT
+  // fingerprint count, which is 0 for a changed frame → no suffix.
+  it("fix 1: a changed-location full_state (different nested system_id) reaches the 2B UNANNOTATED", async () => {
+    const prompts: string[] = []
+    const bound = { n: 0 }
+    const client = limbicClient({
+      observe: (p) => { prompts.push(p); return DISCARD },
+      decide: () => '{"decision":"terminate","reasoning":"stop"}',
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    // full_state nests location under `location` (real payload shape). Two frames
+    // differing only by nested system_id → DIFFERENT fingerprints → exactCount 0.
+    const frameA = { type: "full_state", location: { system_id: "first_step" }, ship: { fuel: 50, max_fuel: 100 } }
+    const frameB = { type: "full_state", location: { system_id: "horizon" }, ship: { fuel: 50, max_fuel: 100 } }
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, frameA)
+      yield* Queue.offer(events, frameB)
+      const domain = domainWith([], () => (++bound.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []))
+      return yield* runActivation({
+        char: { name: "ada", dir: "/work/players/ada/me" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    await Effect.runPromise(program)
+    // Both changed frames reached observe; the CHANGED frame B is not labeled a
+    // repeat. Anchor to B's exact JSON (lowercased by limbicClient) so the assertion
+    // catches only a suffix attached to B, not the rubric's own "(seen Nx)" examples.
+    const bJson = JSON.stringify(frameB).toLowerCase()
+    expect(prompts.some((p) => p.includes(bJson))).toBe(true)
+    expect(prompts.some((p) => p.includes(`${bJson} (seen`))).toBe(false)
+  }, 20_000)
+
   it("hard-interrupt rung: a physical-attack event with interrupt:true kills the in-flight conscious fiber and reorients (Unit 7/9)", async () => {
     const interrupted = { value: false }
     let decideCount = 0

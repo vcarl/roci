@@ -178,6 +178,18 @@ export function isControlPlaneEventType(type: string): boolean {
 }
 
 /**
+ * Compact a model-supplied reason for embedding as the `model claimed: …`
+ * provenance suffix of a guard-rewritten reason (Task 1, fix 3). Whitespace-
+ * collapsed and truncated to ~`max` chars so QA can still see what the model
+ * tried without the fabricated clause LEADING the stored reason. Empty → "(none)".
+ */
+function truncateClaim(reason: string, max = 60): string {
+  const trimmed = reason.replace(/\s+/g, " ").trim()
+  if (!trimmed) return "(none)"
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed
+}
+
+/**
  * Cap a control-plane / lifecycle frame's appraisal (Task 1). Such a frame may
  * accumulate at ≤2 weight but must never escalate: weight is clamped to
  * `CONTROL_PLANE_MAX_WEIGHT`, an `escalate` disposition is demoted to
@@ -203,6 +215,11 @@ export function clampControlPlaneAppraisal(
       weight: Math.min(observe.weight, CONTROL_PLANE_MAX_WEIGHT),
       disposition,
       interrupt: false,
+      // Fix 3: the model's reason ("Hull damage taken…") is a fabrication on a
+      // lifecycle frame — do not let it survive verbatim into logs/memory. Lead
+      // with an accurate clause; keep the original claim as a truncated
+      // provenance suffix so QA can still see what the model tried.
+      reason: `control-plane event (guard: clamped from w${observe.weight}; model claimed: ${truncateClaim(observe.reason)})`,
     },
     clamped: true,
   }
@@ -315,6 +332,12 @@ export function downgradeUnsupportedThreat(
       weight: Math.min(observe.weight, UNSUPPORTED_THREAT_WEIGHT),
       disposition: "accumulate",
       interrupt: false,
+      // Fix 3: the claim was an unsupported safety threat — null the drive so
+      // the fabricated safety attribution does not persist, and rewrite the
+      // reason to lead with an accurate clause, keeping the model's claim as a
+      // truncated provenance suffix.
+      drive: null,
+      reason: `unsupported threat (guard: downgraded from w${observe.weight}; model claimed: ${truncateClaim(observe.reason)})`,
     },
     downgraded: true,
   }
