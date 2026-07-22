@@ -1,9 +1,10 @@
-import { Effect, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { describe, it, expect } from "vitest"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
-import type { CharacterConfig } from "../../../../services/CharacterFs.js"
+import { CharacterFs, type CharacterConfig } from "../../../../services/CharacterFs.js"
 import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
 import { RERANK_OVERFETCH } from "./memory-rank.js"
+import { TEMPLATE_SALIENCE } from "../../../../core/salience.js"
 import {
   observeMemories,
   orientMemories,
@@ -41,16 +42,38 @@ function fakeStore(opts: { hits?: MemoryHit[]; fail?: boolean } = {}) {
   return { layer, remembered, recalledKs }
 }
 
+/**
+ * Minimal CharacterFs fake: the gateway only calls `readSalience`. Cast a partial
+ * object to the tag's service type — no need to stub every method for these tests.
+ */
+function fakeCharFs(salienceMd: string = TEMPLATE_SALIENCE) {
+  return Layer.succeed(
+    CharacterFs,
+    { readSalience: () => Effect.succeed(salienceMd) } as unknown as Context.Tag.Service<typeof CharacterFs>,
+  )
+}
+
 const run = <A>(store: ReturnType<typeof fakeStore>, program: Effect.Effect<A, never, MemoryGateway>) =>
-  Effect.runPromise(program.pipe(Effect.provide(MemoryGatewayLive.pipe(Layer.provide(store.layer)))))
+  Effect.runPromise(
+    program.pipe(
+      Effect.provide(MemoryGatewayLive.pipe(Layer.provide(Layer.merge(store.layer, fakeCharFs())))),
+    ),
+  )
 
 describe("pure capture extractors", () => {
-  it("observeMemories drops discards and captures the reason with disposition + drive tags", () => {
+  it("observeMemories captures the reason with disposition+drive tags AND a {drive: weight/5} dims signature", () => {
     const discard = { disposition: "discard", emotionalWeight: "😐", drive: "curiosity", weight: 0, reason: "noise" } as ObserveResult
-    const keep = { disposition: "escalate", emotionalWeight: "😨", drive: "safety", weight: 9, reason: "hull breach imminent" } as ObserveResult
+    const keep = { disposition: "escalate", emotionalWeight: "😨", drive: "safety", weight: 4, reason: "hull breach imminent" } as ObserveResult
     expect(observeMemories(discard)).toEqual([])
     expect(observeMemories(keep)).toEqual([
-      { source: "observe", text: "hull breach imminent", tags: ["escalate", "safety"] },
+      { source: "observe", text: "hull breach imminent", tags: ["escalate", "safety"], dims: { safety: 0.8 } },
+    ])
+  })
+
+  it("observeMemories carries empty dims when the event bears on no drive", () => {
+    const keep = { disposition: "accumulate", emotionalWeight: "😐", drive: null, weight: 3, reason: "a ship passed by" } as ObserveResult
+    expect(observeMemories(keep)).toEqual([
+      { source: "observe", text: "a ship passed by", tags: ["accumulate"], dims: {} },
     ])
   })
 

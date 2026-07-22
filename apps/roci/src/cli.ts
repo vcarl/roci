@@ -734,8 +734,14 @@ const serviceLayer = Layer.mergeAll(
   // Long-term memory store seam for the pre-cull promotion hook (runReflection).
   // Shells the in-container `memory` CLI, so it depends on Docker.
   LongtermStoreLive.pipe(Layer.provide(DockerLive)),
-  // Memory policy seam (capture + recall) for the cortex loop. Depends on LongtermStore → Docker.
-  MemoryGatewayLive.pipe(Layer.provide(LongtermStoreLive.pipe(Layer.provide(DockerLive)))),
+  // Memory policy seam (capture + recall) for the cortex loop. Depends on
+  // LongtermStore → Docker AND CharacterFs (for the salience profile at recall,
+  // Phase 3). CharacterFsLive needs FileSystem — already a serviceLayer-level
+  // requirement (CharacterFsLive is a sibling member), so no new top-level dep.
+  MemoryGatewayLive.pipe(
+    Layer.provide(LongtermStoreLive.pipe(Layer.provide(DockerLive))),
+    Layer.provide(CharacterFsLive),
+  ),
 )
 
 export { rociCommand, serviceLayer }

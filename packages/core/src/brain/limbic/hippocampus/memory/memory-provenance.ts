@@ -34,8 +34,11 @@ export function classify(source: string): Provenance {
  * Idempotent migration columns for dbs created before provenance existed.
  * `ALTER TABLE ADD COLUMN` has no `IF NOT EXISTS`, so the CLI guards each with a
  * `PRAGMA table_info` presence check. The `DEFAULT` backfills legacy rows to the
- * safe-but-not-privileged episodic tier. (A list of one today; Phase 3 adds `dims`.)
+ * safe-but-not-privileged episodic tier. (provenance + dims.)
  */
 export const MIGRATION_COLUMNS: ReadonlyArray<{ name: string; ddl: string }> = [
   { name: "provenance", ddl: "ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'episodic'" },
+  // dims is nullable with NO default — legacy rows stay NULL → neutral salience
+  // at recall (Phase 3). No backfill: an un-scored old memory has no signature.
+  { name: "dims", ddl: "ALTER TABLE memories ADD COLUMN dims TEXT" },
 ]

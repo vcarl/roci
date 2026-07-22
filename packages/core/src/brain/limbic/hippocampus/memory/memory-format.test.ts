@@ -63,3 +63,18 @@ describe("formatResults — provenance", () => {
     expect(JSON.parse(out).provenance).toBe("grounded")
   })
 })
+
+describe("formatResults — dims", () => {
+  it("emits a parsed dims object per row", () => {
+    const out = formatResults([
+      { id: 1, distance: 0.1, ts: "2026-07-01T00:00:00Z", source: "observe", provenance: "grounded", dims: JSON.stringify({ safety: 0.8 }), tags: null, text: "hull breach" },
+    ])
+    expect(JSON.parse(out).dims).toEqual({ safety: 0.8 })
+  })
+  it("emits null dims when the column is null", () => {
+    const out = formatResults([
+      { id: 1, distance: 0.1, ts: "2026-07-01T00:00:00Z", source: "orient", provenance: "inferred", dims: null, tags: null, text: "guess" },
+    ])
+    expect(JSON.parse(out).dims).toBeNull()
+  })
+})

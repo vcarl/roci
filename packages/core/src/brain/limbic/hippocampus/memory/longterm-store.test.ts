@@ -168,4 +168,26 @@ describe("LongtermStore.remember / recall", () => {
     expect(hits.map((h) => h.text)).toEqual(["first", "second"])
     expect(hits[0].score).toBeCloseTo(0.9)
   })
+
+  it("remember shells --dims with quoted JSON when dims is non-empty", async () => {
+    const captured: string[][] = []
+    await Effect.runPromise(
+      Effect.flatMap(LongtermStore, (s) =>
+        s.remember("cid", char, { text: "hull breach", source: "observe", tags: ["escalate", "safety"], dims: { safety: 0.8 } }),
+      ).pipe(Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub("", captured))))),
+    )
+    const joined = captured.flat().join(" ")
+    expect(joined).toContain(`--dims '{"safety":0.8}'`)
+    expect(joined).toContain(`--source 'observe'`)
+  })
+
+  it("remember omits --dims entirely when dims is empty or absent", async () => {
+    const captured: string[][] = []
+    await Effect.runPromise(
+      Effect.flatMap(LongtermStore, (s) =>
+        s.remember("cid", char, { text: "a guess", source: "orient", tags: [], dims: {} }),
+      ).pipe(Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub("", captured))))),
+    )
+    expect(captured.flat().join(" ")).not.toContain("--dims")
+  })
 })

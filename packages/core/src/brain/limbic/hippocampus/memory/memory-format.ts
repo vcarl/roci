@@ -15,6 +15,8 @@ export interface MemoryRow {
   source: string
   /** Objective trust-tier (present post-migration). */
   provenance?: string
+  /** Raw JSON dims column (`{drive: weight/5}`); null/absent for legacy/non-observe rows. */
+  dims?: string | null
   /** comma-joined tags, or null/empty when none. */
   tags: string | null
   text: string
@@ -52,6 +54,7 @@ export function formatResults(rows: ReadonlyArray<MemoryRow>): string {
         ts: r.ts,
         source: r.source,
         provenance: r.provenance,
+        dims: r.dims ? JSON.parse(r.dims) : null,
         tags: splitTags(r.tags),
         text: r.text,
       }

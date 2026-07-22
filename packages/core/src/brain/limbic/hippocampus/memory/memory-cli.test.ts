@@ -130,10 +130,26 @@ describe("buildMemoryCliScript — provenance", () => {
   it("classifies from source at write time and migrates existing dbs", () => {
     expect(script).toContain("function classify(source)")
     expect(script).toContain("PRAGMA table_info(memories)")
-    expect(script).toContain(", prov)")
+    expect(script).toContain(", prov,")
   })
   it("emits provenance in search/recent output", () => {
     expect(script).toContain("provenance: r.provenance")
     expect(script).toContain("m.provenance AS provenance")
+  })
+})
+
+describe("buildMemoryCliScript — dims", () => {
+  const script = buildMemoryCliScript({ embedBaseUrl: "http://127.0.0.1:8090" })
+  it("parses the --dims flag and binds it on remember (6th value)", () => {
+    expect(script).toContain('takeFlag(a2.rest, ["--dims"])')
+    expect(script).toContain("prov, dimsJson)")
+  })
+  it("binds null dims on promote", () => {
+    expect(script).toContain('"promotion", text, prov, null)')
+  })
+  it("selects dims and emits it parsed in search/recent output", () => {
+    expect(script).toContain("m.dims AS dims")
+    expect(script).toContain("dims: r.dims ? JSON.parse(r.dims) : null")
+    expect(script).toContain("SELECT id, ts, source, provenance, dims, tags, text FROM memories")
   })
 })

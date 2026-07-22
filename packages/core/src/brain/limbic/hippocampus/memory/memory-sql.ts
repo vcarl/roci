@@ -32,7 +32,8 @@ export function buildSchemaSql(dim: number = EMBED_DIM): string {
     `  source TEXT NOT NULL,`,
     `  tags TEXT,`,
     `  text TEXT NOT NULL,`,
-    `  provenance TEXT NOT NULL DEFAULT 'episodic'`,
+    `  provenance TEXT NOT NULL DEFAULT 'episodic',`,
+    `  dims TEXT`,
     `);`,
     `CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(`,
     `  id INTEGER PRIMARY KEY,`,
@@ -61,9 +62,9 @@ export function buildMetaSetSql(): string {
   return `INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`
 }
 
-/** Append a record row. Bind order: ts, source, tags, text, provenance. id auto-assigned. */
+/** Append a record row. Bind order: ts, source, tags, text, provenance, dims. id auto-assigned. */
 export function buildInsertSql(): string {
-  return `INSERT INTO memories (ts, source, tags, text, provenance) VALUES (?, ?, ?, ?, ?)`
+  return `INSERT INTO memories (ts, source, tags, text, provenance, dims) VALUES (?, ?, ?, ?, ?, ?)`
 }
 
 /** Insert the embedding for an already-inserted row. Bind order: id, embedding (JSON string). */
@@ -89,7 +90,7 @@ export const TAG_OVERFETCH = 8
 export function buildKnnSql(k: number, tagFilter?: ReadonlyArray<string>): string {
   const effectiveK = tagFilter && tagFilter.length > 0 ? k * TAG_OVERFETCH : k
   return [
-    `SELECT m.id AS id, m.ts AS ts, m.source AS source, m.provenance AS provenance, m.tags AS tags, m.text AS text, v.distance AS distance`,
+    `SELECT m.id AS id, m.ts AS ts, m.source AS source, m.provenance AS provenance, m.dims AS dims, m.tags AS tags, m.text AS text, v.distance AS distance`,
     `FROM memories_vec v`,
     `JOIN memories m ON m.id = v.id`,
     `WHERE v.embedding MATCH ? AND k = ${effectiveK}`,

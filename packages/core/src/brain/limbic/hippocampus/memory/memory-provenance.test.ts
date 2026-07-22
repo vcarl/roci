@@ -29,3 +29,13 @@ describe("MIGRATION_COLUMNS", () => {
     expect(prov!.ddl).toContain("DEFAULT 'episodic'")
   })
 })
+
+describe("MIGRATION_COLUMNS — dims", () => {
+  it("adds dims as a nullable column with no default (legacy rows → NULL)", () => {
+    const dims = MIGRATION_COLUMNS.find((c) => c.name === "dims")
+    expect(dims).toBeDefined()
+    expect(dims!.ddl).toContain("ADD COLUMN dims TEXT")
+    expect(dims!.ddl).not.toContain("NOT NULL")
+    expect(dims!.ddl).not.toContain("DEFAULT")
+  })
+})

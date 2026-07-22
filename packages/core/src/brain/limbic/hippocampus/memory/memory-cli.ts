@@ -127,13 +127,13 @@ function splitTags(raw) {
 }
 function knnSql(k, hasTags) {
   const ek = hasTags ? k * TAG_OVERFETCH : k;
-  return "SELECT m.id AS id, m.ts AS ts, m.source AS source, m.provenance AS provenance, m.tags AS tags, m.text AS text, v.distance AS distance "
+  return "SELECT m.id AS id, m.ts AS ts, m.source AS source, m.provenance AS provenance, m.dims AS dims, m.tags AS tags, m.text AS text, v.distance AS distance "
     + "FROM memories_vec v JOIN memories m ON m.id = v.id "
     + "WHERE v.embedding MATCH ? AND k = " + ek + " ORDER BY v.distance";
 }
 function fmt(rows, withScore) {
   return rows.map(function (r) {
-    const o = { id: r.id, ts: r.ts, source: r.source, provenance: r.provenance, tags: splitTags(r.tags), text: r.text };
+    const o = { id: r.id, ts: r.ts, source: r.source, provenance: r.provenance, dims: r.dims ? JSON.parse(r.dims) : null, tags: splitTags(r.tags), text: r.text };
     if (withScore && r.distance != null) o.score = 1 / (1 + r.distance);
     return JSON.stringify(o);
   }).join("\\n");
@@ -161,14 +161,17 @@ const args = argv.slice(1);
 if (verb === "remember") {
   const a1 = takeFlag(args, ["--tags"]);
   const a2 = takeFlag(a1.rest, ["--source"]);
-  const text = a2.rest[0];
+  const a3 = takeFlag(a2.rest, ["--dims"]);
+  const text = a3.rest[0];
   if (!text) { console.error(USAGE); process.exit(2); }
   const tags = a1.value ? splitTags(a1.value).join(",") : null;
   const source = a2.value || "conscious";
+  // dims arrives as a JSON string; stored verbatim as TEXT (null when absent).
+  const dimsJson = a3.value || null;
   const vec = await embed(text);
   const db = openDb();
   const prov = classify(source);
-  const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), source, tags, text, prov);
+  const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), source, tags, text, prov, dimsJson);
   const id = Number(info.lastInsertRowid);
   db.prepare(VEC_INSERT_SQL).run(id, JSON.stringify(vec));
   console.log(String(id));
@@ -193,7 +196,7 @@ if (verb === "remember") {
   const a1 = takeFlag(args, ["-n"]);
   const n = intOr(a1.value, 10);
   const db = openDb();
-  const rows = db.query("SELECT id, ts, source, provenance, tags, text FROM memories ORDER BY id DESC LIMIT " + n).all();
+  const rows = db.query("SELECT id, ts, source, provenance, dims, tags, text FROM memories ORDER BY id DESC LIMIT " + n).all();
   console.log(fmt(rows, false));
 } else if (verb === "mark-get") {
   // Print the bounded promotion high-water mark (opaque host-computed JSON) or nothing.
@@ -213,7 +216,7 @@ if (verb === "remember") {
     const text = Buffer.from(b64, "base64").toString("utf8");
     const vec = await embed(text);
     const prov = classify("promotion");
-    const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), "promotion", "promotion", text, prov);
+    const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), "promotion", "promotion", text, prov, null);
     db.prepare(VEC_INSERT_SQL).run(Number(info.lastInsertRowid), JSON.stringify(vec));
     n++;
   }

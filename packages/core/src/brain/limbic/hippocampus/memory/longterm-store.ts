@@ -70,6 +70,12 @@ export interface MemoryHit {
   readonly tags: ReadonlyArray<string>
   readonly text: string
   readonly score: number
+  /**
+   * Per-memory salience signature `{ drive: weight/5 }`, captured at write time
+   * from the hindbrain observe signal (Phase 3 §3). Absent/NULL for legacy rows
+   * and non-observe writes → neutral salience at recall. Parsed from NDJSON.
+   */
+  readonly dims?: Record<string, number>
 }
 
 export class LongtermStore extends Context.Tag("LongtermStore")<
@@ -92,11 +98,16 @@ export class LongtermStore extends Context.Tag("LongtermStore")<
       char: CharacterConfig,
       entries: ReadonlyArray<string>,
     ) => Effect.Effect<number, Error>
-    /** Persist a single memory with an explicit source + tags (in-container `memory remember`). */
+    /** Persist a single memory with an explicit source + tags + optional dims signature (in-container `memory remember`). */
     readonly remember: (
       containerId: string,
       char: CharacterConfig,
-      entry: { readonly text: string; readonly source: string; readonly tags: ReadonlyArray<string> },
+      entry: {
+        readonly text: string
+        readonly source: string
+        readonly tags: ReadonlyArray<string>
+        readonly dims?: Record<string, number>
+      },
     ) => Effect.Effect<void, Error>
     /** Semantic recall of top-k memories (in-container `memory search`); parses NDJSON. */
     readonly recall: (
@@ -163,9 +174,15 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
         }),
       remember: (containerId, char, entry) => {
         const tagsArg = entry.tags.length > 0 ? ` --tags ${shQuote(entry.tags.join(","))}` : ""
+        // Only pass --dims when there is a non-empty signature; an empty/absent
+        // dims → NULL column → neutral salience at recall.
+        const dimsArg =
+          entry.dims && Object.keys(entry.dims).length > 0
+            ? ` --dims ${shQuote(JSON.stringify(entry.dims))}`
+            : ""
         const cmd =
           `${cd(char)} && ${MEMORY_CLI_PATH} remember ${shQuote(entry.text)}` +
-          `${tagsArg} --source ${shQuote(entry.source)}`
+          `${tagsArg} --source ${shQuote(entry.source)}${dimsArg}`
         return docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail), Effect.asVoid)
       },
       recall: (containerId, char, query, opts) =>

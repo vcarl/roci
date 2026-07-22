@@ -48,10 +48,10 @@ describe("buildSchemaSql — provenance column", () => {
 })
 
 describe("buildInsertSql — provenance column", () => {
-  it("inserts five columns in a fixed order with five binds", () => {
+  it("inserts provenance in the fixed column order", () => {
     const sql = buildInsertSql()
-    expect(sql).toContain("(ts, source, tags, text, provenance)")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?)")
+    expect(sql).toContain("(ts, source, tags, text, provenance, dims)")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?)")
   })
 })
 
@@ -70,7 +70,8 @@ describe("buildInsertSql / buildVecInsertSql", () => {
     expect(sql).toContain("tags")
     expect(sql).toContain("text")
     expect(sql).toContain("provenance")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?)")
+    expect(sql).toContain("dims")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?)")
   })
   it("inserts the vector row keyed by the same id", () => {
     const sql = buildVecInsertSql()
@@ -114,5 +115,31 @@ describe("buildKnnSql", () => {
     const m = filtered.match(/k = (\d+)/)
     expect(m).not.toBeNull()
     expect(Number(m![1])).toBeGreaterThan(5)
+  })
+})
+
+describe("buildSchemaSql — dims column", () => {
+  it("declares dims as a nullable TEXT column (no default)", () => {
+    const sql = buildSchemaSql()
+    expect(sql).toContain("dims TEXT")
+    // nullable: the dims line carries neither NOT NULL nor DEFAULT
+    const dimsLine = sql.split("\n").find((l) => l.includes("dims TEXT"))
+    expect(dimsLine).toBeDefined()
+    expect(dimsLine!).not.toContain("NOT NULL")
+    expect(dimsLine!).not.toContain("DEFAULT")
+  })
+})
+
+describe("buildInsertSql — dims column", () => {
+  it("inserts six columns in a fixed order with six binds", () => {
+    const sql = buildInsertSql()
+    expect(sql).toContain("(ts, source, tags, text, provenance, dims)")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?)")
+  })
+})
+
+describe("buildKnnSql — dims column", () => {
+  it("selects dims alongside the ranked row", () => {
+    expect(buildKnnSql(5)).toContain("m.dims AS dims")
   })
 })
