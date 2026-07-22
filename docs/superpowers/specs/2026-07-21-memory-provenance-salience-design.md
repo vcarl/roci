@@ -204,13 +204,22 @@ profile from §2):
 
 ```
 salienceWeight(memory, salience) =
-    memory.dims is empty  →  NEUTRAL_SALIENCE            // e.g. 0.4
-    else                  →  Σ_d memory.dims[d] × salience[d]  /  Σ_d salience[d]   over d ∈ keys(memory.dims)
+    memory.dims is empty                          →  NEUTRAL_SALIENCE   // e.g. 0.4
+    else, over d ∈ keys(memory.dims) present in the profile:
+        no such d                                 →  NEUTRAL_SALIENCE
+        otherwise                                 →  clamp₀₁( Σ_d memory.dims[d] × salience[d] )
 ```
 
-For v1's single-drive observe dims this reduces to the interpretable
+For v1's single-drive observe dims this is exactly the interpretable
 `salience[drive] × (weight/5)` — *how much the character cares about that drive*
 × *how hard the event hit it*, ∈ [0,1].
+
+> **Formula correction (2026-07-22, as-shipped in Phase 3).** An earlier draft of
+> this box divided by `Σ_d salience[d]`. That normalization *cancels* the
+> character's salience for single-drive memories — and every v1 memory is
+> single-drive — contradicting the prose reduction above and making the Phase 2
+> profile inert. The shipped `salienceWeight` is the **unnormalized dot product**
+> (clamped to [0,1]), matching the prose. See `memory-rank.ts`.
 
 **Extras caveat (v1):** memory `dims` only ever populate drive dimensions (from
 `observe.drive`), so the character's *extra* dimensions contribute nothing to any
