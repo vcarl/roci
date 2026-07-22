@@ -54,3 +54,12 @@ describe("parseEmbedResponse", () => {
     expect(() => parseEmbedResponse({ data: [{ embedding: bad }] })).toThrow()
   })
 })
+
+describe("formatResults — provenance", () => {
+  it("emits provenance per row", () => {
+    const out = formatResults([
+      { id: 1, distance: 0.1, ts: "2026-07-01T00:00:00Z", source: "observe", provenance: "grounded", tags: null, text: "docked" },
+    ])
+    expect(JSON.parse(out).provenance).toBe("grounded")
+  })
+})

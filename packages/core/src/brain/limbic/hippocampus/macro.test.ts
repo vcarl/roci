@@ -135,7 +135,7 @@ describe("buildMacroPrompt / defaultGrowthNote", () => {
 
 describe("renderMemoryHits", () => {
   const hit = (over: Partial<MemoryHit>): MemoryHit => ({
-    id: 1, ts: "t", source: "promotion", tags: [], text: "a memory", score: 0.5, ...over,
+    id: 1, ts: "t", source: "promotion", provenance: "episodic", tags: [], text: "a memory", score: 0.5, ...over,
   })
   it("surfaces each hit's source and tags alongside the text (real retrieval keys for the index)", () => {
     const out = renderMemoryHits([

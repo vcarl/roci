@@ -13,6 +13,7 @@ import {
 import { embedEndpoint } from "./memory-embed.js"
 import { MEMORY_USAGE } from "./memory-args.js"
 import { installContainerCli } from "../../../../services/install-cli.js"
+import { SOURCE_PROVENANCE, PROVENANCE_DEFAULT, MIGRATION_COLUMNS } from "./memory-provenance.js"
 
 /** Where the generated CLI is installed inside the container (on PATH). */
 export const MEMORY_CLI_PATH = "/usr/local/bin/memory"
@@ -61,6 +62,9 @@ export function buildMemoryCliScript(opts: MemoryCliOpts): string {
   const metaSetLit = JSON.stringify(buildMetaSetSql())
   const markKeyLit = JSON.stringify(PROMOTE_MARK_KEY)
   const usageLit = JSON.stringify(MEMORY_USAGE)
+  const provMapLit = JSON.stringify(SOURCE_PROVENANCE)
+  const provDefaultLit = JSON.stringify(PROVENANCE_DEFAULT)
+  const migrationLit = JSON.stringify(MIGRATION_COLUMNS)
 
   // The body below is RUNTIME bun/JS. It deliberately avoids backticks and `${}`
   // so the only interpolations are the TS-level `${...Lit}`/constants here.
@@ -82,6 +86,9 @@ const META_GET_SQL = ${metaGetLit};
 const META_SET_SQL = ${metaSetLit};
 const PROMOTE_MARK_KEY = ${markKeyLit};
 const USAGE = ${usageLit};
+const PROVENANCE_MAP = ${provMapLit};
+const PROVENANCE_DEFAULT = ${provDefaultLit};
+const MIGRATION_COLUMNS = ${migrationLit};
 
 function openDb() {
   const db = new Database(DB_PATH);
@@ -91,7 +98,15 @@ function openDb() {
   // (sqlite3_vec0_init) does not match the extension's sqlite3_vec_init.
   db.loadExtension(VEC_EXT, "sqlite3_vec_init");
   db.exec(SCHEMA);
+  // Idempotent migration: ADD COLUMN has no IF NOT EXISTS, so guard on the
+  // live column set. New dbs already have the columns (SCHEMA) → no-op.
+  const cols = new Set(db.query("PRAGMA table_info(memories)").all().map(function (r) { return r.name; }));
+  for (const c of MIGRATION_COLUMNS) { if (!cols.has(c.name)) db.exec(c.ddl); }
   return db;
+}
+
+function classify(source) {
+  return PROVENANCE_MAP[source] || PROVENANCE_DEFAULT;
 }
 
 async function embed(text) {
@@ -112,13 +127,13 @@ function splitTags(raw) {
 }
 function knnSql(k, hasTags) {
   const ek = hasTags ? k * TAG_OVERFETCH : k;
-  return "SELECT m.id AS id, m.ts AS ts, m.source AS source, m.tags AS tags, m.text AS text, v.distance AS distance "
+  return "SELECT m.id AS id, m.ts AS ts, m.source AS source, m.provenance AS provenance, m.tags AS tags, m.text AS text, v.distance AS distance "
     + "FROM memories_vec v JOIN memories m ON m.id = v.id "
     + "WHERE v.embedding MATCH ? AND k = " + ek + " ORDER BY v.distance";
 }
 function fmt(rows, withScore) {
   return rows.map(function (r) {
-    const o = { id: r.id, ts: r.ts, source: r.source, tags: splitTags(r.tags), text: r.text };
+    const o = { id: r.id, ts: r.ts, source: r.source, provenance: r.provenance, tags: splitTags(r.tags), text: r.text };
     if (withScore && r.distance != null) o.score = 1 / (1 + r.distance);
     return JSON.stringify(o);
   }).join("\\n");
@@ -152,7 +167,8 @@ if (verb === "remember") {
   const source = a2.value || "conscious";
   const vec = await embed(text);
   const db = openDb();
-  const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), source, tags, text);
+  const prov = classify(source);
+  const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), source, tags, text, prov);
   const id = Number(info.lastInsertRowid);
   db.prepare(VEC_INSERT_SQL).run(id, JSON.stringify(vec));
   console.log(String(id));
@@ -177,7 +193,7 @@ if (verb === "remember") {
   const a1 = takeFlag(args, ["-n"]);
   const n = intOr(a1.value, 10);
   const db = openDb();
-  const rows = db.query("SELECT id, ts, source, tags, text FROM memories ORDER BY id DESC LIMIT " + n).all();
+  const rows = db.query("SELECT id, ts, source, provenance, tags, text FROM memories ORDER BY id DESC LIMIT " + n).all();
   console.log(fmt(rows, false));
 } else if (verb === "mark-get") {
   // Print the bounded promotion high-water mark (opaque host-computed JSON) or nothing.
@@ -196,7 +212,8 @@ if (verb === "remember") {
   for (const b64 of lines) {
     const text = Buffer.from(b64, "base64").toString("utf8");
     const vec = await embed(text);
-    const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), "promotion", "promotion", text);
+    const prov = classify("promotion");
+    const info = db.prepare(INSERT_SQL).run(new Date().toISOString(), "promotion", "promotion", text, prov);
     db.prepare(VEC_INSERT_SQL).run(Number(info.lastInsertRowid), JSON.stringify(vec));
     n++;
   }

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import type { CharacterConfig } from "../../../../services/CharacterFs.js"
 import { Docker } from "../../../../services/Docker.js"
 import { MEMORY_CLI_PATH } from "./memory-cli.js"
+import type { Provenance } from "./memory-provenance.js"
 
 export { MEMORY_CLI_PATH }
 
@@ -64,6 +65,8 @@ export interface MemoryHit {
   readonly id: number
   readonly ts: string
   readonly source: string
+  /** Objective trust-tier derived from `source` at write time (see memory-provenance). */
+  readonly provenance: Provenance
   readonly tags: ReadonlyArray<string>
   readonly text: string
   readonly score: number

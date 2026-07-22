@@ -118,3 +118,22 @@ describe("provisionMemoryCli", () => {
     ).rejects.toThrow()
   })
 })
+
+describe("buildMemoryCliScript — provenance", () => {
+  const script = buildMemoryCliScript({ embedBaseUrl: "http://127.0.0.1:8090" })
+  it("embeds the provenance map, default, and migration columns", () => {
+    expect(script).toContain("const PROVENANCE_MAP =")
+    expect(script).toContain("const PROVENANCE_DEFAULT =")
+    expect(script).toContain("const MIGRATION_COLUMNS =")
+    expect(script).toContain('"grounded"')
+  })
+  it("classifies from source at write time and migrates existing dbs", () => {
+    expect(script).toContain("function classify(source)")
+    expect(script).toContain("PRAGMA table_info(memories)")
+    expect(script).toContain(", prov)")
+  })
+  it("emits provenance in search/recent output", () => {
+    expect(script).toContain("provenance: r.provenance")
+    expect(script).toContain("m.provenance AS provenance")
+  })
+})

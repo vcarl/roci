@@ -13,6 +13,8 @@ export interface MemoryRow {
   distance?: number
   ts: string
   source: string
+  /** Objective trust-tier (present post-migration). */
+  provenance?: string
   /** comma-joined tags, or null/empty when none. */
   tags: string | null
   text: string
@@ -49,6 +51,7 @@ export function formatResults(rows: ReadonlyArray<MemoryRow>): string {
         id: r.id,
         ts: r.ts,
         source: r.source,
+        provenance: r.provenance,
         tags: splitTags(r.tags),
         text: r.text,
       }

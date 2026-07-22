@@ -1,7 +1,8 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Clock } from "effect"
 import type { CharacterConfig } from "../../../../services/CharacterFs.js"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
 import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
+import { rerank, RERANK_OVERFETCH } from "./memory-rank.js"
 
 /** One unit to persist: the source phase, the text, and derived tags. */
 export interface MemoryWrite {
@@ -75,10 +76,33 @@ export function evaluateQuery(task: string, goal: string): string {
 
 // ---- Pure recall formatter ----
 
-/** Render hits as a prompt block under `label`; "" when no hits. Truncated to maxChars (+ ellipsis). */
-export function formatRecall(hits: ReadonlyArray<MemoryHit>, label: string, maxChars?: number): string {
+/** Coarse human age bucket from a millisecond delta. Unknown for NaN/negative. */
+export function formatAge(ageMs: number): string {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return "age unknown"
+  const min = ageMs / 60_000
+  if (min < 1) return "~1m ago"
+  if (min < 60) return `~${Math.round(min)}m ago`
+  const hr = min / 60
+  if (hr < 48) return `~${Math.round(hr)}h ago`
+  return `~${Math.round(hr / 24)}d ago`
+}
+
+/**
+ * Render hits as a prompt block under `label`; "" when no hits. Each line is
+ * annotated `- (<provenance> · <age>) <text>` so the model can weigh a grounded
+ * observation against an inference. Truncated to maxChars (+ ellipsis).
+ */
+export function formatRecall(
+  hits: ReadonlyArray<MemoryHit>,
+  label: string,
+  nowMs: number,
+  maxChars?: number,
+): string {
   if (hits.length === 0) return ""
-  const block = `\n\n## ${label}\n${hits.map((h) => `- ${h.text}`).join("\n")}`
+  const lines = hits.map(
+    (h) => `- (${h.provenance} · ${formatAge(nowMs - Date.parse(h.ts))}) ${h.text}`,
+  )
+  const block = `\n\n## ${label}\n${lines.join("\n")}`
   if (maxChars && block.length > maxChars) return `${block.slice(0, maxChars)}…`
   return block
 }
@@ -135,10 +159,13 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore>
         Effect.gen(function* () {
           const q = query.trim()
           if (!q) return ""
+          // Over-fetch, then re-rank down to k by relevance × trust.
           const hits = yield* store
-            .recall(containerId, char, q, { k: opts.k, tags: opts.tags })
+            .recall(containerId, char, q, { k: opts.k * RERANK_OVERFETCH, tags: opts.tags })
             .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<MemoryHit>)))
-          return formatRecall(hits, opts.label, opts.maxChars)
+          const now = yield* Clock.currentTimeMillis
+          const ranked = rerank(hits, opts.k)
+          return formatRecall(ranked, opts.label, now, opts.maxChars)
         }),
     })
   }),

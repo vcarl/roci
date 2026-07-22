@@ -3,12 +3,14 @@ import { describe, it, expect } from "vitest"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
 import type { CharacterConfig } from "../../../../services/CharacterFs.js"
 import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
+import { RERANK_OVERFETCH } from "./memory-rank.js"
 import {
   observeMemories,
   orientMemories,
   decideMemories,
   evaluateMemories,
   formatRecall,
+  formatAge,
   orientQuery,
   MemoryGateway,
   MemoryGatewayLive,
@@ -18,6 +20,7 @@ const char = { name: "ada" } as CharacterConfig
 
 function fakeStore(opts: { hits?: MemoryHit[]; fail?: boolean } = {}) {
   const remembered: Array<{ text: string; source: string; tags: ReadonlyArray<string> }> = []
+  const recalledKs: number[] = []
   const layer = Layer.succeed(
     LongtermStore,
     LongtermStore.of({
@@ -26,11 +29,16 @@ function fakeStore(opts: { hits?: MemoryHit[]; fail?: boolean } = {}) {
       promote: () => Effect.succeed(0),
       remember: (_id, _char, entry) =>
         opts.fail ? Effect.fail(new Error("boom")) : Effect.sync(() => void remembered.push(entry)),
-      recall: (_id, _char, _q, _o) =>
-        opts.fail ? Effect.fail(new Error("boom")) : Effect.succeed(opts.hits ?? []),
+      recall: (_id, _char, _q, o) =>
+        opts.fail
+          ? Effect.fail(new Error("boom"))
+          : Effect.sync(() => {
+              if (o?.k !== undefined) recalledKs.push(o.k)
+              return opts.hits ?? []
+            }),
     }),
   )
-  return { layer, remembered }
+  return { layer, remembered, recalledKs }
 }
 
 const run = <A>(store: ReturnType<typeof fakeStore>, program: Effect.Effect<A, never, MemoryGateway>) =>
@@ -91,14 +99,35 @@ describe("orientQuery", () => {
 })
 
 describe("formatRecall", () => {
-  it("returns empty string for no hits", () => {
-    expect(formatRecall([], "You recall")).toBe("")
+  const NOW = Date.parse("2026-07-21T12:00:00Z")
+  const mkHit = (over: Partial<MemoryHit>): MemoryHit => ({
+    id: 1, ts: new Date(NOW).toISOString(), source: "orient",
+    provenance: "inferred", tags: [], text: "x", score: 0.5, ...over,
   })
-  it("renders a labeled block and truncates to maxChars", () => {
-    const hits = [{ id: 1, ts: "t", source: "orient", tags: [], text: "AAAAAAAAAA", score: 1 }] as MemoryHit[]
-    expect(formatRecall(hits, "You recall")).toContain("## You recall")
-    expect(formatRecall(hits, "You recall")).toContain("- AAAAAAAAAA")
-    expect(formatRecall(hits, "You recall", 10).length).toBeLessThanOrEqual(11) // 10 + ellipsis
+  it("returns empty string for no hits", () => {
+    expect(formatRecall([], "You recall", NOW)).toBe("")
+  })
+  it("annotates each line with provenance and coarse age under the label", () => {
+    const hits = [
+      mkHit({ text: "docked at First Step", provenance: "grounded", ts: new Date(NOW - 2 * 60_000).toISOString() }),
+      mkHit({ text: "readout may be unreliable", provenance: "inferred", ts: new Date(NOW - 5 * 3600_000).toISOString() }),
+    ]
+    const out = formatRecall(hits, "You recall", NOW)
+    expect(out).toContain("## You recall")
+    expect(out).toContain("- (grounded · ~2m ago) docked at First Step")
+    expect(out).toContain("- (inferred · ~5h ago) readout may be unreliable")
+  })
+  it("still truncates to maxChars with an ellipsis", () => {
+    expect(formatRecall([mkHit({ text: "A".repeat(50) })], "You recall", NOW, 20).length).toBeLessThanOrEqual(21)
+  })
+})
+
+describe("formatAge", () => {
+  it("buckets by minute/hour/day and flags unknown", () => {
+    expect(formatAge(90_000)).toBe("~2m ago")
+    expect(formatAge(5 * 3600_000)).toBe("~5h ago")
+    expect(formatAge(3 * 24 * 3600_000)).toBe("~3d ago")
+    expect(formatAge(NaN)).toBe("age unknown")
   })
 })
 
@@ -124,13 +153,19 @@ describe("MemoryGateway", () => {
   })
 
   it("recall returns a formatted block, and empty string when the store fails", async () => {
-    const ok = fakeStore({ hits: [{ id: 1, ts: "t", source: "orient", tags: [], text: "remembered fact", score: 1 }] as MemoryHit[] })
+    const ok = fakeStore({ hits: [{ id: 1, ts: "2026-07-21T12:00:00Z", source: "orient", provenance: "inferred", tags: [], text: "remembered fact", score: 1 }] as MemoryHit[] })
     const okBlock = await run(ok, Effect.flatMap(MemoryGateway, (g) => g.recall("cid", char, "q", { k: 5, label: "Relevant memories" })))
     expect(okBlock).toContain("## Relevant memories")
-    expect(okBlock).toContain("- remembered fact")
+    expect(okBlock).toContain("remembered fact")
 
     const bad = fakeStore({ fail: true })
     const badBlock = await run(bad, Effect.flatMap(MemoryGateway, (g) => g.recall("cid", char, "q", { k: 5, label: "Relevant memories" })))
     expect(badBlock).toBe("")
+  })
+
+  it("recall over-fetches the store by RERANK_OVERFETCH before reranking down to k", async () => {
+    const store = fakeStore()
+    await run(store, Effect.flatMap(MemoryGateway, (g) => g.recall("cid", char, "q", { k: 3, label: "Relevant memories" })))
+    expect(store.recalledKs).toEqual([3 * RERANK_OVERFETCH])
   })
 })

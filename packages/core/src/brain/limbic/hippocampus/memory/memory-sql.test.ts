@@ -41,15 +41,36 @@ describe("buildSchemaSql", () => {
   })
 })
 
+describe("buildSchemaSql — provenance column", () => {
+  it("declares provenance with the legacy-safe default", () => {
+    expect(buildSchemaSql()).toContain("provenance TEXT NOT NULL DEFAULT 'episodic'")
+  })
+})
+
+describe("buildInsertSql — provenance column", () => {
+  it("inserts five columns in a fixed order with five binds", () => {
+    const sql = buildInsertSql()
+    expect(sql).toContain("(ts, source, tags, text, provenance)")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?)")
+  })
+})
+
+describe("buildKnnSql — provenance column", () => {
+  it("selects provenance alongside the ranked row", () => {
+    expect(buildKnnSql(5)).toContain("m.provenance AS provenance")
+  })
+})
+
 describe("buildInsertSql / buildVecInsertSql", () => {
-  it("inserts a memories row with ts/source/tags/text placeholders", () => {
+  it("inserts a memories row with ts/source/tags/text/provenance placeholders", () => {
     const sql = buildInsertSql()
     expect(sql).toContain("INSERT INTO memories")
     expect(sql).toContain("ts")
     expect(sql).toContain("source")
     expect(sql).toContain("tags")
     expect(sql).toContain("text")
-    expect(sql).toContain("VALUES (?, ?, ?, ?)")
+    expect(sql).toContain("provenance")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?)")
   })
   it("inserts the vector row keyed by the same id", () => {
     const sql = buildVecInsertSql()
