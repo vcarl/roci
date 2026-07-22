@@ -45,8 +45,8 @@ const scriptedClient = Layer.succeed(
         // Diary turn carries the "judgment" label — branch on its unique
         // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
         if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-        const hasDisposition = p.includes("disposition")
-        const hasDecision = p.includes("decision")
+        const hasDisposition = p.includes('"disposition":"')
+        const hasDecision = p.includes('"decision":')
         const hasHeadline = p.includes("headline")
         const hasJudgment = p.includes("judgment")
         if (hasDisposition && !hasDecision)
@@ -84,8 +84,8 @@ const makeMultiStepClient = (evalCountRef: { n: number }) =>
           // Diary turn carries the "judgment" label too — branch on its unique
           // "plain prose" phrase FIRST so it isn't counted as an evaluate call.
           if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision)
@@ -307,8 +307,8 @@ describe("runActivation (conscious-session executor)", () => {
             // branch on its unique "plain prose" phrase FIRST so it isn't miscounted
             // as an evaluate call below.
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -367,8 +367,8 @@ describe("runActivation (conscious-session executor)", () => {
             // Diary turn carries the "judgment" label — branch on its unique
             // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -430,8 +430,8 @@ describe("runActivation (conscious-session executor)", () => {
             // Diary turn carries the "judgment" label — branch on its unique
             // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -517,8 +517,8 @@ describe("runActivation (conscious-session executor)", () => {
             // Diary turn carries the "judgment" label — branch on its unique
             // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -625,8 +625,8 @@ describe("runActivation (conscious-session executor)", () => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
             // Diary discriminator FIRST — its prompt also contains the "judgment" label.
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -695,8 +695,8 @@ describe("runActivation (conscious-session executor)", () => {
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -766,8 +766,8 @@ describe("runActivation (conscious-session executor)", () => {
           if (p.includes("plain prose"))
             return Effect.fail(new ModelError({ tier: "forebrain", model: "m", baseUrl: "u", reason: "diary boom" }))
           return Effect.sync(() => {
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -1088,8 +1088,8 @@ describe("runActivation (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -1151,8 +1151,8 @@ describe("runActivation (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -1223,8 +1223,8 @@ describe("runActivation (conscious-session executor)", () => {
             // Diary turn carries the "judgment" label — branch on its unique
             // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -1305,8 +1305,8 @@ describe("runActivation (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -1382,8 +1382,8 @@ describe("runActivation (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -1459,8 +1459,8 @@ describe("runActivation (conscious-session executor)", () => {
         complete: (_h: ModelHandle, messages) =>
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -1637,15 +1637,15 @@ describe("runActivation (conscious-session executor)", () => {
 
       // Store: headline todo (orient headline, "(assessment) "-prefixed per
       // Task 3 so a confabulated narrative can't masquerade as a plan) + one
-      // child per plan step.
+      // child per plan step. Evaluate marks the step done, closing the
+      // (single-step) plan and its headline too — pruneSettledTodos then
+      // drops the fully-settled root subtree from wm.json/WM.md entirely
+      // (see wm-core.ts) so completed plans don't flood WM.md context.
       const wm = parseWmFile(fs.readFileSync(path.join(charDir, "wm.json"), "utf8"))
-      expect(wm.todos[0]).toMatchObject({ id: "t1", text: "(assessment) act now", parent: null })
-      expect(wm.todos[1]).toMatchObject({ id: "t2", text: "act: do the thing", parent: "t1" })
-      // Evaluate marked the step done; the (single-step) plan closed → headline done too.
-      expect(wm.todos[1].state).toBe("done")
-      expect(wm.todos[0].state).toBe("done")
-      // WM.md was re-rendered by the harness mutations.
-      expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).toContain("- [x] t1 (assessment) act now")
+      expect(wm.todos).toEqual([])
+      // WM.md was re-rendered by the harness mutations; renderWmMarkdown's
+      // empty-state string when no todos remain.
+      expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).toContain("(no todos)")
 
       // Episodes: seeding recorded as a type:"wm" record; done deltas on the step-end.
       const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
@@ -1691,7 +1691,7 @@ describe("runActivation (conscious-session executor)", () => {
               const p = messages.map((m) => m.content).join(" ")
               const lower = p.toLowerCase()
               if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes("disposition") && !lower.includes("decision"))
+              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
                 return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
               if (lower.includes("headline") && !lower.includes("judgment"))
                 return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
@@ -1736,7 +1736,7 @@ describe("runActivation (conscious-session executor)", () => {
               const p = messages.map((m) => m.content).join(" ")
               const lower = p.toLowerCase()
               if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes("disposition") && !lower.includes("decision"))
+              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
                 return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
               if (lower.includes("headline") && !lower.includes("judgment"))
                 return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
@@ -1793,7 +1793,7 @@ describe("runActivation (conscious-session executor)", () => {
               const p = messages.map((m) => m.content).join(" ")
               const lower = p.toLowerCase()
               if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes("disposition") && !lower.includes("decision"))
+              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
                 return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
               if (lower.includes("headline") && !lower.includes("judgment"))
                 return { text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
@@ -1860,7 +1860,7 @@ describe("runActivation (conscious-session executor)", () => {
               const p = messages.map((m) => m.content).join(" ")
               const lower = p.toLowerCase()
               if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes("disposition") && !lower.includes("decision"))
+              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
                 return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
               if (lower.includes("headline") && !lower.includes("judgment"))
                 return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
@@ -1956,8 +1956,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
           Effect.sync(() => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision) {
@@ -2215,8 +2215,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         complete: (_h: ModelHandle, messages) => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision) {
@@ -2277,8 +2277,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         complete: (_h: ModelHandle, messages) => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision) {
@@ -2376,8 +2376,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
           complete: (_h: ModelHandle, messages) => {
             const p = messages.map((m) => m.content).join(" ").toLowerCase()
             if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-            const hasDisposition = p.includes("disposition")
-            const hasDecision = p.includes("decision")
+            const hasDisposition = p.includes('"disposition":"')
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
             if (hasDisposition && !hasDecision)
@@ -2431,8 +2431,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         complete: (_h: ModelHandle, messages) => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
@@ -2899,8 +2899,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         complete: (_h: ModelHandle, messages) => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision)
@@ -2951,8 +2951,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         complete: (_h: ModelHandle, messages) => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
@@ -2995,8 +2995,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
           const raw = messages.map((m) => m.content).join(" ")
           const p = raw.toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision)
@@ -3108,8 +3108,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         complete: (_h: ModelHandle, messages) => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
@@ -3159,8 +3159,8 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         complete: (_h: ModelHandle, messages) => {
           const p = messages.map((m) => m.content).join(" ").toLowerCase()
           if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes("disposition")
-          const hasDecision = p.includes("decision")
+          const hasDisposition = p.includes('"disposition":"')
+          const hasDecision = p.includes('"decision":')
           const hasHeadline = p.includes("headline")
           const hasJudgment = p.includes("judgment")
           if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
@@ -3217,10 +3217,10 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
             const raw = messages.map((m) => m.content).join(" ")
             const p = raw.toLowerCase()
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDecision = p.includes("decision")
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
-            if (p.includes("disposition") && !hasDecision)
+            if (p.includes('"disposition":"') && !hasDecision)
               return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
             if (hasJudgment && !hasHeadline)
               return {
@@ -3285,10 +3285,10 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
             const raw = messages.map((m) => m.content).join(" ")
             const p = raw.toLowerCase()
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDecision = p.includes("decision")
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
-            if (p.includes("disposition") && !hasDecision)
+            if (p.includes('"disposition":"') && !hasDecision)
               return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
             if (hasJudgment && !hasHeadline)
               return {
@@ -3415,10 +3415,10 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
             const raw = messages.map((m) => m.content).join(" ")
             const p = raw.toLowerCase()
             if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDecision = p.includes("decision")
+            const hasDecision = p.includes('"decision":')
             const hasHeadline = p.includes("headline")
             const hasJudgment = p.includes("judgment")
-            if (p.includes("disposition") && !hasDecision)
+            if (p.includes('"disposition":"') && !hasDecision)
               return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
             if (hasJudgment && !hasHeadline)
               return {

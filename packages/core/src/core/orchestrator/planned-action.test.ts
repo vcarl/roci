@@ -43,6 +43,20 @@ let charRoot: string
 
 const lines = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}-${i}`).join("\n")
 
+/**
+ * Bulk single-paragraph seed/output text. dream.ts gates consolidate/cull behind
+ * DIARY_MIN_COMPRESS_CHARS / SECRETS_MIN_COMPRESS_CHARS (4000 chars each) — a
+ * step below that threshold is skipped with no model turn. Tests that legitimately
+ * exercise the consolidate/cull turns (and anything downstream that depends on
+ * them running) need seed/output content that clears the gate for real, not a
+ * tiny fixture that only worked because the gate used to be absent. 700 repeats
+ * of any short tag keeps every generated string comfortably above 4000 chars
+ * (minimum ~7 chars/line). One paragraph — no blank line — so it can never be
+ * mis-split into extra diary "entries" by the raw-promotion parser
+ * (splitDiaryEntries splits on `\n\s*\n`).
+ */
+const bulk = (tag: string, repeats = 700) => `${tag}-line\n`.repeat(repeats)
+
 // `synthesis` defaults NON-EMPTY so the memory-index bootstrap stage (which fires
 // only when SYNTHESIS.md is absent/blank) SKIPS its turn in the pre-existing
 // reflection tests — keeping their model-turn call counts intact. Tests that
@@ -151,13 +165,16 @@ afterEach(() => {
 const run = (eff: Effect.Effect<unknown, unknown, never>) => Effect.runPromise(eff)
 
 describe("runReflection — per-cycle consolidate then cull", () => {
-  it("runs the cull (dream) even when the diary is small (gate removed)", async () => {
+  it("skips the cull (dream) when the diary and secrets are small (gate respected)", async () => {
+    // Product intent: the dream cull manages context and must NOT run
+    // unconditionally on small content. Below DIARY_MIN_COMPRESS_CHARS /
+    // SECRETS_MIN_COMPRESS_CHARS (dream.ts), consolidate and both culls are each
+    // size-gated and skip cleanly — no model turn, no write.
     const fs = makeFs({ diary: lines(3, "tiny"), secrets: lines(4, "sec") })
 
     let call = 0
     runTurnMock.mockImplementation(() => {
       call++
-      // 1 = consolidate, 2 = dream diary cull, 3 = dream secrets cull
       return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
     })
 
@@ -166,20 +183,21 @@ describe("runReflection — per-cycle consolidate then cull", () => {
     )
     await run(program as Effect.Effect<unknown, unknown, never>)
 
-    // Dream is the only step that touches SECRETS.md — proves the cull ran on a tiny diary.
-    expect(fs.secretsWrites.length).toBeGreaterThanOrEqual(1)
-    // consolidate + dream(diary) + dream(secrets) = 3 model turns.
-    expect(call).toBe(3)
+    // Below every gate: no compression turn ran at all, and neither file was touched.
+    expect(call).toBe(0)
+    expect(fs.secretsWrites.length).toBe(0)
+    expect(fs.diaryWrites.length).toBe(0)
   })
 
   it("runs the ENTIRE reflection dream on the local model — one unified step, zero claude passes", async () => {
-    const fs = makeFs({ diary: lines(3, "tiny"), secrets: lines(4, "sec") })
+    // Above every gate, so consolidate + both culls legitimately fire.
+    const fs = makeFs({ diary: bulk("tiny"), secrets: bulk("sec") })
     const modelsUsed: string[] = []
     let call = 0
     runTurnMock.mockImplementation((config: { model: string }) => {
       modelsUsed.push(config.model)
       call++
-      return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+      return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
     })
 
     const program = runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
@@ -196,7 +214,9 @@ describe("runReflection — per-cycle consolidate then cull", () => {
   })
 
   it("logs a STRUCTURED error (kind:error) and continues when consolidate fails", async () => {
-    const fs = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+    // Above every gate: consolidate fails (leaving the original diary untouched,
+    // still above the gate), so the culls below still legitimately fire.
+    const fs = makeFs({ diary: bulk("d"), secrets: bulk("s") })
     const errorMessages: string[] = []
     const recordingLog = Layer.succeed(
       CharacterLog,
@@ -209,7 +229,7 @@ describe("runReflection — per-cycle consolidate then cull", () => {
     runTurnMock.mockImplementation(() => {
       call++
       if (call === 1) return Effect.fail(new Error("consolidate boom"))
-      return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+      return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
     })
 
     const program = runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
@@ -224,7 +244,11 @@ describe("runReflection — per-cycle consolidate then cull", () => {
   })
 
   it("logs a STRUCTURED error (kind:error) and continues when dream (cull) fails", async () => {
-    const fs = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+    // Diary above the gate (consolidate runs) and secrets above the gate
+    // independently (secrets-cull runs and is the one that fails here — the
+    // consolidate's small fixed output below re-closes the diary-cull gate,
+    // which is fine: this test only needs ONE dream turn to fail loud).
+    const fs = makeFs({ diary: bulk("d"), secrets: bulk("s") })
     const errorMessages: string[] = []
     const recordingLog = Layer.succeed(
       CharacterLog,
@@ -249,12 +273,16 @@ describe("runReflection — per-cycle consolidate then cull", () => {
   })
 
   it("consolidates the diary BEFORE the cull and writes the consolidate output", async () => {
-    const fs = makeFs({ diary: lines(3, "raw"), secrets: lines(4, "sec") })
+    const fs = makeFs({ diary: bulk("raw"), secrets: bulk("sec") })
+    // Consolidate's output must itself clear DIARY_MIN_COMPRESS_CHARS — the cull
+    // re-checks size against whatever consolidate just wrote — so the cull below
+    // legitimately fires too.
+    const consolidateOut = bulk("CONSOLIDATED_OUTPUT")
 
     let call = 0
     runTurnMock.mockImplementation(() => {
       call++
-      if (call === 1) return Effect.succeed({ output: "CONSOLIDATED_OUTPUT", timedOut: false, durationMs: 1 })
+      if (call === 1) return Effect.succeed({ output: consolidateOut, timedOut: false, durationMs: 1 })
       if (call === 2) return Effect.succeed({ output: "culled_diary", timedOut: false, durationMs: 1 })
       return Effect.succeed({ output: "culled_secrets", timedOut: false, durationMs: 1 })
     })
@@ -265,25 +293,37 @@ describe("runReflection — per-cycle consolidate then cull", () => {
     await run(program as Effect.Effect<unknown, unknown, never>)
 
     // The first diary write came from consolidate, before the cull's write.
-    expect(fs.diaryWrites[0]).toBe("CONSOLIDATED_OUTPUT")
-    expect(fs.diaryWrites).toContain("CONSOLIDATED_OUTPUT")
+    expect(fs.diaryWrites[0]).toBe(consolidateOut)
+    expect(fs.diaryWrites).toContain(consolidateOut)
   })
 })
 
 describe("runReflection — pre-consolidate raw promotion (Unit 7)", () => {
   // Promotion runs BEFORE consolidate (capturing RAW episodic appends) and the
-  // mark is re-baselined to the post-cull diary. consolidate/dream outputs are
-  // single-line so the dream never-grows invariant writes them.
+  // mark is re-baselined to the post-cull diary. Raw diary entries and the
+  // consolidate output are padded above DIARY_MIN_COMPRESS_CHARS (dream.ts) so
+  // consolidate/cull legitimately fire on this path — the cull re-checks size
+  // against whatever consolidate just wrote, so a tiny fixed consolidate output
+  // would re-close the gate. The CULLED-n cull outputs stay short single-line
+  // literals, which exercise (and pass) the unaffected never-grows clamp and get
+  // written cleanly.
+  const RAW_A = bulk("RawA")
+  const RAW_B = bulk("RawB")
+  const RAW_C = bulk("RawC")
+  const RAW_ONLY = bulk("RawOnly")
+  const NARRATIVE_1 = bulk("NARRATIVE-1")
+  const NARRATIVE_2 = bulk("NARRATIVE-2")
+
   const deps = (fs: ReturnType<typeof makeFs>, store: ReturnType<typeof makeStore>, log = fakeLog) =>
     Layer.mergeAll(fs.layer, store.layer, log, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)
 
   it("promotes RAW pre-consolidate entries and re-baselines a bounded mark to the post-cull diary", async () => {
-    const fs = makeFs({ diary: "Raw A.\n\nRaw B.", secrets: lines(4, "sec") })
+    const fs = makeFs({ diary: `${RAW_A}\n\n${RAW_B}`, secrets: bulk("sec") })
     const store = makeStore()
     let call = 0
     runTurnMock.mockImplementation(() => {
       call++
-      if (call === 1) return Effect.succeed({ output: "NARRATIVE-1", timedOut: false, durationMs: 1 })
+      if (call === 1) return Effect.succeed({ output: NARRATIVE_1, timedOut: false, durationMs: 1 })
       if (call === 2) return Effect.succeed({ output: "CULLED-1", timedOut: false, durationMs: 1 })
       return Effect.succeed({ output: "sec-1", timedOut: false, durationMs: 1 })
     })
@@ -293,11 +333,11 @@ describe("runReflection — pre-consolidate raw promotion (Unit 7)", () => {
 
     // Promoted the RAW pre-consolidate entries — NOT the consolidated narrative
     // (proves the read happened before consolidate overwrote the diary).
-    expect(store.promotedCalls).toEqual([["Raw A.", "Raw B."]])
+    expect(store.promotedCalls).toEqual([[RAW_A.trim(), RAW_B.trim()]])
     // Mark re-baselined to the post-cull diary (bounded single object).
     expect(store.getMark()).toEqual(diaryMark("CULLED-1"))
     // Consolidate + cull still ran.
-    expect(fs.diaryWrites).toContain("NARRATIVE-1")
+    expect(fs.diaryWrites).toContain(NARRATIVE_1)
     expect(fs.secretsWrites.length).toBeGreaterThanOrEqual(1)
   })
 
@@ -305,29 +345,29 @@ describe("runReflection — pre-consolidate raw promotion (Unit 7)", () => {
     const store = makeStore()
     // Distinct consolidate/cull text per cycle — a byte-identical fake would mask
     // the churn bug; here the narrative genuinely changes between cycles.
-    const outputs = ["NARRATIVE-1", "CULLED-1", "sec-1", "NARRATIVE-2", "CULLED-2", "sec-2"]
+    const outputs = [NARRATIVE_1, "CULLED-1", "sec-1", NARRATIVE_2, "CULLED-2", "sec-2"]
     let call = 0
     runTurnMock.mockImplementation(() =>
       Effect.succeed({ output: outputs[call++] ?? "x", timedOut: false, durationMs: 1 }),
     )
 
     // Cycle 1: session's raw appends, no prior mark.
-    const fs1 = makeFs({ diary: "Raw A.\n\nRaw B.", secrets: lines(4, "sec") })
+    const fs1 = makeFs({ diary: `${RAW_A}\n\n${RAW_B}`, secrets: bulk("sec") })
     await run(runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(Effect.provide(deps(fs1, store))) as Effect.Effect<unknown, unknown, never>)
 
     // Cycle 2: a NEW session appended one raw entry onto the culled diary cycle 1
     // left ("CULLED-1"), exactly as the live loop appends.
-    const fs2 = makeFs({ diary: "CULLED-1\n\nRaw C.", secrets: lines(4, "sec") })
+    const fs2 = makeFs({ diary: `CULLED-1\n\n${RAW_C}`, secrets: bulk("sec2") })
     await run(runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(Effect.provide(deps(fs2, store))) as Effect.Effect<unknown, unknown, never>)
 
     // Only the genuinely-new raw entries each cycle — the prior content and the
     // (changed) consolidated narratives are NOT re-promoted.
-    expect(store.promotedCalls).toEqual([["Raw A.", "Raw B."], ["Raw C."]])
+    expect(store.promotedCalls).toEqual([[RAW_A.trim(), RAW_B.trim()], [RAW_C.trim()]])
     expect(store.getMark()).toEqual(diaryMark("CULLED-2"))
   })
 
   it("a failing promotion logs a STRUCTURED error and does NOT block consolidate/cull", async () => {
-    const fs = makeFs({ diary: "Raw A.", secrets: lines(4, "sec") })
+    const fs = makeFs({ diary: RAW_ONLY, secrets: bulk("sec") })
     const store = makeStore({ failPromote: true })
     const errorMessages: string[] = []
     const recordingLog = Layer.succeed(
@@ -339,7 +379,7 @@ describe("runReflection — pre-consolidate raw promotion (Unit 7)", () => {
     let call = 0
     runTurnMock.mockImplementation(() => {
       call++
-      if (call === 1) return Effect.succeed({ output: "NARRATIVE-1", timedOut: false, durationMs: 1 })
+      if (call === 1) return Effect.succeed({ output: NARRATIVE_1, timedOut: false, durationMs: 1 })
       return Effect.succeed({ output: "x", timedOut: false, durationMs: 1 })
     })
     await run(
@@ -348,7 +388,7 @@ describe("runReflection — pre-consolidate raw promotion (Unit 7)", () => {
 
     expect(errorMessages.some((m) => m.toLowerCase().includes("promotion"))).toBe(true)
     // consolidate + cull still ran after the promotion failure (best-effort).
-    expect(fs.diaryWrites).toContain("NARRATIVE-1")
+    expect(fs.diaryWrites).toContain(NARRATIVE_1)
     expect(fs.secretsWrites.length).toBeGreaterThanOrEqual(1)
   })
 })
@@ -388,7 +428,8 @@ describe("runReflection — reflection behaviors", () => {
 
 describe("runReflection — memory-index bootstrap (wiring)", () => {
   it("with an empty SYNTHESIS.md, runs the bootstrap turn AFTER dream and writes the memory index", async () => {
-    const fsx = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s"), synthesis: "" })
+    // Above every gate, so consolidate + both culls legitimately fire ahead of bootstrap.
+    const fsx = makeFs({ diary: bulk("d"), secrets: bulk("s"), synthesis: "" })
     const modelsUsed: string[] = []
     let call = 0
     runTurnMock.mockImplementation((config: { model: string }) => {
@@ -397,7 +438,7 @@ describe("runReflection — memory-index bootstrap (wiring)", () => {
       // No episode root here → retrospect skips (no turn). macro skips (fresh
       // counter). So: 1=consolidate, 2=dream diary, 3=dream secrets, 4=bootstrap.
       if (call === 4) return Effect.succeed({ output: "I am Ada, only just beginning.", timedOut: false, durationMs: 1 })
-      return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+      return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
     })
 
     await run(
@@ -415,11 +456,12 @@ describe("runReflection — memory-index bootstrap (wiring)", () => {
   })
 
   it("with a non-empty SYNTHESIS.md, the bootstrap SKIPS its turn and writes nothing", async () => {
-    const fsx = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") }) // default synthesis is non-empty
+    // Above every gate; default synthesis is non-empty.
+    const fsx = makeFs({ diary: bulk("d"), secrets: bulk("s") })
     let call = 0
     runTurnMock.mockImplementation(() => {
       call++
-      return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+      return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
     })
 
     await run(
@@ -433,7 +475,8 @@ describe("runReflection — memory-index bootstrap (wiring)", () => {
   })
 
   it("empty synthesis AND an Nth macro cycle in ONE reflection: bootstrap writes first, macro's synthesize reads the FRESH bootstrap as its base, final file is macro's rewrite", async () => {
-    const fsx = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s"), synthesis: "" })
+    // Above every gate, so consolidate + both culls legitimately fire ahead of bootstrap/macro.
+    const fsx = makeFs({ diary: bulk("d"), secrets: bulk("s"), synthesis: "" })
     // Advance the persisted counter so THIS reflection's macro bump lands on N.
     const N = 4
     for (let i = 0; i < N - 1; i++) await Effect.runPromise(bumpMacroCount(char))
@@ -452,7 +495,7 @@ describe("runReflection — memory-index bootstrap (wiring)", () => {
           timedOut: false, durationMs: 1,
         })
       }
-      return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+      return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
     })
 
     await run(
@@ -559,7 +602,8 @@ describe("runReflection — meso retrospect (Stage 4)", () => {
         ts: "t", tick: 1, stepId: "s1", tool: "bash", argsSummary: "{}", status: "error", durationMs: 1,
       }))
 
-      const fsFake = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+      // Above every gate, so consolidate + both culls legitimately fire after retrospect.
+      const fsFake = makeFs({ diary: bulk("d"), secrets: bulk("s") })
       // Call 1 = RETROSPECT (returns proposals); 2 = consolidate; 3 = dream diary; 4 = dream secrets.
       let call = 0
       runTurnMock.mockImplementation(() => {
@@ -572,7 +616,7 @@ describe("runReflection — meso retrospect (Stage 4)", () => {
             timedOut: false, durationMs: 1,
           })
         }
-        return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+        return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
       })
 
       await run(
@@ -605,13 +649,14 @@ describe("runReflection — meso retrospect (Stage 4)", () => {
         type: "step-end", ts: "t", tick: 1, stepId: "s1", task: "burn", goal: "arrive",
         verdict: "failed", transition: "replan", skill: null, wmDeltas: null,
       }))
-      const fsFake = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+      // Above every gate, so consolidate + both culls legitimately fire after retrospect.
+      const fsFake = makeFs({ diary: bulk("d"), secrets: bulk("s") })
       // Call 1 = retrospect TIMES OUT (empty); 2 = consolidate; 3,4 = dream.
       let call = 0
       runTurnMock.mockImplementation(() => {
         call++
         if (call === 1) return Effect.succeed({ output: "", timedOut: true, durationMs: 1 })
-        return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+        return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
       })
 
       await run(
@@ -650,7 +695,8 @@ describe("runReflection — macro growth stimulation (Stage 5)", () => {
       const N = 4
       for (let i = 0; i < N - 1; i++) await Effect.runPromise(bumpMacroCount(charT))
 
-      const fsFake = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+      // Above every gate, so consolidate + both culls legitimately fire before macro.
+      const fsFake = makeFs({ diary: bulk("d"), secrets: bulk("s") })
       // Calls: 1=retrospect, 2=consolidate, 3=dream diary, 4=dream secrets, 5=MACRO.
       let call = 0
       runTurnMock.mockImplementation(() => {
@@ -666,7 +712,7 @@ describe("runReflection — macro growth stimulation (Stage 5)", () => {
             timedOut: false, durationMs: 1,
           })
         }
-        return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+        return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
       })
 
       await run(
@@ -706,12 +752,13 @@ describe("runReflection — macro growth stimulation (Stage 5)", () => {
       }))
       for (let i = 0; i < 3; i++) await Effect.runPromise(bumpMacroCount(charT)) // N=4: this reflection bumps to 4
 
-      const fsFake = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
+      // Above every gate, so consolidate + both culls legitimately fire before macro.
+      const fsFake = makeFs({ diary: bulk("d"), secrets: bulk("s") })
       let call = 0
       runTurnMock.mockImplementation(() => {
         call++
         if (call === 5) return Effect.succeed({ output: "", timedOut: true, durationMs: 1 }) // macro times out
-        return Effect.succeed({ output: lines(2, `t${call}`), timedOut: false, durationMs: 1 })
+        return Effect.succeed({ output: bulk(`t${call}`), timedOut: false, durationMs: 1 })
       })
 
       await run(
