@@ -6,6 +6,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { CharacterFs, CharacterFsLive, SYNTHESIS_FILE, type CharacterConfig } from "./CharacterFs.js"
 import { MAX_SKILLS, type SkillDoc } from "./skills-core.js"
+import { parseSalience, TEMPLATE_SALIENCE } from "../core/salience.js"
 
 let root: string
 let char: CharacterConfig
@@ -93,5 +94,23 @@ describe("readSynthesis / writeSynthesis / deleteSkill (Stage 5 macro surface)",
     // idempotent: deleting again does not throw
     await run(Effect.flatMap(CharacterFs, (s) => s.deleteSkill(char, "securing-fuel")))
     expect(await run(Effect.flatMap(CharacterFs, (s) => s.listSkills(char)))).toEqual([])
+  })
+})
+
+describe("CharacterFs.readSalience (Phase 2 salience profile)", () => {
+  it("falls back to TEMPLATE_SALIENCE when SALIENCE.md is absent", async () => {
+    const md = await run(Effect.flatMap(CharacterFs, (s) => s.readSalience(char)))
+    expect(md).toBe(TEMPLATE_SALIENCE)
+    // the default degrades to the core drive spine at neutral 0.5
+    expect(parseSalience(md)).toEqual({ safety: 0.5, sustenance: 0.5, agency: 0.5 })
+  })
+
+  it("reads a written SALIENCE.md verbatim", async () => {
+    fs.mkdirSync(char.dir, { recursive: true })
+    const body = "- safety: 0.9  # jumpy\n- sustenance: 0.4  # steady\n- agency: 0.7  # willful"
+    fs.writeFileSync(path.join(char.dir, "SALIENCE.md"), body)
+    const md = await run(Effect.flatMap(CharacterFs, (s) => s.readSalience(char)))
+    expect(md).toBe(body)
+    expect(parseSalience(md)).toEqual({ safety: 0.9, sustenance: 0.4, agency: 0.7 })
   })
 })

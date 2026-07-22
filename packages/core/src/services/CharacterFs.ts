@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
+import { TEMPLATE_SALIENCE } from "../core/salience.js"
 import { TEMPLATE_DRIVES } from "#brain/limbic/hypothalamus/drives.js"
 import {
   parseSkillFile,
@@ -58,6 +59,7 @@ export class CharacterFs extends Context.Tag("CharacterFs")<
     readonly readValues: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly readPalette: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly readDrives: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
+    readonly readSalience: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly characterExists: (char: CharacterConfig) => Effect.Effect<boolean, CharacterFsError>
     readonly listSkills: (char: CharacterConfig) => Effect.Effect<SkillMeta[], CharacterFsError>
     readonly readSkill: (char: CharacterConfig, name: string) => Effect.Effect<SkillDoc | null, CharacterFsError>
@@ -136,6 +138,9 @@ export const CharacterFsLive = Layer.effect(
 
       readDrives: (char) =>
         readFileOr(path.join(char.dir, "DRIVES.md"), TEMPLATE_DRIVES),
+
+      readSalience: (char) =>
+        readFileOr(path.join(char.dir, "SALIENCE.md"), TEMPLATE_SALIENCE),
 
       characterExists: (char) =>
         fs.exists(char.dir).pipe(

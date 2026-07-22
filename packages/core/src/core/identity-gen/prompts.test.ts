@@ -4,6 +4,7 @@ import {
   buildValuesPrompt,
   buildPalettePrompt,
   buildDrivesPrompt,
+  buildSaliencePrompt,
   buildDiaryPrompt,
   buildSummaryPrompt,
   promptForStep,
@@ -52,6 +53,23 @@ describe("prompt builders", () => {
     expect(p.toLowerCase()).toContain("do not rename")
   })
 
+  it("salience prompt threads drives + values + background and demands the weight line format", () => {
+    const p = buildSaliencePrompt({ ...base, background: "BG", values: "VAL", baseDrives: "- safety — DRIVE-MARKER" })
+    expect(p).toContain("DRIVE-MARKER") // the approved drive spine
+    expect(p).toContain("VAL")
+    expect(p).toContain("BG")
+    expect(p).toContain("0.0")
+    expect(p).toContain("1.0")
+    expect(p).toContain("- <dimension>: <0.0-1.0>  # <short gloss in the character's voice>")
+    expect(p.toLowerCase()).toContain("up to 2")
+    expect(p.toLowerCase()).toContain("do not rename")
+  })
+
+  it("salience prompt appends operator feedback when present", () => {
+    const p = buildSaliencePrompt({ ...base, background: "BG", values: "VAL", feedback: "make her jumpier" })
+    expect(p).toContain("make her jumpier")
+  })
+
   it("summary prompt asks for exactly 4 sentences from the background", () => {
     const p = buildSummaryPrompt({ ...base, background: "BG" })
     expect(p).toContain("4 sentences")
@@ -66,5 +84,7 @@ describe("prompt builders", () => {
   it("promptForStep dispatches by step", () => {
     expect(promptForStep("background", base)).toBe(buildBackgroundPrompt(base))
     expect(promptForStep("diary", { ...base, values: "VAL" })).toContain("VAL")
+    const sal = { ...base, baseDrives: "- safety — X" }
+    expect(promptForStep("salience", sal)).toBe(buildSaliencePrompt(sal))
   })
 })

@@ -24,6 +24,7 @@ const fsWith = (vals: { background?: string; values?: string; diary?: string; sy
       readValues: () => Effect.succeed(vals.values ?? ""),
       readPalette: () => Effect.succeed(""),
       readDrives: () => Effect.succeed(""),
+      readSalience: () => Effect.succeed(""),
       characterExists: () => Effect.succeed(true),
       listSkills: () => Effect.succeed([]),
       readSkill: () => Effect.succeed(null),

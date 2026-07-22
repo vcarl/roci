@@ -61,6 +61,7 @@ function makeFs(initial: { diary: string; secrets: string; background?: string }
 			readValues: () => Effect.succeed("VALUES"),
 			readPalette: () => Effect.succeed(""),
 			readDrives: () => Effect.succeed(""),
+			readSalience: () => Effect.succeed(""),
 			characterExists: () => Effect.succeed(true),
 			listSkills: () => Effect.succeed([]),
 			readSkill: () => Effect.succeed(null),

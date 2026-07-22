@@ -56,6 +56,7 @@ function fsLayer(state: {
     readCredentials: () => Effect.succeed({ username: "", password: "" }),
     readBackground: () => Effect.succeed("BG"), readValues: () => Effect.succeed("VAL"),
     readPalette: () => Effect.succeed(""), readDrives: () => Effect.succeed(""),
+    readSalience: () => Effect.succeed(""),
     characterExists: () => Effect.succeed(true),
     listSkills: () => Effect.succeed([...state.skills.entries()].map(([slug, s]) => ({ slug, ...s }))),
     readSkill: () => Effect.succeed(null),

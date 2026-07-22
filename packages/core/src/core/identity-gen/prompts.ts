@@ -1,4 +1,4 @@
-export type IdentityStep = "background" | "values" | "palette" | "drives" | "diary" | "summary"
+export type IdentityStep = "background" | "values" | "palette" | "drives" | "salience" | "diary" | "summary"
 
 export interface IdentityContext {
   characterName: string
@@ -72,6 +72,26 @@ Rewrite ONLY the descriptions so they speak in THIS character's voice and world,
 Output ONLY the drive lines, no commentary.`
 }
 
+export const buildSaliencePrompt = (ctx: IdentityContext): string => {
+  return `You are authoring the SALIENCE profile for an AI character named "${ctx.characterName}".
+
+Approved background:
+${ctx.background ?? "(none)"}
+
+Approved values:
+${ctx.values ?? "(none)"}
+
+Here are this character's drives — the reference frame every event is weighed against. The FIRST three (safety, sustenance, agency) are universal core drives; any below them are domain-specific:
+${ctx.baseDrives ?? "(none)"}
+${feedbackBlock(ctx)}
+Salience is HOW STRONGLY this character reacts to each kind of stimulus. For EVERY drive above (keep every drive NAME exactly — do not rename, add, or drop them), assign a weight reflecting THIS character's psyche from the background and values above. Then you MAY add up to 2 extra character-specific dimensions that capture something the drives miss (e.g. reputation, curiosity). Weights run from 0.0 (barely registers) to 1.0 (dominates their attention).
+
+Use EXACTLY this line format, one dimension per line:
+- <dimension>: <0.0-1.0>  # <short gloss in the character's voice>
+
+Output ONLY the salience lines, no commentary.`
+}
+
 export const buildDiaryPrompt = (ctx: IdentityContext): string => {
   return `You are designing the DIARY structure for an AI character named "${ctx.characterName}".
 
@@ -112,6 +132,8 @@ export const promptForStep = (step: IdentityStep, ctx: IdentityContext): string 
       return buildPalettePrompt(ctx)
     case "drives":
       return buildDrivesPrompt(ctx)
+    case "salience":
+      return buildSaliencePrompt(ctx)
     case "diary":
       return buildDiaryPrompt(ctx)
     case "summary":

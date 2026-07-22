@@ -70,6 +70,11 @@ describe("scaffoldCharacter", () => {
     const drives = readFileSync(path.join(meDir("merged"), "DRIVES.md"), "utf-8")
     expect(drives).toContain("- safety —")
     expect(drives).toContain("- voyage — progress toward your destination")
+    // The salience spine mirrors the drive spine: core + the domain drive at neutral 0.5.
+    const salience = readFileSync(path.join(meDir("merged"), "SALIENCE.md"), "utf-8")
+    expect(salience.startsWith("# Salience")).toBe(true)
+    expect(salience).toContain("- safety: 0.5")
+    expect(salience).toContain("- voyage: 0.5")
   })
 
   it("with a description generates each artifact and accepts them", async () => {
@@ -85,6 +90,8 @@ describe("scaffoldCharacter", () => {
     const bg = readFileSync(path.join(meDir("gen"), "background.md"), "utf-8")
     expect(bg).toContain("GEN:")
     expect(out.summary).toContain("GEN:")
+    const salience = readFileSync(path.join(meDir("gen"), "SALIENCE.md"), "utf-8")
+    expect(salience).toContain("GEN:") // the model-authored salience body was written
   })
 
   it("regenerate threads feedback then accept; skip writes template", async () => {
@@ -95,6 +102,7 @@ describe("scaffoldCharacter", () => {
       { action: "accept", content: "VAL-OK" },              // values
       { action: "skip" },                                    // palette → TEMPLATE_PALETTE
       { action: "skip" },                                    // drives → core+domain template
+      { action: "skip" },                                    // salience → core+domain template
       { action: "accept", content: "# Diary\nstuff" },      // diary
       { action: "accept", content: "summary text" },        // summary
     ])
@@ -114,6 +122,10 @@ describe("scaffoldCharacter", () => {
     const drives = readFileSync(path.join(meDir("mix"), "DRIVES.md"), "utf-8")
     expect(drives).toContain("# Drives")
     expect(drives).toContain("- safety —")
+    // skipped salience falls to the core+domain spine (SALIENCE.md is written)
+    const salience = readFileSync(path.join(meDir("mix"), "SALIENCE.md"), "utf-8")
+    expect(salience).toContain("# Salience")
+    expect(salience).toContain("- safety: 0.5")
   })
 
   it("never overwrites an existing file", async () => {

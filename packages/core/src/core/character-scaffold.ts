@@ -8,6 +8,7 @@ import type { ModelService } from "../services/ModelService.js"
 import type { ModelError } from "../model/errors.js"
 import type { SpawnError, ReadinessError } from "../services/model-backend.js"
 import { TEMPLATE_PALETTE, paletteFile } from "./palette.js"
+import { renderSalienceLines, salienceFile } from "./salience.js"
 import { renderDriveLines, drivesFile } from "#brain/limbic/hypothalamus/drives.js"
 import {
   promptForStep,
@@ -78,7 +79,8 @@ const runStep = (
  * Scaffold a new character's identity files under `players/<name>/me/`.
  *
  * With a `characterDescription`, generates background → values → palette →
- * diary → summary against the local conscious cortex tier, routing each
+ * drives → salience → diary → summary against the local conscious cortex tier,
+ * routing each
  * artifact through the injected `review` callback (accept / edit / regenerate /
  * skip). Without a description, writes plain seed templates and makes no model
  * call. Fails hard on a model/readiness/empty-content error — it never writes a
@@ -120,6 +122,7 @@ export const scaffoldCharacter = (opts: {
     // personalize the descriptions/voice while the names stay stable (§3.3).
     const domainDrives = opts.domainConfig.identityTemplate?.domainDrives
     let driveBody = renderDriveLines(domainDrives)
+    let salienceBody = renderSalienceLines(domainDrives)
     let diaryContent = DIARY_TEMPLATE
     let summary: string | undefined
 
@@ -148,6 +151,12 @@ export const scaffoldCharacter = (opts: {
 
       const drv = yield* runStep("drives", ctx, opts.cortexModels, review)
       if (drv.kind === "content") driveBody = drv.value.trim()
+      // Salience depends on the approved drives (the spine) + values + background;
+      // thread the approved drive block forward so the profile weights match it.
+      ctx.baseDrives = driveBody
+
+      const sal = yield* runStep("salience", ctx, opts.cortexModels, review)
+      if (sal.kind === "content") salienceBody = sal.value.trim()
 
       const diary = yield* runStep("diary", ctx, opts.cortexModels, review)
       if (diary.kind === "content") diaryContent = diary.value.trim() + "\n"
@@ -163,6 +172,7 @@ export const scaffoldCharacter = (opts: {
       { name: "VALUES.md", content: valuesContent },
       { name: "PALETTE.md", content: paletteFile(paletteBody) },
       { name: "DRIVES.md", content: drivesFile(driveBody) },
+      { name: "SALIENCE.md", content: salienceFile(salienceBody) },
       { name: "DIARY.md", content: diaryContent },
       { name: "SECRETS.md", content: SECRETS_TEMPLATE },
     ]

@@ -38,6 +38,7 @@ function fsLayer(state: {
     readBackground: () => Effect.succeed(state.background),
     readValues: () => Effect.succeed(state.values),
     readPalette: () => Effect.succeed(""), readDrives: () => Effect.succeed(""),
+    readSalience: () => Effect.succeed(""),
     characterExists: () => Effect.succeed(true),
     listSkills: () => Effect.succeed([]), readSkill: () => Effect.succeed(null), writeSkill: () => Effect.void,
     readSynthesis: () => Effect.succeed(state.synthesis.value),

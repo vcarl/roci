@@ -35,6 +35,7 @@ function fsLayer(skills: Array<{ slug: string; name: string; description: string
       readCredentials: () => Effect.succeed({ username: "", password: "" }),
       readBackground: () => Effect.succeed(""), readValues: () => Effect.succeed(""),
       readPalette: () => Effect.succeed(""), readDrives: () => Effect.succeed(""),
+      readSalience: () => Effect.succeed(""),
       characterExists: () => Effect.succeed(true),
       listSkills: () => Effect.succeed(skills),
       readSkill: () => Effect.succeed(null), writeSkill: () => Effect.void,
