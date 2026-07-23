@@ -13,6 +13,7 @@ import { buildSchemaSql } from "./memory-sql.js"
 import { MIGRATION_COLUMNS } from "./memory-provenance.js"
 import { embed } from "./memory-embed.js"
 import { resolveMemoryConfig } from "./memory-config.js"
+import { parseCommand } from "./command-codec.js"
 import { runMemory, type MemoryDb } from "./memory-run.js"
 
 /** Open + migrate the per-character db. Mirrors the frozen container invariants
@@ -39,8 +40,19 @@ function openDb(dbPath: string, vecExt: string): Database {
 
 async function main(): Promise<number> {
   const cfg = resolveMemoryConfig(process.env)
+  const argv = process.argv.slice(2)
+  // Pre-flight parse BEFORE opening the db: a usage / malformed-`--dims` error
+  // must exit without touching sqlite (a bad invocation should never create or
+  // migrate a db — and it lets the artifact be exercised on a host with no vec0,
+  // where opening the db would bus-error). `runMemory` re-parses the argv it
+  // dispatches; the double parse of a tiny argv is free.
+  const pre = parseCommand(argv)
+  if ("error" in pre) {
+    console.error(pre.error)
+    return 2
+  }
   const db = openDb(cfg.dbPath, cfg.vecExt)
-  return runMemory(process.argv.slice(2), {
+  return runMemory(argv, {
     db: db as unknown as MemoryDb,
     embed: (text: string) => embed(text, cfg.embedUrl),
     nowIso: () => new Date().toISOString(),
