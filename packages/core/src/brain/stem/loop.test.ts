@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest"
 import { Effect, Layer, Queue, Fiber, Option, Deferred } from "effect"
 import { CommandExecutor } from "@effect/platform"
 import { runActivation, DEFAULT_STEER_CADENCE_TICKS } from "./loop.js"
-import { ModelClient } from "../../model/client.js"
+import { ModelClient, type CompletionResult } from "../../model/client.js"
 import { ModelError } from "../../model/errors.js"
 import type { ModelHandle } from "../../model/handles.js"
 import { ConsciousThought, ConsciousThoughtTest } from "#brain/cortex/conscious/conscious-thought.js"
@@ -26,6 +26,32 @@ import { setEpisodeLogRoot, resetEpisodeContext, setEpisodeStep, setEpisodeTick 
 import { parseWmFile } from "#brain/limbic/wm/wm-core.js"
 import { parseSkillFile, serializeSkillFile, slugify } from "../../services/skills-core.js"
 
+// Silence one class of hermetic best-effort noise: the vast majority of fixtures
+// below pass an opaque, non-existent char.dir ("/work/players/ada/me") as a bare
+// identity (see the fakeFs note ~L168), so the non-DI'd wm-store's seedWmPlan
+// tries `mkdir -p /work`, fails ENOENT at the filesystem root, swallows it, and
+// logs to console.error. That failure is by-design (it writes nothing) and no
+// test here asserts on wm state — the real wm-lifecycle tests use their own
+// tmpdir char.dir. This drops ONLY that /work console spam; the loud EACCES line
+// from the read-only "POPULATED character" test (~L2838), which that test's own
+// comment documents as expected, is deliberately left intact.
+let wmWorkNoiseSpy: ReturnType<typeof vi.spyOn>
+beforeAll(() => {
+  const real = console.error.bind(console)
+  wmWorkNoiseSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    if (
+      typeof args[0] === "string" &&
+      args[0].startsWith("[wm] plan seed failed") &&
+      args[0].includes("mkdir '/work'")
+    )
+      return
+    real(...args)
+  })
+})
+afterAll(() => {
+  wmWorkNoiseSpy.mockRestore()
+})
+
 // No-op ModelService: withTier is transparent (passes the effect through unchanged).
 const noopModelService = Layer.succeed(
   ModelService,
@@ -34,86 +60,98 @@ const noopModelService = Layer.succeed(
   }),
 )
 
-// ModelClient that branches on which skill template produced the prompt.
-// Classify by unique COMBINATION of markers (see original test comment for rationale).
-const scriptedClient = Layer.succeed(
-  ModelClient,
-  ModelClient.of({
-    complete: (_h: ModelHandle, messages) =>
-      Effect.sync(() => {
-        const p = messages.map((m) => m.content).join(" ").toLowerCase()
-        // Diary turn carries the "judgment" label — branch on its unique
-        // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
-        if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-        const hasDisposition = p.includes('"disposition":"')
-        const hasDecision = p.includes('"decision":')
-        const hasHeadline = p.includes("headline")
-        const hasJudgment = p.includes("judgment")
-        if (hasDisposition && !hasDecision)
-          return {
-            text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}',
-            raw: {},
-          }
-        if (hasJudgment && !hasHeadline)
-          return {
-            text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-            raw: {},
-          }
-        if (hasHeadline && !hasJudgment)
-          return {
-            text: '{"headline":"act now","sections":[{"id":"s1","heading":"Action","body":"Get moving."}],"whatChanged":"things changed","emotionalState":"😰","metrics":{}}',
-            raw: {},
-          }
-        // decide
-        return {
-          text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do the thing","tier":"smart","successCondition":"thing done","timeoutTicks":2}]}',
-          raw: {},
-        }
-      }),
-  }),
-)
+// ── Shared scripted ModelClient factory ─────────────────────────────────────
+// Every test below drives the loop through the same cortex tiers, which the loop
+// reaches by rendering distinct skill prompts. A fake ModelClient has only the
+// prompt text to tell them apart, so ALL of them classify by the same unique
+// marker COMBINATION (see the per-test comments below for the rationale): the
+// diary turn owns the "plain prose" phrase; observe carries a `"disposition":`
+// with no `"decision":`; evaluate carries "judgment" without "headline"; the
+// forebrain orient carries "headline" without "judgment"; decide is the
+// remainder. This factory is that one shared structural-marker fake —
+// parameterized only by the per-branch RESPONSE. A branch value is a constant
+// response string, or a `(raw, lower) => …` function for prompt-dependent /
+// call-counting / failure-injecting variants, and may return either a response
+// string OR a raw Effect (so a branch can fail, block on Effect.never, or gate
+// on a Deferred). `raw` is the joined prompt as-is; `lower` is its lowercase.
+type MockResp = string | Effect.Effect<CompletionResult, ModelError>
+type Branch = MockResp | ((raw: string, lower: string) => MockResp)
 
-// Scripted client where first evaluate → next_step, second → terminate (multi-step test).
-const makeMultiStepClient = (evalCountRef: { n: number }) =>
+const OBSERVE_ESCALATE = '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}'
+const EVAL_TERMINATE =
+  '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}'
+const EVAL_TERMINATE_X =
+  '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}'
+/** Standard forebrain-orient response with an empty section list. */
+const orientHeadline = (headline: string, emotional = "😰"): string =>
+  `{"headline":"${headline}","sections":[],"whatChanged":"x","emotionalState":"${emotional}","metrics":{}}`
+
+const resolveBranch = (
+  branch: Branch,
+  raw: string,
+  lower: string,
+): Effect.Effect<CompletionResult, ModelError> => {
+  const r = typeof branch === "function" ? branch(raw, lower) : branch
+  return typeof r === "string" ? Effect.succeed({ text: r, raw: {} }) : r
+}
+
+interface ScriptSpec {
+  /** diary turn ("plain prose"); default "Fixture diary text." */
+  diary?: Branch
+  /** observe/appraisal; default OBSERVE_ESCALATE */
+  observe?: Branch
+  /** evaluate; default EVAL_TERMINATE */
+  evaluate?: Branch
+  /** forebrain orient; default orientHeadline(headline ?? "act now") */
+  orient?: Branch
+  /** convenience headline for the default orient; ignored when `orient` is set */
+  headline?: string
+  decide: Branch
+}
+
+const scriptClient = (spec: ScriptSpec): Layer.Layer<ModelClient> =>
   Layer.succeed(
     ModelClient,
     ModelClient.of({
-      complete: (_h: ModelHandle, messages) =>
-        Effect.sync(() => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          // Diary turn carries the "judgment" label too — branch on its unique
-          // "plain prose" phrase FIRST so it isn't counted as an evaluate call.
-          if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision)
-            return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-          if (hasJudgment && !hasHeadline) {
-            evalCountRef.n++
-            const transition =
-              evalCountRef.n === 1
-                ? '{"transition":"next_step"}'
-                : '{"transition":"terminate","summary":"all done"}'
-            return {
-              text: `{"judgment":"succeeded","reasoning":"done","transition":${transition}}`,
-              raw: {},
-            }
-          }
-          if (hasHeadline && !hasJudgment)
-            return {
-              text: '{"headline":"act now","sections":[{"id":"s1","heading":"Detail","body":"Do it."}],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-              raw: {},
-            }
-          // decide → two steps, timeoutTicks: 4 so budget doesn't fire first
-          return {
-            text: '{"decision":"plan","reasoning":"go","steps":[{"task":"step-one","goal":"first","tier":"smart","successCondition":"done","timeoutTicks":4},{"task":"step-two","goal":"second","tier":"smart","successCondition":"done","timeoutTicks":4}]}',
-            raw: {},
-          }
-        }),
+      complete: (_h: ModelHandle, messages) => {
+        const raw = messages.map((m) => m.content).join(" ")
+        const lower = raw.toLowerCase()
+        // Diary discriminator FIRST — its prompt also carries the "judgment" label.
+        if (lower.includes("plain prose"))
+          return resolveBranch(spec.diary ?? "Fixture diary text.", raw, lower)
+        const hasDisposition = lower.includes('"disposition":"')
+        const hasDecision = lower.includes('"decision":')
+        const hasHeadline = lower.includes("headline")
+        const hasJudgment = lower.includes("judgment")
+        if (hasDisposition && !hasDecision) return resolveBranch(spec.observe ?? OBSERVE_ESCALATE, raw, lower)
+        if (hasJudgment && !hasHeadline) return resolveBranch(spec.evaluate ?? EVAL_TERMINATE, raw, lower)
+        if (hasHeadline && !hasJudgment)
+          return resolveBranch(spec.orient ?? orientHeadline(spec.headline ?? "act now"), raw, lower)
+        return resolveBranch(spec.decide, raw, lower)
+      },
     }),
   )
+
+// Fixed scripted client (populated orient section + a single-step plan).
+const scriptedClient = scriptClient({
+  orient:
+    '{"headline":"act now","sections":[{"id":"s1","heading":"Action","body":"Get moving."}],"whatChanged":"things changed","emotionalState":"😰","metrics":{}}',
+  decide:
+    '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do the thing","tier":"smart","successCondition":"thing done","timeoutTicks":2}]}',
+})
+
+// Scripted client where first evaluate → next_step, second → terminate (multi-step test).
+const makeMultiStepClient = (evalCountRef: { n: number }) =>
+  scriptClient({
+    evaluate: () => {
+      evalCountRef.n++
+      const transition =
+        evalCountRef.n === 1 ? '{"transition":"next_step"}' : '{"transition":"terminate","summary":"all done"}'
+      return `{"judgment":"succeeded","reasoning":"done","transition":${transition}}`
+    },
+    decide:
+      '{"decision":"plan","reasoning":"go","steps":[{"task":"step-one","goal":"first","tier":"smart","successCondition":"done","timeoutTicks":4},{"task":"step-two","goal":"second","tier":"smart","successCondition":"done","timeoutTicks":4}]}',
+  })
 
 // Default domain: events are STATE-CHANGING (processEvent returns a stateUpdate),
 // so they pass the loop's !stateUpdate fast-path and reach the (scripted)
@@ -297,41 +335,16 @@ describe("runActivation (conscious-session executor)", () => {
     // The step has timeoutTicks: 10, but turn 1 returns STEP_DONE_MARKER → evaluate fires immediately.
     let evaluateCallCount = 0
     // Intercept evaluate by counting how many times the model is called with "judgment"
-    const countingEvalClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            // The dedicated diary turn's prompt also carries the "judgment" label;
-            // branch on its unique "plain prose" phrase FIRST so it isn't miscounted
-            // as an evaluate call below.
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline) {
-              evaluateCallCount++
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            return {
-              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}`,
-              raw: {},
-            }
-          }),
-      }),
-    )
+    // The dedicated diary turn's prompt also carries "judgment"; the shared
+    // factory's "plain prose" discriminator keeps it out of the evaluate count.
+    const countingEvalClient = scriptClient({
+      evaluate: () => {
+        evaluateCallCount++
+        return EVAL_TERMINATE
+      },
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}',
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
       result: { output: `task done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
       sessionId: "ses_done",
@@ -358,38 +371,12 @@ describe("runActivation (conscious-session executor)", () => {
 
   it("tick-budget expiry triggers salvage evaluate when no done-marker", async () => {
     // Step timeoutTicks: 1 — after 1 tick the budget fires even without STEP_DONE_MARKER.
-    const budgetClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            // Diary turn carries the "judgment" label — branch on its unique
-            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"salvage","transition":{"transition":"terminate","summary":"salvaged"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            return {
-              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":1}]}`,
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const budgetClient = scriptClient({
+      evaluate:
+        '{"judgment":"succeeded","reasoning":"salvage","transition":{"transition":"terminate","summary":"salvaged"}}',
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":1}]}',
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
       // No STEP_DONE_MARKER in output
       result: { output: "making progress...", timedOut: false, durationMs: 5 },
@@ -421,38 +408,12 @@ describe("runActivation (conscious-session executor)", () => {
     // event (forked offerer below) triggers in-session hindbrain (non-discard) → forebrain →
     // directive stored. Once the cadence window opens (tick - lastSteerTick >= 3) the steer turn
     // fires (turn 2 returns the done-marker → step completes → evaluate → terminate).
-    const steerClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            // Diary turn carries the "judgment" label — branch on its unique
-            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"focus on login","sections":[{"id":"s1","heading":"Priority","body":"Fix the login bug."}],"whatChanged":"login broken","emotionalState":"😟","metrics":{}}',
-                raw: {},
-              }
-            return {
-              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}`,
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const steerClient = scriptClient({
+      orient:
+        '{"headline":"focus on login","sections":[{"id":"s1","heading":"Priority","body":"Fix the login bug."}],"whatChanged":"login broken","emotionalState":"😟","metrics":{}}',
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+    })
     let turnCount = 0
     const ctLayer = ConsciousThoughtTest(
       (config, resume) => {
@@ -508,41 +469,14 @@ describe("runActivation (conscious-session executor)", () => {
     // pendingDirective is a deterministic assignment, covered by the overwrite semantics.)
     const capturedDirectives: string[] = []
     let orientCallCount = 0
-    const coalesceClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            // Diary turn carries the "judgment" label — branch on its unique
-            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment) {
-              orientCallCount++
-              const headline = orientCallCount === 1 ? "first orient" : "second orient (newest)"
-              return {
-                text: `{"headline":"${headline}","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}`,
-                raw: {},
-              }
-            }
-            return {
-              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}`,
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const coalesceClient = scriptClient({
+      orient: () => {
+        orientCallCount++
+        return orientHeadline(orientCallCount === 1 ? "first orient" : "second orient (newest)")
+      },
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+    })
     let turnCount = 0
     const ctLayer = ConsciousThoughtTest(
       (_config, _resume) => {
@@ -617,37 +551,10 @@ describe("runActivation (conscious-session executor)", () => {
       }),
     )
     const diaryIo = Layer.mergeAll(capturingFs, fakeLog)
-    const diaryClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            // Diary discriminator FIRST — its prompt also contains the "judgment" label.
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            return {
-              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}`,
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const diaryClient = scriptClient({
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}',
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
       result: { output: `task done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
       sessionId: "ses_diary",
@@ -688,31 +595,16 @@ describe("runActivation (conscious-session executor)", () => {
       }),
     )
     let decideCount = 0
-    const emptyPlanClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return { text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}', raw: {} }
-            if (hasHeadline && !hasJudgment)
-              return { text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}', raw: {} }
-            // decide: first call → empty-steps plan (must be dropped); second → terminate.
-            decideCount++
-            if (decideCount === 1)
-              return { text: '{"decision":"plan","reasoning":"go","steps":[]}', raw: {} }
-            return { text: '{"decision":"terminate","reasoning":"stop"}', raw: {} }
-          }),
-      }),
-    )
+    const emptyPlanClient = scriptClient({
+      evaluate: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}',
+      // decide: first call → empty-steps plan (must be dropped); second → terminate.
+      decide: () => {
+        decideCount++
+        return decideCount === 1
+          ? '{"decision":"plan","reasoning":"go","steps":[]}'
+          : '{"decision":"terminate","reasoning":"stop"}'
+      },
+    })
     let turnCount = 0
     const ctLayer = ConsciousThoughtTest((_config, _resume) => {
       turnCount++
@@ -757,30 +649,14 @@ describe("runActivation (conscious-session executor)", () => {
           }),
       }),
     )
-    const diaryFailClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          // The diary turn (unique "plain prose" phrase) FAILS.
-          if (p.includes("plain prose"))
-            return Effect.fail(new ModelError({ tier: "forebrain", model: "m", baseUrl: "u", reason: "diary boom" }))
-          return Effect.sync(() => {
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return { text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}', raw: {} }
-            if (hasHeadline && !hasJudgment)
-              return { text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}', raw: {} }
-            return { text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}', raw: {} }
-          })
-        },
-      }),
-    )
+    const diaryFailClient = scriptClient({
+      // The diary turn (unique "plain prose" phrase) FAILS.
+      diary: () =>
+        Effect.fail(new ModelError({ tier: "forebrain", model: "m", baseUrl: "u", reason: "diary boom" })),
+      evaluate: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}',
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":10}]}',
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
       result: { output: `task done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
       sessionId: "ses_diaryfail",
@@ -1082,36 +958,14 @@ describe("runActivation (conscious-session executor)", () => {
 
   it("a discover decision becomes a one-step 'discover' plan that executes", async () => {
     const capturedPrompts: string[] = []
-    const discoverClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"learned","transition":{"transition":"terminate","summary":"done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"cold start — unknown world","sections":[],"whatChanged":"x","emotionalState":"😰","confidence":"low","metrics":{}}',
-                raw: {},
-              }
-            // decide → discover
-            return {
-              text: '{"decision":"discover","reasoning":"flying blind","discover":{"questions":["what can my CLI do?","where are the docs?"],"tier":"fast","timeoutTicks":2}}',
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const discoverClient = scriptClient({
+      evaluate:
+        '{"judgment":"succeeded","reasoning":"learned","transition":{"transition":"terminate","summary":"done"}}',
+      orient:
+        '{"headline":"cold start — unknown world","sections":[],"whatChanged":"x","emotionalState":"😰","confidence":"low","metrics":{}}',
+      decide:
+        '{"decision":"discover","reasoning":"flying blind","discover":{"questions":["what can my CLI do?","where are the docs?"],"tier":"fast","timeoutTicks":2}}',
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => {
       capturedPrompts.push(_config.prompt)
       return {
@@ -1145,36 +999,18 @@ describe("runActivation (conscious-session executor)", () => {
     // With the guard the loop falls through (no plan set this tick) and continues;
     // a follow-up decide (triggered by a second event) returns terminate → Completed.
     let decideCallCount = 0
-    const malformedDiscoverClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"cold start","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            // decide: first call is malformed discover (no discover payload), second is terminate
-            decideCallCount++
-            if (decideCallCount === 1)
-              return { text: '{"decision":"discover","reasoning":"x"}', raw: {} }
-            return { text: '{"decision":"terminate","reasoning":"done","summary":"all done"}', raw: {} }
-          }),
-      }),
-    )
+    const malformedDiscoverClient = scriptClient({
+      evaluate:
+        '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"done"}}',
+      headline: "cold start",
+      // decide: first call is malformed discover (no discover payload), second is terminate
+      decide: () => {
+        decideCallCount++
+        return decideCallCount === 1
+          ? '{"decision":"discover","reasoning":"x"}'
+          : '{"decision":"terminate","reasoning":"done","summary":"all done"}'
+      },
+    })
     const capturedPrompts: string[] = []
     const ctLayer = ConsciousThoughtTest((_config, _resume) => {
       capturedPrompts.push(_config.prompt)
@@ -1214,39 +1050,13 @@ describe("runActivation (conscious-session executor)", () => {
     // not the raw event string ("{ type: 'combat' }").
     const capturedDirectives: string[] = []
     let turnCount = 0
-    const launderClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            // Diary turn carries the "judgment" label — branch on its unique
-            // "plain prose" phrase FIRST so it isn't mistaken for an evaluate call.
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                // Laundered headline — not raw event JSON
-                text: '{"headline":"LAUNDERED_HEADLINE","sections":[{"id":"s1","heading":"Details","body":"LAUNDERED_BODY"}],"whatChanged":"LAUNDERED_CHANGED","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            return {
-              text: `{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}`,
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const launderClient = scriptClient({
+      // Laundered headline/body — not raw event JSON
+      orient:
+        '{"headline":"LAUNDERED_HEADLINE","sections":[{"id":"s1","heading":"Details","body":"LAUNDERED_BODY"}],"whatChanged":"LAUNDERED_CHANGED","emotionalState":"😰","metrics":{}}',
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+    })
     const ctLayer = ConsciousThoughtTest(
       (_config, _resume) => {
         turnCount++
@@ -1299,44 +1109,19 @@ describe("runActivation (conscious-session executor)", () => {
     // open session, so a never-started step forks turn 1 instead.
     let decideCount = 0
     let turnCallCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              // Either a salvage evaluate (buggy path) or a real evaluate (fixed path) →
-              // terminate, so both versions reach Completed and the assertion is on turns.
-              return {
-                text: '{"judgment":"failed","reasoning":"salvage","transition":{"transition":"terminate","summary":"done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"go","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            // decide: first call waits (idle, no plan); second call forms a real plan.
-            decideCount++
-            if (decideCount === 1)
-              return {
-                text: '{"decision":"wait","reasoning":"hold","wait":{"waitingFor":"signal","resolutionSignal":"sig","disposition":"hold"}}',
-                raw: {},
-              }
-            return {
-              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":2}]}',
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const client = scriptClient({
+      // Either a salvage evaluate (buggy path) or a real evaluate (fixed path) →
+      // terminate, so both versions reach Completed and the assertion is on turns.
+      evaluate: '{"judgment":"failed","reasoning":"salvage","transition":{"transition":"terminate","summary":"done"}}',
+      headline: "go",
+      // decide: first call waits (idle, no plan); second call forms a real plan.
+      decide: () => {
+        decideCount++
+        return decideCount === 1
+          ? '{"decision":"wait","reasoning":"hold","wait":{"waitingFor":"signal","resolutionSignal":"sig","disposition":"hold"}}'
+          : '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":2}]}'
+      },
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => {
       turnCallCount++
       return {
@@ -1376,40 +1161,18 @@ describe("runActivation (conscious-session executor)", () => {
     // forever. The fix sets forceOrientNext on replan, forcing exactly one re-orient on
     // the next tick → a second decide runs → terminate → Completed.
     let decideCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              // evaluate → replan (drops to idle; without self-drive the loop stalls).
-              return {
-                text: '{"judgment":"failed","reasoning":"redo","transition":{"transition":"replan"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"go","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            // decide: #1 forms a plan; #2 (the self-driven re-orient) terminates.
-            decideCount++
-            if (decideCount === 1)
-              return {
-                text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
-                raw: {},
-              }
-            return { text: '{"decision":"terminate","reasoning":"done","summary":"all done"}', raw: {} }
-          }),
-      }),
-    )
+    const client = scriptClient({
+      // evaluate → replan (drops to idle; without self-drive the loop stalls).
+      evaluate: '{"judgment":"failed","reasoning":"redo","transition":{"transition":"replan"}}',
+      headline: "go",
+      // decide: #1 forms a plan; #2 (the self-driven re-orient) terminates.
+      decide: () => {
+        decideCount++
+        return decideCount === 1
+          ? '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}'
+          : '{"decision":"terminate","reasoning":"done","summary":"all done"}'
+      },
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
       result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
       sessionId: "ses_replan",
@@ -1453,38 +1216,19 @@ describe("runActivation (conscious-session executor)", () => {
     // must add no further decide. (The deferred-escalation path is covered by the B2
     // "ordering contract" test.)
     let decideCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              return { text: '{"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"noise"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              // evaluate → wait (deliberate idle; must NOT self-drive a re-orient).
-              return {
-                text: '{"judgment":"succeeded","reasoning":"hold","transition":{"transition":"wait","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: '{"headline":"go","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            // decide: always a plan — if a spurious re-orient fired, decideCount would climb.
-            decideCount++
-            return {
-              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const client = scriptClient({
+      observe:
+        '{"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"noise"}',
+      // evaluate → wait (deliberate idle; must NOT self-drive a re-orient).
+      evaluate:
+        '{"judgment":"succeeded","reasoning":"hold","transition":{"transition":"wait","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}}',
+      headline: "go",
+      // decide: always a plan — if a spurious re-orient fired, decideCount would climb.
+      decide: () => {
+        decideCount++
+        return '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}'
+      },
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
       result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
       sessionId: "ses_wait",
@@ -1683,24 +1427,14 @@ describe("runActivation (conscious-session executor)", () => {
     )
     try {
       let decidePrompt = ""
-      const capturingClient = Layer.succeed(
-        ModelClient,
-        ModelClient.of({
-          complete: (_h: ModelHandle, messages) =>
-            Effect.sync(() => {
-              const p = messages.map((m) => m.content).join(" ")
-              const lower = p.toLowerCase()
-              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
-                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-              if (lower.includes("headline") && !lower.includes("judgment"))
-                return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
-              // decide
-              decidePrompt = p
-              return { text: '{"decision":"terminate","reasoning":"stop"}', raw: {} }
-            }),
-        }),
-      )
+      const capturingClient = scriptClient({
+        diary: "Diary.",
+        orient: orientHeadline("h", "😐"),
+        decide: (raw) => {
+          decidePrompt = raw
+          return '{"decision":"terminate","reasoning":"stop"}'
+        },
+      })
       const ctLayer = ConsciousThoughtTest((config) => ({ result: successTurnResult(config.prompt), sessionId: "s" }))
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
@@ -1728,23 +1462,14 @@ describe("runActivation (conscious-session executor)", () => {
     fs.mkdirSync(charDir, { recursive: true })
     try {
       let decidePrompt = ""
-      const capturingClient = Layer.succeed(
-        ModelClient,
-        ModelClient.of({
-          complete: (_h: ModelHandle, messages) =>
-            Effect.sync(() => {
-              const p = messages.map((m) => m.content).join(" ")
-              const lower = p.toLowerCase()
-              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
-                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-              if (lower.includes("headline") && !lower.includes("judgment"))
-                return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
-              decidePrompt = p
-              return { text: '{"decision":"terminate","reasoning":"stop"}', raw: {} }
-            }),
-        }),
-      )
+      const capturingClient = scriptClient({
+        diary: "Diary.",
+        orient: orientHeadline("h", "😐"),
+        decide: (raw) => {
+          decidePrompt = raw
+          return '{"decision":"terminate","reasoning":"stop"}'
+        },
+      })
       const ctLayer = ConsciousThoughtTest((config) => ({ result: successTurnResult(config.prompt), sessionId: "s" }))
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
@@ -1785,33 +1510,14 @@ describe("runActivation (conscious-session executor)", () => {
         stepPrompt = config.prompt
         return { result: successTurnResult(config.prompt), sessionId: "s" }
       })
-      const capturingClient = Layer.succeed(
-        ModelClient,
-        ModelClient.of({
-          complete: (_h: ModelHandle, messages) =>
-            Effect.sync(() => {
-              const p = messages.map((m) => m.content).join(" ")
-              const lower = p.toLowerCase()
-              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
-                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-              if (lower.includes("headline") && !lower.includes("judgment"))
-                return { text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
-              // decide.md's tier descriptions also contain the word "judgment"
-              // (e.g. "tasks requiring judgment"), so exclude "headline" here —
-              // matches the mutual-exclusion pattern the file's other scripted
-              // clients use (see scriptedClient above) to disambiguate decide vs
-              // evaluate, both of which mention "judgment" somewhere.
-              if (lower.includes("judgment") && !lower.includes("headline"))
-                return { text: '{"judgment":"succeeded","reasoning":"ok","transition":{"transition":"terminate","summary":"done"}}', raw: {} }
-              // decide: plan one step, wearing securing-fuel.
-              return {
-                text: '{"decision":"plan","reasoning":"go","skill":"securing-fuel","steps":[{"task":"act","goal":"do the thing","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
-                raw: {},
-              }
-            }),
-        }),
-      )
+      const capturingClient = scriptClient({
+        diary: "Diary.",
+        orient: orientHeadline("act now", "😐"),
+        evaluate: '{"judgment":"succeeded","reasoning":"ok","transition":{"transition":"terminate","summary":"done"}}',
+        // decide: plan one step, wearing securing-fuel.
+        decide:
+          '{"decision":"plan","reasoning":"go","skill":"securing-fuel","steps":[{"task":"act","goal":"do the thing","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+      })
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
@@ -1852,32 +1558,13 @@ describe("runActivation (conscious-session executor)", () => {
         stepPrompt = config.prompt
         return { result: successTurnResult(config.prompt), sessionId: "s" }
       })
-      const capturingClient = Layer.succeed(
-        ModelClient,
-        ModelClient.of({
-          complete: (_h: ModelHandle, messages) =>
-            Effect.sync(() => {
-              const p = messages.map((m) => m.content).join(" ")
-              const lower = p.toLowerCase()
-              if (lower.includes("plain prose")) return { text: "Diary.", raw: {} }
-              if (lower.includes('"disposition":"') && !lower.includes('"decision":'))
-                return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-              if (lower.includes("headline") && !lower.includes("judgment"))
-                return { text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} }
-              // decide.md's tier descriptions also contain the word "judgment"
-              // (e.g. "tasks requiring judgment"), so exclude "headline" here —
-              // matches the mutual-exclusion pattern the file's other scripted
-              // clients use (see scriptedClient above) to disambiguate decide vs
-              // evaluate, both of which mention "judgment" somewhere.
-              if (lower.includes("judgment") && !lower.includes("headline"))
-                return { text: '{"judgment":"succeeded","reasoning":"ok","transition":{"transition":"terminate","summary":"done"}}', raw: {} }
-              return {
-                text: '{"decision":"plan","reasoning":"go","skill":"no-such-skill","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
-                raw: {},
-              }
-            }),
-        }),
-      )
+      const capturingClient = scriptClient({
+        diary: "Diary.",
+        orient: orientHeadline("h", "😐"),
+        evaluate: '{"judgment":"succeeded","reasoning":"ok","transition":{"transition":"terminate","summary":"done"}}',
+        decide:
+          '{"decision":"plan","reasoning":"go","skill":"no-such-skill","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":50}]}',
+      })
       const program = Effect.gen(function* () {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
@@ -1949,38 +1636,22 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     onDecide?: () => void
     headline?: string
   }) =>
-    Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision) {
-              opts.onObserve?.()
-              return { text: opts.observe(p), raw: {} }
-            }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment)
-              return {
-                text: `{"headline":"${opts.headline ?? "act now"}","sections":[{"id":"s1","heading":"H","body":"B"}],"whatChanged":"x","emotionalState":"😰","metrics":{}}`,
-                raw: {},
-              }
-            opts.onDecide?.()
-            return { text: opts.decide(), raw: {} }
-          }),
-      }),
-    )
+    scriptClient({
+      observe: (_raw, lower) => {
+        opts.onObserve?.()
+        return opts.observe(lower)
+      },
+      evaluate: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"x"}}',
+      orient: `{"headline":"${opts.headline ?? "act now"}","sections":[{"id":"s1","heading":"H","body":"B"}],"whatChanged":"x","emotionalState":"😰","metrics":{}}`,
+      decide: () => {
+        opts.onDecide?.()
+        return opts.decide()
+      },
+    })
 
   const DISCARD = '{"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"noise"}'
+  // The plain "h" forebrain orient shared by the blocking/Effect-based clients below.
+  const ORIENT_H = orientHeadline("h", "😐")
 
   it("fast-path: inert (no stateUpdate) events make ZERO model calls; only state-changing events are appraised (Unit 5/6)", async () => {
     let observeCount = 0
@@ -2209,29 +1880,17 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     let observeCount = 0
     const criticalsRef = { n: 0 }
     // decide (the else branch) BLOCKS the fork forever; orient + observe complete normally.
-    const blockingDecideClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision) {
-            observeCount++
-            return Effect.succeed({ text: DISCARD, raw: {} })
-          }
-          if (hasHeadline && !hasJudgment)
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          // decide → never resolves: the deliberation fork is suspended here.
-          return Effect.never as never
-        },
-      }),
-    )
+    const blockingDecideClient = scriptClient({
+      diary: "d",
+      observe: () => {
+        observeCount++
+        return DISCARD
+      },
+      evaluate: EVAL_TERMINATE_X,
+      orient: ORIENT_H,
+      // decide → never resolves: the deliberation fork is suspended here.
+      decide: () => Effect.never,
+    })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
@@ -2271,29 +1930,18 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     // the loop keeps ticking. Pre-B2 this blocked the tick inline at loop.ts:636
     // and the loop never advanced past tick 1 (→ timeout RED). Post-B2 the reflex
     // is forked, so the loop drains a 2nd event and reaches the critical.
-    const blockingObserveClient = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision) {
-            observeCount++
-            return Effect.never as never // reflex fork suspends here — must NOT freeze the loop
-          }
-          if (hasHeadline && !hasJudgment)
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          // decide → wait: no plan, the loop idles but keeps ticking toward the critical.
-          return Effect.succeed({ text: '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}', raw: {} })
-        },
-      }),
-    )
+    const blockingObserveClient = scriptClient({
+      diary: "d",
+      observe: () => {
+        observeCount++
+        return Effect.never // reflex fork suspends here — must NOT freeze the loop
+      },
+      evaluate: EVAL_TERMINATE_X,
+      orient: ORIENT_H,
+      // decide → wait: no plan, the loop idles but keeps ticking toward the critical.
+      decide:
+        '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}',
+    })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
@@ -2370,36 +2018,29 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     const program = Effect.gen(function* () {
       const gate = yield* Deferred.make<void>()
       let decideN = 0
-      const client = Layer.succeed(
-        ModelClient,
-        ModelClient.of({
-          complete: (_h: ModelHandle, messages) => {
-            const p = messages.map((m) => m.content).join(" ").toLowerCase()
-            if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-            const hasDisposition = p.includes('"disposition":"')
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (hasDisposition && !hasDecision)
-              // Gate the reflex behind the Deferred, THEN return a reorient (w5) appraisal.
-              return Deferred.await(gate).pipe(
-                Effect.as({ text: '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"big"}', raw: {} }),
-              )
-            if (hasHeadline && !hasJudgment) {
-              orientCount++
-              return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😱","metrics":{}}', raw: {} })
-            }
-            if (hasJudgment && !hasHeadline)
-              return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-            // decide#1 → wait (idle, keep ticking); decide#2 (reflex-driven) → terminate.
-            decideN++
-            return Effect.succeed({
-              text: decideN === 1 ? '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}' : '{"decision":"terminate","reasoning":"done"}',
+      const client = scriptClient({
+        diary: "d",
+        // Gate the reflex behind the Deferred, THEN return a reorient (w5) appraisal.
+        observe: () =>
+          Deferred.await(gate).pipe(
+            Effect.as({
+              text: '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"big"}',
               raw: {},
-            })
-          },
-        }),
-      )
+            }),
+          ),
+        evaluate: EVAL_TERMINATE_X,
+        orient: () => {
+          orientCount++
+          return orientHeadline("h", "😱")
+        },
+        // decide#1 → wait (idle, keep ticking); decide#2 (reflex-driven) → terminate.
+        decide: () => {
+          decideN++
+          return decideN === 1
+            ? '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}'
+            : '{"decision":"terminate","reasoning":"done"}'
+        },
+      })
       const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "seed" }) // tick 1: submits the gated reflex
@@ -2425,27 +2066,16 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
 
   it("mutual exclusion: never forks a second deliberation while one is in flight", async () => {
     let orientCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
-          if (hasHeadline && !hasJudgment) {
-            orientCount++
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          }
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          return Effect.never as never // decide blocks → deliberation stays in flight
-        },
-      }),
-    )
+    const client = scriptClient({
+      diary: "d",
+      observe: DISCARD,
+      evaluate: EVAL_TERMINATE_X,
+      orient: () => {
+        orientCount++
+        return ORIENT_H
+      },
+      decide: () => Effect.never, // decide blocks → deliberation stays in flight
+    })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
@@ -2893,37 +2523,22 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
   it("ladder governs the in-flight deliberation: a reorient-rung event interrupts the fiber and re-orients (Unit: fork ladder)", async () => {
     const interrupted = { value: false }
     let decideCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision)
-            return Effect.succeed({
-              text: p.includes("termination-60s")
-                ? '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"account termination in 60s"}'
-                : DISCARD,
-              raw: {},
-            })
-          if (hasHeadline && !hasJudgment)
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          // decide: #1 blocks (deliberation in flight); #2 (post-reorient) terminates.
-          decideCount++
-          if (decideCount === 1)
-            return Effect.never.pipe(
-              Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true })),
-            ) as never
-          return Effect.succeed({ text: '{"decision":"terminate","reasoning":"reoriented"}', raw: {} })
-        },
-      }),
-    )
+    const client = scriptClient({
+      diary: "d",
+      observe: (_raw, lower) =>
+        lower.includes("termination-60s")
+          ? '{"disposition":"escalate","emotionalWeight":"😱","drive":"agency","weight":5,"interrupt":false,"reason":"account termination in 60s"}'
+          : DISCARD,
+      evaluate: EVAL_TERMINATE_X,
+      orient: ORIENT_H,
+      // decide: #1 blocks (deliberation in flight); #2 (post-reorient) terminates.
+      decide: () => {
+        decideCount++
+        return decideCount === 1
+          ? Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true })))
+          : '{"decision":"terminate","reasoning":"reoriented"}'
+      },
+    })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
@@ -2945,27 +2560,15 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
   it("an amygdala critical during a deliberation interrupts the fiber and exits Interrupted (Unit: fork critical)", async () => {
     const interrupted = { value: false }
     const criticalsRef = { n: 0 }
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
-          if (hasHeadline && !hasJudgment)
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          return Effect.never.pipe(
-            Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true })),
-          ) as never // decide blocks → deliberation in flight when the critical fires
-        },
-      }),
-    )
+    const client = scriptClient({
+      diary: "d",
+      observe: DISCARD,
+      evaluate: EVAL_TERMINATE_X,
+      orient: ORIENT_H,
+      // decide blocks → deliberation in flight when the critical fires
+      decide: () =>
+        Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => { interrupted.value = true }))),
+    })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
     const domain = domainWith([], () => {
       criticalsRef.n++
@@ -2988,52 +2591,37 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     const orientPrompts: string[] = []
     // decide #1 blocks until a mid-deliberation event lands, then completes with a plan.
     let decideCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const raw = messages.map((m) => m.content).join(" ")
-          const p = raw.toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision)
-            // Both the seed event (pre-fork) and the mid-deliberation event (in-flight)
-            // are plain accumulates (weight 2, non-discard) — SEED_EVENT so it actually
-            // joins `accumulatedEvents` and rides the fork-time snapshot (making the
-            // slice-drain assertion below non-vacuous); MID_EVENT so it's retained, not
-            // stale, per the ladder.
-            // NB: checked against `raw` (not the lowercased `p`) — "SEED_EVENT"/"MID_EVENT"
-            // are uppercase in the event payload and `p` has already been lowercased.
-            return Effect.succeed({
-              text: raw.includes("MID_EVENT") || raw.includes("SEED_EVENT")
-                ? '{"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":2,"interrupt":false,"reason":"minor"}'
-                : DISCARD,
-              raw: {},
-            })
-          if (hasHeadline && !hasJudgment) {
-            orientPrompts.push(raw)
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          }
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          decideCount++
-          // Since B2 the hindbrain reflex is forked, so SEED_EVENT's appraisal
-          // lands a tick AFTER it is submitted — it cannot ride the tick-1
-          // auto-escalate deliberation's (empty) snapshot. So decide #1 (tick-1,
-          // empty snapshot) lands a `wait`; SEED_EVENT then accumulates, and a
-          // later `forceOrient` fork (decide #2) carries it into the plan-forming
-          // orient — which is exactly the snapshot the slice-drain must drain.
-          if (decideCount === 1)
-            return Effect.succeed({ text: '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}', raw: {} })
-          if (decideCount === 2)
-            return Effect.succeed({ text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}', raw: {} })
-          return Effect.succeed({ text: '{"decision":"terminate","reasoning":"done"}', raw: {} })
-        },
-      }),
-    )
+    const client = scriptClient({
+      diary: "d",
+      // Both the seed event (pre-fork) and the mid-deliberation event (in-flight)
+      // are plain accumulates (weight 2, non-discard) — SEED_EVENT so it actually
+      // joins `accumulatedEvents` and rides the fork-time snapshot (making the
+      // slice-drain assertion below non-vacuous); MID_EVENT so it's retained, not
+      // stale, per the ladder. Checked against `raw` — these markers are uppercase.
+      observe: (raw) =>
+        raw.includes("MID_EVENT") || raw.includes("SEED_EVENT")
+          ? '{"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":2,"interrupt":false,"reason":"minor"}'
+          : DISCARD,
+      evaluate: EVAL_TERMINATE_X,
+      orient: (raw) => {
+        orientPrompts.push(raw)
+        return ORIENT_H
+      },
+      // Since B2 the hindbrain reflex is forked, so SEED_EVENT's appraisal lands a
+      // tick AFTER it is submitted — it cannot ride the tick-1 auto-escalate
+      // deliberation's (empty) snapshot. So decide #1 (tick-1, empty snapshot)
+      // lands a `wait`; SEED_EVENT then accumulates, and a later `forceOrient` fork
+      // (decide #2) carries it into the plan-forming orient — exactly the snapshot
+      // the slice-drain must drain.
+      decide: () => {
+        decideCount++
+        if (decideCount === 1)
+          return '{"decision":"wait","reasoning":"idle","wait":{"waitingFor":"x","resolutionSignal":"y","disposition":"hold"}}'
+        if (decideCount === 2)
+          return '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}'
+        return '{"decision":"terminate","reasoning":"done"}'
+      },
+    })
     let turnCount = 0
     // Flips once the FIRST body turn is forked — which can only happen once
     // `currentPlan` is non-null, i.e. strictly after the tick-1 deliberation
@@ -3102,30 +2690,20 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
 
   it("never-fail degrade: a deliberation whose decide model errors seeds no plan and re-orients (no crash, no stall)", async () => {
     let decideCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
-          if (hasHeadline && !hasJudgment)
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          // decide: #1 FAILS (model error) → fork degrades to no-plan; #2 (the self-driven
-          // re-orient, no new events) terminates → proves the quiet world did not stall.
-          decideCount++
-          if (decideCount === 1)
-            return Effect.fail(new ModelError({ tier: "conscious", model: "m", baseUrl: "u", reason: "decide boom" }))
-          return Effect.succeed({ text: '{"decision":"terminate","reasoning":"done"}', raw: {} })
-        },
-      }),
-    )
+    const client = scriptClient({
+      diary: "d",
+      observe: DISCARD,
+      evaluate: EVAL_TERMINATE_X,
+      orient: ORIENT_H,
+      // decide: #1 FAILS (model error) → fork degrades to no-plan; #2 (the self-driven
+      // re-orient, no new events) terminates → proves the quiet world did not stall.
+      decide: () => {
+        decideCount++
+        return decideCount === 1
+          ? Effect.fail(new ModelError({ tier: "conscious", model: "m", baseUrl: "u", reason: "decide boom" }))
+          : '{"decision":"terminate","reasoning":"done"}'
+      },
+    })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
@@ -3153,31 +2731,18 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     // or the hold turns into a per-tick orient→decide busy-loop. The degrade guard must
     // fire ONLY on a genuinely-degraded no-plan land, never on a wait.
     let decideCount = 0
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) => {
-          const p = messages.map((m) => m.content).join(" ").toLowerCase()
-          if (p.includes("plain prose")) return Effect.succeed({ text: "d", raw: {} })
-          const hasDisposition = p.includes('"disposition":"')
-          const hasDecision = p.includes('"decision":')
-          const hasHeadline = p.includes("headline")
-          const hasJudgment = p.includes("judgment")
-          if (hasDisposition && !hasDecision) return Effect.succeed({ text: DISCARD, raw: {} })
-          if (hasHeadline && !hasJudgment)
-            return Effect.succeed({ text: '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","metrics":{}}', raw: {} })
-          if (hasJudgment && !hasHeadline)
-            return Effect.succeed({ text: '{"judgment":"succeeded","reasoning":"x","transition":{"transition":"terminate","summary":"x"}}', raw: {} })
-          // decide: waits/holds (deliberate idle). If the guard wrongly forces a re-orient,
-          // the next tick re-forks and decide runs AGAIN — decideCount climbs past 1 (the bug).
-          decideCount++
-          return Effect.succeed({
-            text: '{"decision":"wait","reasoning":"holding","wait":{"waitingFor":"signal","resolutionSignal":"sig","disposition":"hold"}}',
-            raw: {},
-          })
-        },
-      }),
-    )
+    const client = scriptClient({
+      diary: "d",
+      observe: DISCARD,
+      evaluate: EVAL_TERMINATE_X,
+      orient: ORIENT_H,
+      // decide: waits/holds (deliberate idle). If the guard wrongly forces a re-orient,
+      // the next tick re-forks and decide runs AGAIN — decideCount climbs past 1 (the bug).
+      decide: () => {
+        decideCount++
+        return '{"decision":"wait","reasoning":"holding","wait":{"waitingFor":"signal","resolutionSignal":"sig","disposition":"hold"}}'
+      },
+    })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
@@ -3209,38 +2774,14 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
 
   it("idle-path orient prompt renders empty identity blocks as placeholders, never bare headers", async () => {
     let orientPrompt = ""
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const raw = messages.map((m) => m.content).join(" ")
-            const p = raw.toLowerCase()
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (p.includes('"disposition":"') && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment) {
-              orientPrompt = raw
-              return {
-                text: '{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            }
-            return {
-              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":1}]}',
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const client = scriptClient({
+      orient: (raw) => {
+        orientPrompt = raw
+        return orientHeadline("act now")
+      },
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":1}]}',
+    })
     const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
       result: { output: `done ${STEP_DONE_MARKER}`, timedOut: false, durationMs: 5 },
       sessionId: "s",
@@ -3277,39 +2818,15 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
 
   it("idle and steer paths render an identical identity block for the same state", async () => {
     const orientPrompts: string[] = []
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const raw = messages.map((m) => m.content).join(" ")
-            const p = raw.toLowerCase()
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (p.includes('"disposition":"') && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment) {
-              orientPrompts.push(raw)
-              return {
-                text: '{"headline":"focus","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            }
-            // decide: large budget so the step stays in-session until a steer turn lands.
-            return {
-              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const client = scriptClient({
+      orient: (raw) => {
+        orientPrompts.push(raw)
+        return orientHeadline("focus")
+      },
+      // decide: large budget so the step stays in-session until a steer turn lands.
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+    })
     let turnCount = 0
     const ctLayer = ConsciousThoughtTest((_config, _resume) => {
       turnCount++
@@ -3407,39 +2924,15 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
     )
     const runtimeDeps = Layer.mergeAll(StubCommandExecutor, StubOAuthToken, StubDocker, populatedMemory)
     const orientPrompts: string[] = []
-    const client = Layer.succeed(
-      ModelClient,
-      ModelClient.of({
-        complete: (_h: ModelHandle, messages) =>
-          Effect.sync(() => {
-            const raw = messages.map((m) => m.content).join(" ")
-            const p = raw.toLowerCase()
-            if (p.includes("plain prose")) return { text: "Fixture diary text.", raw: {} }
-            const hasDecision = p.includes('"decision":')
-            const hasHeadline = p.includes("headline")
-            const hasJudgment = p.includes("judgment")
-            if (p.includes('"disposition":"') && !hasDecision)
-              return { text: '{"disposition":"escalate","emotionalWeight":"😰","reason":"x"}', raw: {} }
-            if (hasJudgment && !hasHeadline)
-              return {
-                text: '{"judgment":"succeeded","reasoning":"done","transition":{"transition":"terminate","summary":"all done"}}',
-                raw: {},
-              }
-            if (hasHeadline && !hasJudgment) {
-              orientPrompts.push(raw)
-              return {
-                text: '{"headline":"focus","sections":[],"whatChanged":"x","emotionalState":"😰","metrics":{}}',
-                raw: {},
-              }
-            }
-            // decide: large budget so the step stays in-session until a steer turn lands.
-            return {
-              text: '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
-              raw: {},
-            }
-          }),
-      }),
-    )
+    const client = scriptClient({
+      orient: (raw) => {
+        orientPrompts.push(raw)
+        return orientHeadline("focus")
+      },
+      // decide: large budget so the step stays in-session until a steer turn lands.
+      decide:
+        '{"decision":"plan","reasoning":"go","steps":[{"task":"act","goal":"do","tier":"smart","successCondition":"done","timeoutTicks":30}]}',
+    })
     let turnCount = 0
     const ctLayer = ConsciousThoughtTest((_config, _resume) => {
       turnCount++

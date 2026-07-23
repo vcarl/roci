@@ -4,15 +4,13 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { Effect, Layer } from "effect"
-import { ModelClient, ModelClientLive } from "../../model/client.js"
-import type { ModelHandle } from "../../model/handles.js"
+import { type ModelClient, ModelClientLive } from "../../model/client.js"
 import { DEFAULT_CORTEX_MODELS } from "../../model/handles.js"
 import { extractJson, parseOr } from "#brain/stem/parse.js"
 import { runHindbrain, runForebrain } from "./tiers-limbic.js"
 import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
-import { ModelService } from "../../services/ModelService.js"
-import { CharacterLog } from "../../logging/log-writer.js"
 import type { UnifiedEvent } from "../../logging/events.js"
+import { fixedClient, recordingService, recordingLog, silentLog } from "../../testing/model-test-layers.js"
 import {
   setEpisodeLogRoot,
   setEpisodeTick,
@@ -22,46 +20,11 @@ import {
   captureEpisodeAttribution,
 } from "../../logging/episodes.js"
 
-// A CharacterLog that records every emitted event's message, so tests can
-// assert the raw forebrain text surfaced on a parse failure.
-const recordingLog = (sink: UnifiedEvent[]): Layer.Layer<CharacterLog> =>
-  Layer.succeed(
-    CharacterLog,
-    CharacterLog.of({
-      emit: (_char, event) => {
-        sink.push(event)
-        return Effect.void
-      },
-    }),
-  )
-
-const silentLog = recordingLog([])
-
-// A ModelService whose withTier records the tier it wrapped, then runs the
-// effect unchanged — lets tests assert callTier routed through withTier.
-const recordingService = (sink: string[]): Layer.Layer<ModelService> =>
-  Layer.succeed(
-    ModelService,
-    ModelService.of({
-      withTier: (tier) => (effect) => {
-        sink.push(tier)
-        return effect as never
-      },
-    }),
-  )
-
 const config: ActivationRunnerConfig = {
   char: { name: "ada", dir: "/work/players/ada/me" },
   cadence: "real-time",
   models: DEFAULT_CORTEX_MODELS,
 }
-
-// A ModelClient that returns a fixed body regardless of input.
-const fixedClient = (text: string): Layer.Layer<ModelClient> =>
-  Layer.succeed(
-    ModelClient,
-    ModelClient.of({ complete: (_h: ModelHandle) => Effect.succeed({ text, raw: {} }) }),
-  )
 
 describe("extractJson / parseOr", () => {
   it("unwraps a ```json fence", () => {
