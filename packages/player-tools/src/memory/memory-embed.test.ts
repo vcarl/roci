@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from "vitest"
-import { embed, embedEndpoint, backoffDelayMs } from "./memory-embed.js"
+import { embed, backoffDelayMs } from "./memory-embed.js"
 import { EMBED_DIM } from "./memory-sql.js"
+
+/**
+ * The final embeddings endpoint the entrypoint passes to `embed()`. In the
+ * container this is the already-host-rewritten `MEMORY_EMBED_URL` env value; the
+ * loopback → host.docker.internal rewrite (`embedEndpoint`) is tested host-side
+ * in `@roci/core` (embed-endpoint.test.ts), not here — this leaf uses the URL
+ * verbatim (spec §3).
+ */
+const ENDPOINT = "http://host.docker.internal:8084/v1/embeddings"
 
 const okVec = Array.from({ length: EMBED_DIM }, (_, i) => i / EMBED_DIM)
 const okResponse = (vec = okVec) =>
@@ -10,19 +19,6 @@ const statusResponse = (status: number) =>
 
 /** Fast test options: no real backoff sleeps, tight per-attempt timeout. */
 const fast = { sleep: async () => {}, baseDelayMs: 1, maxDelayMs: 1, timeoutMs: 50 }
-
-describe("embedEndpoint", () => {
-  it("rewrites a loopback base URL to host.docker.internal and appends /embeddings", () => {
-    expect(embedEndpoint("http://127.0.0.1:8084/v1")).toBe(
-      "http://host.docker.internal:8084/v1/embeddings",
-    )
-  })
-  it("leaves a non-loopback host untouched", () => {
-    expect(embedEndpoint("http://host.docker.internal:8084/v1")).toBe(
-      "http://host.docker.internal:8084/v1/embeddings",
-    )
-  })
-})
 
 describe("backoffDelayMs", () => {
   it("grows exponentially from the base and clamps at the cap", () => {
@@ -39,11 +35,12 @@ describe("backoffDelayMs", () => {
 describe("embed", () => {
   it("POSTs the plain text (no instruction prefix) and returns the parsed vector", async () => {
     const fetchImpl = vi.fn(async () => okResponse())
-    const v = await embed("a quiet station", "http://127.0.0.1:8084/v1", fetchImpl as unknown as typeof fetch)
+    const v = await embed("a quiet station", ENDPOINT, fetchImpl as unknown as typeof fetch)
     expect(v).toHaveLength(EMBED_DIM)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe("http://host.docker.internal:8084/v1/embeddings")
+    // Used VERBATIM — no rewrite, no append (spec §3).
+    expect(url).toBe(ENDPOINT)
     expect(init.method).toBe("POST")
     const body = JSON.parse(init.body as string)
     expect(body.input).toBe("a quiet station")
@@ -60,7 +57,7 @@ describe("embed", () => {
       .mockResolvedValueOnce(statusResponse(503))
       // 3: ready
       .mockResolvedValueOnce(okResponse())
-    const v = await embed("x", "http://127.0.0.1:8084/v1", fetchImpl as unknown as typeof fetch, fast)
+    const v = await embed("x", ENDPOINT, fetchImpl as unknown as typeof fetch, fast)
     expect(v).toHaveLength(EMBED_DIM)
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
@@ -68,7 +65,7 @@ describe("embed", () => {
   it("gives up after the attempt budget with a clear error (server never comes up)", async () => {
     const fetchImpl = vi.fn(async () => statusResponse(503))
     await expect(
-      embed("x", "http://127.0.0.1:8084/v1", fetchImpl as unknown as typeof fetch, { ...fast, attempts: 4 }),
+      embed("x", ENDPOINT, fetchImpl as unknown as typeof fetch, { ...fast, attempts: 4 }),
     ).rejects.toThrow(/after 4 attempts/)
     expect(fetchImpl).toHaveBeenCalledTimes(4)
   })
@@ -76,7 +73,7 @@ describe("embed", () => {
   it("does NOT retry on a permanent 4xx (fails fast on the first attempt)", async () => {
     const fetchImpl = vi.fn(async () => statusResponse(400))
     await expect(
-      embed("x", "http://127.0.0.1:8084/v1", fetchImpl as unknown as typeof fetch, { ...fast, attempts: 6 }),
+      embed("x", ENDPOINT, fetchImpl as unknown as typeof fetch, { ...fast, attempts: 6 }),
     ).rejects.toThrow(/HTTP 400/)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
@@ -102,7 +99,7 @@ describe("embed", () => {
       .mockResolvedValueOnce(okResponse())
     const v = await embed(
       "x",
-      "http://127.0.0.1:8084/v1",
+      ENDPOINT,
       fetchImpl as unknown as typeof fetch,
       { ...fast, timeoutMs: 10 },
     )
@@ -114,7 +111,7 @@ describe("embed", () => {
   it("throws on a wrong-dimension embedding without retrying (corrupt body is permanent)", async () => {
     const fetchImpl = vi.fn(async () => okResponse([1, 2, 3]))
     await expect(
-      embed("x", "http://127.0.0.1:8084/v1", fetchImpl as unknown as typeof fetch, fast),
+      embed("x", ENDPOINT, fetchImpl as unknown as typeof fetch, fast),
     ).rejects.toThrow()
     // A 200 with a malformed body is not a cold-start condition: no retry.
     expect(fetchImpl).toHaveBeenCalledTimes(1)

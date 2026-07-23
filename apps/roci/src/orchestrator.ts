@@ -12,7 +12,7 @@ import { provisionConsciousProvider } from "@roci/core/brain/cortex/conscious/op
 import { provisionMemoryCli } from "@roci/core/brain/limbic/hippocampus/memory/memory-cli.js"
 import { provisionWmCli } from "@roci/core/brain/limbic/wm/wm-cli.js"
 import { ensureWmFiles } from "@roci/core/brain/limbic/wm/wm-store.js"
-import { DEFAULT_EMBED_BASE_URL } from "@roci/core/brain/limbic/hippocampus/memory/memory-embed.js"
+import { DEFAULT_EMBED_BASE_URL } from "@roci/core/brain/limbic/hippocampus/memory/embed-endpoint.js"
 import { DEFAULT_CORTEX_MODELS } from "@roci/core/model/handles.js"
 import { launchEmbedServer, reapEmbedServers } from "./embed-server.js"
 import { withSessionEnd } from "./session-end.js"

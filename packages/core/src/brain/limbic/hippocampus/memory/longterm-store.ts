@@ -4,7 +4,15 @@ import type { CharacterConfig } from "../../../../services/CharacterFs.js"
 import { containerPlayerRoot } from "../../../../services/character-paths.js"
 import { Docker } from "../../../../services/Docker.js"
 import { MEMORY_CLI_PATH } from "./memory-cli.js"
-import type { Provenance } from "./memory-provenance.js"
+import type { Provenance } from "@roci/player-tools/memory-provenance"
+import {
+  encodeRememberArgs,
+  encodeSearchArgs,
+  encodeMarkGetArgs,
+  encodeMarkSetArgs,
+  encodePromoteArgs,
+} from "@roci/player-tools/command-codec"
+import { parseResults } from "@roci/player-tools/memory-format"
 
 export { MEMORY_CLI_PATH }
 
@@ -121,8 +129,20 @@ export class LongtermStore extends Context.Tag("LongtermStore")<
 >() {}
 
 /** Single-quote a string for safe inclusion in a `bash -lc` command. */
-function shQuote(s: string): string {
+export function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * Build the `memory` CLI argument string from a codec-produced argv by quoting
+ * each token. Core is GRAMMAR-BLIND here (the codec owns flag order/omission);
+ * quoting every token — including the verb and flags — is uniform and provably
+ * shell-equivalent to the legacy per-value hand-concatenation (the deployed
+ * string-CLI reads the identical post-split `process.argv`). See
+ * longterm-store.test.ts's shell-equivalence gate.
+ */
+export function buildMemoryCommand(argv: ReadonlyArray<string>): string {
+  return argv.map(shQuote).join(" ")
 }
 
 /** The in-container player cwd the `memory` CLI resolves its `me/longterm.db` against. */
@@ -139,9 +159,12 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
     const docker = yield* Docker
     const fail = (e: unknown) => (e instanceof Error ? e : new Error(String(e)))
     const cd = (char: CharacterConfig) => `cd ${shQuote(playerCwd(char))}`
+    // Build the `${MEMORY_CLI_PATH} <args>` fragment from a codec argv. Grammar
+    // (flag order/omission/defaults) lives in the codec; core stays grammar-blind.
+    const cli = (argv: ReadonlyArray<string>) => `${MEMORY_CLI_PATH} ${buildMemoryCommand(argv)}`
     return LongtermStore.of({
       readMark: (containerId, char) =>
-        docker.exec(containerId, ["bash", "-lc", `${cd(char)} && ${MEMORY_CLI_PATH} mark-get`]).pipe(
+        docker.exec(containerId, ["bash", "-lc", `${cd(char)} && ${cli(encodeMarkGetArgs())}`]).pipe(
           Effect.mapError(fail),
           Effect.map((out): DiaryMark | null => {
             const t = out.trim()
@@ -159,7 +182,7 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
           .exec(containerId, [
             "bash",
             "-lc",
-            `${cd(char)} && ${MEMORY_CLI_PATH} mark-set ${shQuote(JSON.stringify(mark))}`,
+            `${cd(char)} && ${cli(encodeMarkSetArgs(JSON.stringify(mark)))}`,
           ])
           .pipe(Effect.mapError(fail), Effect.asVoid),
       promote: (containerId, char, entries) =>
@@ -168,41 +191,24 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
           // Pass each entry as a base64 line on stdin via printf|pipe (Docker.exec
           // has no stdin seam). base64 tokens are shell-safe; still single-quoted.
           const b64s = entries.map((e) => `'${Buffer.from(e, "utf8").toString("base64")}'`).join(" ")
-          const cmd = `${cd(char)} && printf '%s\\n' ${b64s} | ${MEMORY_CLI_PATH} promote`
+          const cmd = `${cd(char)} && printf '%s\\n' ${b64s} | ${cli(encodePromoteArgs())}`
           const out = yield* docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail))
           const n = Number(out.trim())
           return Number.isFinite(n) ? n : entries.length
         }),
       remember: (containerId, char, entry) => {
-        const tagsArg = entry.tags.length > 0 ? ` --tags ${shQuote(entry.tags.join(","))}` : ""
-        // Only pass --dims when there is a non-empty signature; an empty/absent
-        // dims → NULL column → neutral salience at recall.
-        const dimsArg =
-          entry.dims && Object.keys(entry.dims).length > 0
-            ? ` --dims ${shQuote(JSON.stringify(entry.dims))}`
-            : ""
-        const cmd =
-          `${cd(char)} && ${MEMORY_CLI_PATH} remember ${shQuote(entry.text)}` +
-          `${tagsArg} --source ${shQuote(entry.source)}${dimsArg}`
+        // The codec owns flag order + the empty/absent-dims → omitted-flag rule
+        // (→ NULL column → neutral salience at recall).
+        const cmd = `${cd(char)} && ${cli(encodeRememberArgs(entry))}`
         return docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail), Effect.asVoid)
       },
       recall: (containerId, char, query, opts) =>
         Effect.gen(function* () {
-          const k = opts?.k ?? 5
-          const tagsArg = opts?.tags && opts.tags.length > 0 ? ` --tags ${shQuote(opts.tags.join(","))}` : ""
-          const cmd = `${cd(char)} && ${MEMORY_CLI_PATH} search ${shQuote(query)} -k ${k}${tagsArg}`
+          const cmd = `${cd(char)} && ${cli(encodeSearchArgs({ query, k: opts?.k, tags: opts?.tags }))}`
           const out = yield* docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail))
-          return out
-            .split("\n")
-            .map((l) => l.trim())
-            .filter((l) => l.length > 0)
-            .flatMap((l) => {
-              try {
-                return [JSON.parse(l) as MemoryHit]
-              } catch {
-                return []
-              }
-            })
+          // NDJSON row parsing lives in the package next to formatResults; a torn
+          // line is logged (no longer silent) then dropped, never thrown.
+          return parseResults(out) as unknown as ReadonlyArray<MemoryHit>
         }),
     })
   }),

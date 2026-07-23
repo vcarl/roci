@@ -5,7 +5,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { Docker } from "../../../services/Docker.js"
-import { parseWmFile, renderWmMarkdown } from "./wm-core.js"
+import { parseWmFile, renderWmMarkdown } from "@roci/player-tools/wm-core"
 import { WM_CLI_PATH, buildWmCliScript, provisionWmCli } from "./wm-cli.js"
 
 describe("buildWmCliScript", () => {

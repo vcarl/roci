@@ -12,7 +12,7 @@ import {
   buildVecInsertSql,
   buildMetaGetSql,
   buildMetaSetSql,
-} from "./memory-sql.js"
+} from "@roci/player-tools/memory-sql"
 import { Docker } from "../../../../services/Docker.js"
 
 const opts = { embedBaseUrl: "http://127.0.0.1:8084/v1" }

@@ -3,24 +3,17 @@
  * (NO instruction prefix — proven by the spike for bge-small) to the host embed
  * server's OpenAI-shape `/v1/embeddings` and returns the validated 384-dim vector.
  *
- * The base URL is injected and rewritten loopback → `host.docker.internal` the
- * same way the conscious provider's host URL is (`hostInternalBaseUrl`), so an
- * in-container caller reaches the host server over the allowed host gateway. This
- * TS client mirrors the fetch the generated bun CLI performs; it is unit-tested
- * with an injected fetch so the request/response contract is locked.
+ * This module is a LEAF of `@roci/player-tools`: it runs inside the agent
+ * container and must depend on NOTHING in `@roci/core` (the circularity trap,
+ * package-design spec §2d). It therefore takes an ALREADY-FINAL endpoint URL and
+ * POSTs to it VERBATIM — the loopback → `host.docker.internal` rewrite is a
+ * host-only concern (`embedEndpoint` in core; spec §3) applied when core composes
+ * the `MEMORY_EMBED_URL` env var. This TS client mirrors the fetch the shipped bun
+ * binary performs; it is unit-tested with an injected fetch so the request/response
+ * contract is locked.
  */
 
-import { hostInternalBaseUrl } from "../../../../services/host-url.js"
 import { parseEmbedResponse } from "./memory-format.js"
-
-/** Default host embed server base URL (standalone host process; port 8084). */
-export const DEFAULT_EMBED_BASE_URL = "http://127.0.0.1:8084/v1"
-
-/** Resolve the concrete embeddings endpoint: host-rewrite the base URL + `/embeddings`. */
-export function embedEndpoint(baseUrl: string): string {
-  const base = hostInternalBaseUrl(baseUrl).replace(/\/+$/, "")
-  return `${base}/embeddings`
-}
 
 /**
  * Cold-start tolerance for the FIRST real embed call. The host embed server is
@@ -83,14 +76,16 @@ function isRetryableStatus(status: number): boolean {
 }
 
 /**
- * Embed `text` against the host embed server. Tolerant of cold-start: retries
- * connection-refused / 5xx / timeout with capped exponential backoff, but throws
- * (loud) on a permanent 4xx or any shape/dimension mismatch — the caller must
- * never write a corrupt vector, and must not hang forever on a dead server.
+ * Embed `text` against the host embed server at the FINAL `endpoint` URL (used
+ * verbatim — the host-rewrite already ran in core; spec §3). Tolerant of
+ * cold-start: retries connection-refused / 5xx / timeout with capped exponential
+ * backoff, but throws (loud) on a permanent 4xx or any shape/dimension mismatch —
+ * the caller must never write a corrupt vector, and must not hang forever on a
+ * dead server.
  */
 export async function embed(
   text: string,
-  baseUrl: string,
+  endpoint: string,
   fetchImpl: typeof fetch = fetch,
   options: EmbedRetryOptions = {},
 ): Promise<number[]> {
@@ -99,7 +94,7 @@ export async function embed(
   const maxDelayMs = options.maxDelayMs ?? DEFAULT_RETRY.maxDelayMs
   const timeoutMs = options.timeoutMs ?? DEFAULT_RETRY.timeoutMs
   const sleep = options.sleep ?? defaultSleep
-  const url = embedEndpoint(baseUrl)
+  const url = endpoint
   const body = JSON.stringify({ input: text })
 
   let lastError = new Error("embed: no attempt was made")

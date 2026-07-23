@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { Docker, type DockerError } from "../../../services/Docker.js"
 import { installContainerCli } from "../../../services/install-cli.js"
-import { applyWmMutation, parseWmFile, renderWmMarkdown } from "./wm-core.js"
+import { applyWmMutation, parseWmFile, renderWmMarkdown } from "@roci/player-tools/wm-core"
 
 /** Where the generated CLI is installed inside the container (on PATH). */
 export const WM_CLI_PATH = "/usr/local/bin/wm"

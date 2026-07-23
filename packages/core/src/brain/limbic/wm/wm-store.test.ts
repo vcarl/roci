@@ -5,7 +5,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
 import { meDir } from "../../../services/character-paths.js"
-import { applyWmMutation, emptyWmFile, parseWmFile, type WmTodo } from "./wm-core.js"
+import { applyWmMutation, emptyWmFile, parseWmFile, type WmTodo } from "@roci/player-tools/wm-core"
 import {
   WM_PROMPT_CAP,
   wmJsonPath,
@@ -21,7 +21,7 @@ import {
   mergePendingDeltas,
   mergeDiskState,
 } from "./wm-store.js"
-import type { WmDelta } from "./wm-core.js"
+import type { WmDelta } from "@roci/player-tools/wm-core"
 
 let root: string
 let char: CharacterConfig

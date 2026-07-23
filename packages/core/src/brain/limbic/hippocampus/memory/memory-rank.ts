@@ -15,7 +15,7 @@
  * that into a decay half-life; `recency` is the exponential decay.
  */
 
-import type { Provenance } from "./memory-provenance.js"
+import type { Provenance } from "@roci/player-tools/memory-provenance"
 import type { MemoryHit } from "./longterm-store.js"
 
 /** Ask the vec index for this many × the caller's k, then re-rank down to k. */

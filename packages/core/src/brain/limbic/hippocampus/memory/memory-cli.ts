@@ -9,11 +9,11 @@ import {
   buildVecInsertSql,
   buildMetaGetSql,
   buildMetaSetSql,
-} from "./memory-sql.js"
-import { embedEndpoint } from "./memory-embed.js"
-import { MEMORY_USAGE } from "./memory-args.js"
+} from "@roci/player-tools/memory-sql"
+import { embedEndpoint } from "./embed-endpoint.js"
+import { MEMORY_USAGE } from "@roci/player-tools/command-codec"
 import { installContainerCli } from "../../../../services/install-cli.js"
-import { SOURCE_PROVENANCE, PROVENANCE_DEFAULT, MIGRATION_COLUMNS } from "./memory-provenance.js"
+import { SOURCE_PROVENANCE, PROVENANCE_DEFAULT, MIGRATION_COLUMNS } from "@roci/player-tools/memory-provenance"
 
 /** Where the generated CLI is installed inside the container (on PATH). */
 export const MEMORY_CLI_PATH = "/usr/local/bin/memory"

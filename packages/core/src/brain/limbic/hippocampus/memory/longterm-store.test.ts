@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { Effect, Layer } from "effect"
+import { execFileSync } from "node:child_process"
 import {
   splitDiaryEntries,
   diaryMark,
@@ -7,10 +8,36 @@ import {
   LongtermStore,
   LongtermStoreLive,
   MEMORY_CLI_PATH,
+  buildMemoryCommand,
+  shQuote,
   type MemoryHit,
 } from "./longterm-store.js"
+import {
+  encodeRememberArgs,
+  encodeSearchArgs,
+  encodeMarkGetArgs,
+  encodeMarkSetArgs,
+  encodePromoteArgs,
+  type RememberEntry,
+} from "@roci/player-tools/command-codec"
 import { Docker } from "../../../../services/Docker.js"
 import type { CharacterConfig } from "../../../../services/CharacterFs.js"
+
+/** The `<MEMORY_CLI_PATH> <quoted-args>` fragment the store is expected to emit. */
+const cliFrag = (argv: ReadonlyArray<string>) => `${MEMORY_CLI_PATH} ${buildMemoryCommand(argv)}`
+
+/**
+ * Word-split a shell fragment exactly as bash would, via `printf '%s\0'` (NUL
+ * delimiter so a newline inside an argument is preserved, not split). The
+ * fragment MUST contain no shell operators — only quoted CLI args — so this is
+ * safe to eval; we only ever pass the `<MEMORY_CLI_PATH>`-args portion.
+ */
+function bashSplit(fragment: string): string[] {
+  const out = execFileSync("bash", ["-c", `printf '%s\\0' ${fragment}`], { encoding: "utf8" })
+  const parts = out.split("\0")
+  parts.pop() // trailing empty after the final NUL
+  return parts
+}
 
 describe("splitDiaryEntries", () => {
   it("splits on blank-line boundaries, trimming and dropping empties", () => {
@@ -91,7 +118,7 @@ describe("LongtermStoreLive — in-container command construction (N2)", () => {
     await runWith(Effect.flatMap(LongtermStore, (s) => s.readMark("cid", char)))
     const joined = captured.flat().join(" ")
     expect(joined).toContain(`cd '/work/players/ada space'`)
-    expect(joined).toContain(`${MEMORY_CLI_PATH} mark-get`)
+    expect(joined).toContain(cliFrag(encodeMarkGetArgs()))
   })
 
   it("promote frames each entry as a base64 line piped to `memory promote`", async () => {
@@ -99,7 +126,7 @@ describe("LongtermStoreLive — in-container command construction (N2)", () => {
     await runWith(Effect.flatMap(LongtermStore, (s) => s.promote("cid", char, ["raw one", "raw two"])))
     const joined = captured.flat().join(" ")
     expect(joined).toContain(`cd '/work/players/ada space'`)
-    expect(joined).toContain(`${MEMORY_CLI_PATH} promote`)
+    expect(joined).toContain(cliFrag(encodePromoteArgs()))
     expect(joined).toContain(Buffer.from("raw one", "utf8").toString("base64"))
     expect(joined).toContain(Buffer.from("raw two", "utf8").toString("base64"))
   })
@@ -115,7 +142,7 @@ describe("LongtermStoreLive — in-container command construction (N2)", () => {
     captured.length = 0
     await runWith(Effect.flatMap(LongtermStore, (s) => s.writeMark("cid", char, { len: 42, hash: "abc" })))
     const joined = captured.flat().join(" ")
-    expect(joined).toContain(`${MEMORY_CLI_PATH} mark-set`)
+    expect(joined).toContain(cliFrag(encodeMarkSetArgs(JSON.stringify({ len: 42, hash: "abc" }))))
     expect(joined).toContain('"len":42')
     expect(joined).toContain('"hash":"abc"')
   })
@@ -138,21 +165,20 @@ function dockerStub(stdout: string, captured: string[][]) {
 }
 
 describe("LongtermStore.remember / recall", () => {
-  it("remember shells `memory remember` with quoted text, --tags and --source", async () => {
+  it("remember shells the codec-encoded `memory remember` (text, --tags, --source)", async () => {
     const captured: string[][] = []
+    const entry = { text: "the wormhole is unstable", source: "orient", tags: ["medium", "situation"] }
     await Effect.runPromise(
-      Effect.flatMap(LongtermStore, (s) =>
-        s.remember("cid", char, { text: "the wormhole is unstable", source: "orient", tags: ["medium", "situation"] }),
-      ).pipe(Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub("", captured))))),
+      Effect.flatMap(LongtermStore, (s) => s.remember("cid", char, entry)).pipe(
+        Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub("", captured)))),
+      ),
     )
     const joined = captured.flat().join(" ")
     expect(joined).toContain(`cd '/work/players/ada space'`)
-    expect(joined).toContain(`${MEMORY_CLI_PATH} remember 'the wormhole is unstable'`)
-    expect(joined).toContain(`--tags 'medium,situation'`)
-    expect(joined).toContain(`--source 'orient'`)
+    expect(joined).toContain(cliFrag(encodeRememberArgs(entry)))
   })
 
-  it("recall shells `memory search` with -k and parses NDJSON into hits", async () => {
+  it("recall shells the codec-encoded `memory search` and parses NDJSON into hits", async () => {
     const captured: string[][] = []
     const ndjson =
       `{"id":1,"ts":"t","source":"orient","tags":["a"],"text":"first","score":0.9}\n` +
@@ -164,7 +190,7 @@ describe("LongtermStore.remember / recall", () => {
       ),
     )
     const joined = captured.flat().join(" ")
-    expect(joined).toContain(`${MEMORY_CLI_PATH} search 'danger' -k 2`)
+    expect(joined).toContain(cliFrag(encodeSearchArgs({ query: "danger", k: 2 })))
     expect(hits.map((h) => h.text)).toEqual(["first", "second"])
     expect(hits[0].score).toBeCloseTo(0.9)
   })
@@ -177,8 +203,9 @@ describe("LongtermStore.remember / recall", () => {
       ).pipe(Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub("", captured))))),
     )
     const joined = captured.flat().join(" ")
-    expect(joined).toContain(`--dims '{"safety":0.8}'`)
-    expect(joined).toContain(`--source 'observe'`)
+    // The dims JSON is a single shQuoted token (the codec owns the flag order).
+    expect(joined).toContain(shQuote('{"safety":0.8}'))
+    expect(joined).toContain(shQuote("--dims"))
   })
 
   it("remember omits --dims entirely when dims is empty or absent", async () => {
@@ -189,5 +216,66 @@ describe("LongtermStore.remember / recall", () => {
       ).pipe(Effect.provide(LongtermStoreLive.pipe(Layer.provide(dockerStub("", captured))))),
     )
     expect(captured.flat().join(" ")).not.toContain("--dims")
+  })
+})
+
+/**
+ * CRITICAL compatibility gate (codec-seam decision 2026-07-23): core switched to
+ * the codec encoder NOW, but the DEPLOYED parser is still the old string-CLI until
+ * phase 3. Core is now grammar-blind — it maps `shQuote` over the WHOLE argv, so
+ * the raw command string is uniformly quoted rather than per-value quoted. That is
+ * cosmetically different but PROVABLY shell-equivalent: bash word-splits both the
+ * legacy hand-concatenation and the new codec output to the IDENTICAL argv the
+ * deployed CLI reads from `process.argv`. This test diffs them.
+ */
+describe("command byte-compat — codec+shQuote is shell-equivalent to the legacy hand-concat", () => {
+  // Verbatim replicas of the pre-codec per-value hand-concatenation (the code
+  // this commit replaced), so the diff is against the actual prior output.
+  const legacyRemember = (e: RememberEntry): string => {
+    const tagsArg = e.tags.length > 0 ? ` --tags ${shQuote(e.tags.join(","))}` : ""
+    const dimsArg =
+      e.dims && Object.keys(e.dims).length > 0 ? ` --dims ${shQuote(JSON.stringify(e.dims))}` : ""
+    return `remember ${shQuote(e.text)}${tagsArg} --source ${shQuote(e.source)}${dimsArg}`
+  }
+  const legacySearch = (query: string, k: number, tags?: string[]): string => {
+    const tagsArg = tags && tags.length > 0 ? ` --tags ${shQuote(tags.join(","))}` : ""
+    return `search ${shQuote(query)} -k ${k}${tagsArg}`
+  }
+
+  const rememberCases: Array<{ name: string; entry: RememberEntry }> = [
+    { name: "single quotes in text", entry: { text: "it's a 'station'", source: "orient", tags: [] } },
+    { name: "double quotes + spaces", entry: { text: 'a "quiet" bar', source: "observe", tags: ["x", "y"] } },
+    { name: "unicode", entry: { text: "café ☕ 東京", source: "conscious", tags: ["城市"] } },
+    { name: "newline in text", entry: { text: "line1\nline2", source: "orient", tags: [] } },
+    { name: "with dims", entry: { text: "salient", source: "observe", tags: ["a"], dims: { safety: 0.8, fear: 1 } } },
+    { name: "empty dims (omitted)", entry: { text: "trivial", source: "observe", tags: [], dims: {} } },
+    { name: "absent dims", entry: { text: "plain", source: "observe", tags: ["t"] } },
+  ]
+
+  for (const { name, entry } of rememberCases) {
+    it(`remember — ${name}: bash-splits identically to legacy and to the codec argv`, () => {
+      const legacy = legacyRemember(entry)
+      const modern = buildMemoryCommand(encodeRememberArgs(entry))
+      // 1) legacy and codec output word-split to the same argv (deployed-parser safe).
+      expect(bashSplit(modern)).toEqual(bashSplit(legacy))
+      // 2) and that argv is exactly the codec's intended argv (no quoting artifacts).
+      expect(bashSplit(modern)).toEqual(encodeRememberArgs(entry))
+    })
+  }
+
+  it("search — bash-splits identically to legacy (with and without tags)", () => {
+    expect(bashSplit(buildMemoryCommand(encodeSearchArgs({ query: "where's the 'dock'?", k: 5 })))).toEqual(
+      bashSplit(legacySearch("where's the 'dock'?", 5)),
+    )
+    expect(
+      bashSplit(buildMemoryCommand(encodeSearchArgs({ query: "danger", k: 2, tags: ["a", "b"] }))),
+    ).toEqual(bashSplit(legacySearch("danger", 2, ["a", "b"])))
+  })
+
+  it("mark-set — bash-splits identically to the legacy `mark-set <json>`", () => {
+    const json = JSON.stringify({ len: 42, hash: "abc" })
+    expect(bashSplit(buildMemoryCommand(encodeMarkSetArgs(json)))).toEqual(
+      bashSplit(`mark-set ${shQuote(json)}`),
+    )
   })
 })

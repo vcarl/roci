@@ -24,7 +24,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { resetEpisodeContext, setEpisodeStep, setEpisodeTick } from "../../logging/episodes.js"
-import { parseWmFile } from "#brain/limbic/wm/wm-core.js"
+import { parseWmFile } from "@roci/player-tools/wm-core"
 import { parseSkillFile, serializeSkillFile, slugify } from "../../services/skills-core.js"
 
 // Silence two classes of hermetic best-effort noise from the fixtures below that

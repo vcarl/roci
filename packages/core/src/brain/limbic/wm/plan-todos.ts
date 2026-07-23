@@ -23,7 +23,7 @@
 import { Effect } from "effect"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
 import type { PlanStep } from "../../../core/types.js"
-import type { WmDelta } from "./wm-core.js"
+import type { WmDelta } from "@roci/player-tools/wm-core"
 import { closePlanTodos, drainWmDeltas, mutateWm, seedWmPlan } from "./wm-store.js"
 
 /** The evaluate transition names that END the active plan (drop it). */

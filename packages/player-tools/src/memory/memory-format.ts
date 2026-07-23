@@ -65,6 +65,57 @@ export function formatResults(rows: ReadonlyArray<MemoryRow>): string {
 }
 
 /**
+ * A parsed NDJSON recall row — the inverse of `formatResults`. `dims` comes back
+ * as the parsed object (or null), `tags` as the split array, `score` present only
+ * for `search` rows. This is the host-side contract `longterm-store` consumes; it
+ * is intentionally structural (core casts it to its own `MemoryHit`).
+ */
+export interface ParsedMemoryHit {
+  id: number
+  ts: string
+  source: string
+  provenance?: string
+  tags: string[]
+  text: string
+  score?: number
+  dims?: Record<string, number> | null
+}
+
+/** Default drop-logger for `parseResults`: warn (no longer fully silent) before dropping a bad line. */
+const warnDropped = (line: string, err: unknown): void => {
+  const reason = err instanceof Error ? err.message : String(err)
+  console.warn(`[memory] dropped unparseable NDJSON recall line (${reason}): ${line}`)
+}
+
+/**
+ * Parse `memory search`/`recent` NDJSON output — one JSON object per line — into
+ * rows, the exact inverse of `formatResults`. Colocated with the emitter so the
+ * wire contract (field set, dims-as-object, tags-as-array) has one home.
+ *
+ * Robustness: a malformed line is DROPPED, never thrown (a single torn line must
+ * not sink an entire recall). But it is no longer SILENT — `onError` is invoked
+ * (default: `console.warn`) before the drop, so drift/corruption is observable
+ * instead of vanishing (codec-seam decision 2026-07-23, loudness change).
+ */
+export function parseResults(
+  ndjson: string,
+  onError: (line: string, err: unknown) => void = warnDropped,
+): ParsedMemoryHit[] {
+  return ndjson
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .flatMap((l) => {
+      try {
+        return [JSON.parse(l) as ParsedMemoryHit]
+      } catch (err) {
+        onError(l, err)
+        return []
+      }
+    })
+}
+
+/**
  * Extract and validate the embedding vector from an OpenAI-shape embeddings
  * response: `{ data: [{ embedding: number[] }] }`. Throws (loud, not silent) on
  * any shape/dimension/element mismatch — a bad embedding must fail the call, not

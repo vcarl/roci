@@ -36,7 +36,7 @@ import {
   type WmFile,
   type WmMutation,
   type WmTodo,
-} from "./wm-core.js"
+} from "@roci/player-tools/wm-core"
 
 export const WM_JSON_FILE = "wm.json"
 export const WM_MD_FILE = "WM.md"
