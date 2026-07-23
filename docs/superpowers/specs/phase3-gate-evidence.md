@@ -135,3 +135,31 @@ NEW  exit=1
 ## Verdict
 
 **No UNEXPLAINED deltas.** Every memory case is BYTE-IDENTICAL or STRUCTURAL-IDENTICAL, except the two spec-named intentional deltas (malformed-`--dims` hard error; embed cold-start retry). The `longterm-store.ts:194-205` NDJSON parse contract is preserved. Phase-3 byte-diff gate: **PASS** (pending maintainer sign-off).
+
+---
+
+## Phase 3+4 provision-path re-validation
+
+**Run:** 2026-07-23T19:13:01.949Z · **Harness mode:** `byte-diff-gate.mjs` v2.0.0 (provision-path)
+**Image:** `spacemolt-player:latest` — digest ``
+
+Exercises the REAL provision resolver (`readPlayerToolBundle`, spec §2f) — the
+bytes `provisionMemoryCli`/`provisionWmCli` install — not a direct file read.
+
+| check | result |
+|-------|:------:|
+| `playerToolBundlePath("memory")` resolves to `dist/bundles/memory` | PASS |
+| provision-resolved memory bytes === bundle artifact | PASS |
+| `playerToolBundlePath("wm")` resolves to `dist/bundles/wm` | PASS |
+| provision-resolved wm bytes === bundle artifact | PASS |
+| `remember --dims + --tags` via env-prefixed exec (prints integer id) | PASS |
+| `search` returns dims-as-object NDJSON with score+tags | PASS |
+| `wm todo` via provisioned bundle (prints `t1`) | PASS |
+
+Env delivery under test is the exact string `longterm-store` now issues:
+`export MEMORY_EMBED_URL='…/v1/embeddings' MEMORY_DB_PATH=… && cd … && /tmp/memory-prov …`.
+Install path is `/tmp/*` (the install-cli base64+chmod mechanism), never `/usr/local/bin`.
+
+search first hit: `{"id":1,"ts":"2026-07-23T19:13:01.794Z","source":"conscious","provenance":"asserted","dims":{"voyage":0.6,"threat":0.2},"tags":["a","b"],"text":"alpha voyage log","score":0.05739975040445142}`
+
+**Provision-path re-validation: PASS.**

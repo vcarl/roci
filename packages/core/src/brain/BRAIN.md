@@ -114,7 +114,10 @@ the limbic memory turns and the conscious executor. It never imports up into eit
 
 3. **Memory formation/retrieval is hippocampus-owned, not cortex-owned.** The long-term vector
    store lives under `limbic/hippocampus/memory/` and is reached in-container via the `memory`
-   CLI subprocess. The conscious executor *invokes* that CLI, but does not own the store.
+   CLI subprocess. The conscious executor *invokes* that CLI, but does not own the store. The
+   in-container `memory` and `wm` CLIs themselves ship as bundled artifacts from the
+   `@roci/player-tools` leaf package (the tested code IS the shipped binary); core only
+   provisions and execs them.
 
 4. **Shared/neutral infra is imported DOWN by both layers; it never imports up.** `brain/stem/transport`,
    `model/`, and `services/` know nothing about limbic or cortex. Documented lower→limbic

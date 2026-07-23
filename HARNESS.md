@@ -285,7 +285,7 @@ All events are printed type-tagged with timestamp and character name:
 | `src/brain/stem/parse.ts` | Tolerant JSON extraction (`extractJson`/`tryParseJson`/`parseOr`) for mlx tier output |
 | `src/brain/cortex/conscious/conscious-thought.ts` | `ConsciousThought` service: provisions and runs the tool-using OpenCode executor |
 | `src/brain/cortex/conscious/frontier-cli.ts` | The `frontier` delegation tool (detached reasoning-model worker) |
-| `src/brain/limbic/hippocampus/memory/memory-cli.ts`, `memory/longterm-store.ts` | Long-term memory (hippocampus-owned): in-container `memory` CLI + sqlite-vec store |
+| `src/brain/limbic/hippocampus/memory/memory-cli.ts`, `memory/longterm-store.ts` | Long-term memory (hippocampus-owned): host-side provisioning + exec seam for the `memory` CLI, which ships as a bundle from `@roci/player-tools` (sqlite-vec store) |
 | `src/model/handles.ts` | Cortex tier handles + `DEFAULT_CORTEX_MODELS` (hindbrain/forebrain/conscious) |
 | `src/model/client.ts` | `ModelClient` -- OpenAI-compatible completion client for the mlx tiers |
 | `src/core/orchestrator/index.ts` | Orchestrator barrel (re-exports `runReflection`/`runBreak`, lifecycle, planning) |

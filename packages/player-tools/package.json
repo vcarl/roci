@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     "./memory-sql": { "import": "./dist/memory/memory-sql.js", "types": "./dist/memory/memory-sql.d.ts" },
     "./memory-format": { "import": "./dist/memory/memory-format.js", "types": "./dist/memory/memory-format.d.ts" },
     "./command-codec": { "import": "./dist/memory/command-codec.js", "types": "./dist/memory/command-codec.d.ts" },

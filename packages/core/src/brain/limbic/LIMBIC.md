@@ -75,14 +75,17 @@ brain/limbic/
     identity-context.ts             Assembles the recalled-memory / identity block for prompts
     prompts/                        Dream + consolidate prompt templates (normal, good, nightmare)
     memory/                         Long-term vector store (hippocampus-owned)
-      longterm-store.ts             LongtermStore Effect service seam
-      memory-cli.ts                 In-container `memory` CLI generator
+      longterm-store.ts             LongtermStore Effect service seam (execs the in-container CLI)
+      memory-cli.ts                 Provisions the `memory` CLI bundle into the container
+      embed-endpoint.ts             Host-side embed-URL rewrite (→ MEMORY_EMBED_URL at exec time)
       memory-gateway.ts             MemoryGateway: recall/promote helpers used by the loop
-      memory-embed.ts / -sql.ts / -format.ts / -args.ts   Embed, sqlite-vec, formatting, arg parsing
+      memory-rank.ts                Host-side post-recall re-ranking over parsed MemoryHits
+      (the `memory` CLI itself — embed/sqlite-vec/format/codec — ships from @roci/player-tools)
   wm/                               INTEGRATIVE -- Working (procedural / intent) memory
-    wm-core.ts                      Plan/todo state machine + WmDelta types
     wm-store.ts                     Effect store: seed/mutate/drain WM deltas
-    wm-cli.ts                       In-container `wm` CLI generator (wm.json / WM.md)
+    plan-todos.ts                   Harness-owned plan-todo tracker (composes wm-store)
+    wm-cli.ts                       Provisions the `wm` CLI bundle into the container
+    (wm-core.ts state machine + the `wm` CLI itself ship from @roci/player-tools)
 ```
 
 Agent-turn execution transport (`transport.ts`, `payload.ts`, `process-runner.ts`,
@@ -211,8 +214,10 @@ vector store.
   `dream.execute()` so it never grows without bound.
 - **Long-term store (episodic)** — an append-only, per-character sqlite-vec vector store at
   `brain/limbic/hippocampus/memory/`. It is reached **in-container via the `memory` CLI**
-  subprocess (`memory/memory-cli.ts`), fronted on the host by the `LongtermStore` Effect
-  service (`memory/longterm-store.ts`) and the `MemoryGateway` recall helpers
+  subprocess — the CLI itself ships as a bundled artifact from `@roci/player-tools` (the
+  tested code IS the shipped binary), provisioned into the container by `memory/memory-cli.ts`
+  and fronted on the host by the `LongtermStore` Effect service (`memory/longterm-store.ts`,
+  which execs it with `MEMORY_EMBED_URL` per-run) and the `MemoryGateway` recall helpers
   (`memory/memory-gateway.ts`) that the loop calls. Rows are embedded and never updated or
   deleted; the point is durable ground truth that survives the diary cull. See
   [docs/MEMORY.md](../../../../../docs/MEMORY.md) for the full long-term architecture.
@@ -252,11 +257,11 @@ the turns).
 ## Working Memory (`wm/`) -- Procedural / Intent State
 
 Working memory is the plan/todo state machine (`wm.json` / `WM.md`): the character's
-*current intent*, distinct from the hippocampus's narrative recall. `wm-core.ts` is the
-pure state machine + `WmDelta` types; `wm-store.ts` is the Effect store the loop drives
-(`seedWmPlan`, `mutateWm`, `drainWmDeltas`, `closePlanTodos`, `discardDeadPlanTodos`);
-`wm-cli.ts` generates the in-container `wm` CLI the conscious agent uses to read/update its
-own plan.
+*current intent*, distinct from the hippocampus's narrative recall. `wm-core.ts` (in
+`@roci/player-tools`) is the pure state machine + `WmDelta` types, imported by both the host
+and the bundled CLI; `wm-store.ts` is the Effect store the loop drives (`seedWmPlan`,
+`mutateWm`, `drainWmDeltas`, `closePlanTodos`, `discardDeadPlanTodos`); `wm-cli.ts` provisions
+the bundled `wm` CLI the conscious agent uses to read/update its own plan.
 
 ## Hindbrain Appraisal & Escalation -- the limbic drives
 

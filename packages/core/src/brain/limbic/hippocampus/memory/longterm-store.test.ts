@@ -146,6 +146,26 @@ describe("LongtermStoreLive — in-container command construction (N2)", () => {
     expect(joined).toContain('"len":42')
     expect(joined).toContain('"hash":"abc"')
   })
+
+  it("delivers the host-rewritten MEMORY_EMBED_URL via an `export …&&` prefix on EVERY exec (spec §3)", async () => {
+    // The bundled binary resolves config up-front and requires MEMORY_EMBED_URL for
+    // every verb — including the non-embedding mark-get/mark-set — so the export
+    // must ride ALL exec calls, ahead of the `cd`. The url is the FINAL host-side
+    // rewrite (loopback → host.docker.internal), composed in core, not in-container.
+    const expectPrefix = `export MEMORY_EMBED_URL='http://host.docker.internal:8084/v1/embeddings' && cd `
+    for (const op of [
+      (s: typeof LongtermStore.Service) => s.readMark("cid", char),
+      (s: typeof LongtermStore.Service) => s.writeMark("cid", char, { len: 1, hash: "h" }),
+      (s: typeof LongtermStore.Service) => s.remember("cid", char, { text: "t", source: "orient", tags: [] }),
+      (s: typeof LongtermStore.Service) => s.recall("cid", char, "q"),
+      (s: typeof LongtermStore.Service) => s.promote("cid", char, ["raw"]),
+    ]) {
+      captured.length = 0
+      await runWith(Effect.flatMap(LongtermStore, op))
+      const shell = captured.flat().at(-1) ?? ""
+      expect(shell.startsWith(expectPrefix)).toBe(true)
+    }
+  })
 })
 
 const char = { name: "ada space" } as CharacterConfig

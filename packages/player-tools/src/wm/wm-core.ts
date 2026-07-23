@@ -2,13 +2,12 @@
  * Working-memory core (agent-cognition Stage 2, spec §2): types, the todo
  * state machine, the tolerant wm.json parser, and the WM.md render.
  *
- * EMBEDDING CONTRACT: every exported function here is embedded VERBATIM into
- * the generated in-container `wm` CLI via Function.prototype.toString()
- * (wm-cli.ts) — the same no-drift rationale as memory-cli's generate-time
- * interpolation of its unit-tested SQL builders. Each function must therefore
- * be a SELF-CONTAINED function declaration: no imports, no module-level value
- * references, no calls to anything outside this file. TS type annotations are
- * fine (the transpiler erases them before toString sees the source).
+ * This is the single source for both runtimes: the in-container `wm` CLI
+ * (`src/wm/main.ts` → the bundled artifact) calls these functions DIRECTLY, and
+ * the host (`@roci/core`'s wm-store.ts) imports them too — one tested state
+ * machine, no drift. (Historical note: the CLI used to embed these bodies via
+ * `Function.prototype.toString()`, which is why the module stays import-free;
+ * that mechanism was retired in favor of bundling — see package-design spec §1b.)
  *
  * States: open | done | discarded. Discarded = retained, not done, not in
  * progress, excluded from active renders, visible to retrospectives (spec §2).

@@ -12,7 +12,6 @@ import { provisionConsciousProvider } from "@roci/core/brain/cortex/conscious/op
 import { provisionMemoryCli } from "@roci/core/brain/limbic/hippocampus/memory/memory-cli.js"
 import { provisionWmCli } from "@roci/core/brain/limbic/wm/wm-cli.js"
 import { ensureWmFiles } from "@roci/core/brain/limbic/wm/wm-store.js"
-import { DEFAULT_EMBED_BASE_URL } from "@roci/core/brain/limbic/hippocampus/memory/embed-endpoint.js"
 import { DEFAULT_CORTEX_MODELS } from "@roci/core/model/handles.js"
 import { launchEmbedServer, reapEmbedServers } from "./embed-server.js"
 import { withSessionEnd } from "./session-end.js"
@@ -165,10 +164,13 @@ export const runOrchestrator = (resolvedDomains: ResolvedDomain[], tickIntervalS
       // conscious-provision step, so a lazily-provisioned binary `exit 127`s there
       // and the subsequent dream cull overwrites diary.md, losing the raw entries.
       // Provisioning here (right after the container is up) closes that window.
-      // Idempotent (overwrites the script); needs only a running container + root
-      // exec; embedBaseUrl is the constant — no node-user or player-dir dependency.
-      // Failure-tolerant: log loud and continue (long-term memory degrades).
-      yield* provisionMemoryCli(containerId, { embedBaseUrl: DEFAULT_EMBED_BASE_URL }).pipe(
+      // Idempotent (overwrites the binary); needs only a running container + root
+      // exec. Installs the built @roci/player-tools bundle verbatim — the per-run
+      // embed endpoint is delivered as MEMORY_EMBED_URL at invocation time by
+      // longterm-store (spec §3), not baked here. Failure-tolerant: a missing
+      // bundle (misordered build) fails loud here — log loud and continue
+      // (long-term memory degrades).
+      yield* provisionMemoryCli(containerId).pipe(
         Effect.tap(() => logBehavior("orchestrator", "main", "provision", { type: "provision", component: "memory_cli", status: "ready" })),
         Effect.catchAll((e) =>
           logToConsole("orchestrator", "main", `memory CLI provisioning failed (long-term memory unavailable): ${e}`, "warn").pipe(

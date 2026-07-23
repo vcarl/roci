@@ -4,6 +4,7 @@ import type { CharacterConfig } from "../../../../services/CharacterFs.js"
 import { containerPlayerRoot } from "../../../../services/character-paths.js"
 import { Docker } from "../../../../services/Docker.js"
 import { MEMORY_CLI_PATH } from "./memory-cli.js"
+import { DEFAULT_EMBED_BASE_URL, embedEndpoint } from "./embed-endpoint.js"
 import type { Provenance } from "@roci/player-tools/memory-provenance"
 import {
   encodeRememberArgs,
@@ -162,9 +163,18 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
     // Build the `${MEMORY_CLI_PATH} <args>` fragment from a codec argv. Grammar
     // (flag order/omission/defaults) lives in the codec; core stays grammar-blind.
     const cli = (argv: ReadonlyArray<string>) => `${MEMORY_CLI_PATH} ${buildMemoryCommand(argv)}`
+    // The bundled `memory` binary reads its embed endpoint from MEMORY_EMBED_URL at
+    // INVOCATION time (spec §3) — a static bundle can't bake a per-run value. The
+    // loopback → host.docker.internal rewrite stays host-side (embed-endpoint.ts);
+    // core composes the FINAL url here. `Docker.exec` has no `-e` seam, so it rides
+    // an `export …&&` prefix on the `bash -lc` string (same shell as the `cd`),
+    // applied to ALL exec calls — the entrypoint requires the var for every verb,
+    // even the non-embedding mark-get/mark-set (config is resolved up-front).
+    const embedUrl = embedEndpoint(DEFAULT_EMBED_BASE_URL)
+    const withEnv = (body: string) => `export MEMORY_EMBED_URL=${shQuote(embedUrl)} && ${body}`
     return LongtermStore.of({
       readMark: (containerId, char) =>
-        docker.exec(containerId, ["bash", "-lc", `${cd(char)} && ${cli(encodeMarkGetArgs())}`]).pipe(
+        docker.exec(containerId, ["bash", "-lc", withEnv(`${cd(char)} && ${cli(encodeMarkGetArgs())}`)]).pipe(
           Effect.mapError(fail),
           Effect.map((out): DiaryMark | null => {
             const t = out.trim()
@@ -182,7 +192,7 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
           .exec(containerId, [
             "bash",
             "-lc",
-            `${cd(char)} && ${cli(encodeMarkSetArgs(JSON.stringify(mark)))}`,
+            withEnv(`${cd(char)} && ${cli(encodeMarkSetArgs(JSON.stringify(mark)))}`),
           ])
           .pipe(Effect.mapError(fail), Effect.asVoid),
       promote: (containerId, char, entries) =>
@@ -191,7 +201,7 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
           // Pass each entry as a base64 line on stdin via printf|pipe (Docker.exec
           // has no stdin seam). base64 tokens are shell-safe; still single-quoted.
           const b64s = entries.map((e) => `'${Buffer.from(e, "utf8").toString("base64")}'`).join(" ")
-          const cmd = `${cd(char)} && printf '%s\\n' ${b64s} | ${cli(encodePromoteArgs())}`
+          const cmd = withEnv(`${cd(char)} && printf '%s\\n' ${b64s} | ${cli(encodePromoteArgs())}`)
           const out = yield* docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail))
           const n = Number(out.trim())
           return Number.isFinite(n) ? n : entries.length
@@ -199,12 +209,12 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
       remember: (containerId, char, entry) => {
         // The codec owns flag order + the empty/absent-dims → omitted-flag rule
         // (→ NULL column → neutral salience at recall).
-        const cmd = `${cd(char)} && ${cli(encodeRememberArgs(entry))}`
+        const cmd = withEnv(`${cd(char)} && ${cli(encodeRememberArgs(entry))}`)
         return docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail), Effect.asVoid)
       },
       recall: (containerId, char, query, opts) =>
         Effect.gen(function* () {
-          const cmd = `${cd(char)} && ${cli(encodeSearchArgs({ query, k: opts?.k, tags: opts?.tags }))}`
+          const cmd = withEnv(`${cd(char)} && ${cli(encodeSearchArgs({ query, k: opts?.k, tags: opts?.tags }))}`)
           const out = yield* docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail))
           // NDJSON row parsing lives in the package next to formatResults; a torn
           // line is logged (no longer silent) then dropped, never thrown.
