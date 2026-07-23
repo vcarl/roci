@@ -76,6 +76,15 @@ export const callTier = (
     const client = yield* ModelClient
     const handle = resolveHandle(config.models, tier)
     const startedAt = Date.now()
+    // Announce the call is starting BEFORE we block on the model. Without this, a
+    // long in-flight generation (a multi-minute conscious `decide`) emits nothing
+    // until it lands — indistinguishable from an idle or a hung loop. The completion
+    // `tier_call` below is unchanged; this is its in-flight counterpart.
+    yield* logBehavior(config.char.name, "cortex", "tier_call", {
+      type: "tier_call_start",
+      tier,
+      step,
+    })
     const res = yield* svc
       .withTier(tier)(client.complete(handle, [{ role: "user", content: prompt }]))
       .pipe(

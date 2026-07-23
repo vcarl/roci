@@ -68,6 +68,8 @@ function renderBehavior(b: import("./behavior.js").Behavior): string {
       return `phase ${b.phase} ${b.transition}`
     case "reflection":
       return `reflection ${b.stage} ${b.status}${b.counts ? ` ${Object.entries(b.counts).map(([k, v]) => `${k}=${v}`).join(" ")}` : ""}`
+    case "tier_call_start":
+      return `tier_call ${b.tier} ${b.step} …in flight`
     case "tier_call":
       return `tier_call ${b.tier} ${b.latencyMs}ms ${b.outcome}`
     case "appraisal":

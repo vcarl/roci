@@ -32,6 +32,10 @@ export type Behavior =
   | { type: "phase"; phase: string; transition: "enter" | "exit" }
   | { type: "reflection"; stage: "dream" | "promote" | "retrospect" | "synthesisBootstrap" | "macro"; status: "start" | "done"; counts?: Record<string, number> }
   // ── Cognition (Wave 2) ──────────────────────────────────────
+  // Fired the instant a tier call is dispatched (before the model responds), so a
+  // long in-flight generation is visible in real time rather than only surfacing on
+  // the completion `tier_call` below. Carries the step so a wedged call is attributable.
+  | { type: "tier_call_start"; tier: "hindbrain" | "forebrain" | "conscious"; step: "observe" | "orient" | "decide" | "evaluate" | "diary" }
   | { type: "tier_call"; tier: "hindbrain" | "forebrain" | "conscious"; latencyMs: number; outcome: "ok" | "error" | "timeout"; attempt?: number }
   | {
       type: "appraisal"

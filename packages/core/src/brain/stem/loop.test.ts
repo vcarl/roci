@@ -648,6 +648,76 @@ describe("runActivation (conscious-session executor)", () => {
     expect(warnMessages.some((m) => m.toLowerCase().includes("no actionable steps"))).toBe(true)
   }, 20_000)
 
+  it("emits deliberation_liveness with climbing elapsedMs while the deliberation fiber is in flight, and stops once it lands", async () => {
+    // In-flight observability: a forked deliberation does not block the tick loop and
+    // emits nothing until it completes — so a long `decide` generation, an intended
+    // idle, and a hung loop looked identical in real time. Each tick with a
+    // deliberation in flight must emit a `deliberation_liveness` note whose elapsedMs
+    // climbs, mirroring the body_liveness wedge signal. We gate the conscious `decide`
+    // tier on a Deferred so the fiber stays in flight across several ticks, observe the
+    // climbing heartbeats, then release it and let the loop terminate.
+    const liveness: Array<{ elapsedMs: number; tier?: string; step?: string; tick?: number }> = []
+    const recordingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            if (
+              event.kind === "behavior" &&
+              event.behavior.type === "note" &&
+              event.behavior.label === "deliberation_liveness"
+            ) {
+              liveness.push(event.behavior.data as { elapsedMs: number; tier?: string; step?: string; tick?: number })
+            }
+          }),
+      }),
+    )
+    const ctLayer = ConsciousThoughtTest((_config, _resume) => ({
+      result: { output: "unused", timedOut: false, durationMs: 1 },
+      sessionId: "ses_delib",
+    }))
+    const program = Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>()
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, { type: "combat" }) // escalates → forks a deliberation
+      // Hold `decide` in flight long enough to see several heartbeats, then release so
+      // the deliberation lands as `terminate` and the loop completes deterministically.
+      yield* Effect.forkDaemon(
+        Effect.sleep("25 millis").pipe(Effect.andThen(Deferred.succeed(gate, undefined))),
+      )
+      const gatedClient = scriptClient({
+        decide: () =>
+          Deferred.await(gate).pipe(
+            Effect.as({ text: '{"decision":"terminate","reasoning":"stop"}', raw: {} }),
+          ),
+      })
+      return yield* runActivation({
+        char: { name: "ada", root: "/work/players/ada" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        // Large orient interval: no forced re-orient re-forks a second deliberation
+        // during the test window — keep exactly one deliberation under observation.
+        orientInterval: 10_000,
+        tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(gatedClient, ctLayer, fakeDomain, Layer.mergeAll(fakeFs, recordingLog), fakeRuntimeDeps, noopModelService)))
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The heartbeat fired repeatedly while the fiber was in flight.
+    expect(liveness.length).toBeGreaterThanOrEqual(2)
+    const elapsed = liveness.map((l) => l.elapsedMs)
+    // Every reading is a non-negative elapsed, and they climb monotonically.
+    expect(elapsed.every((ms) => typeof ms === "number" && ms >= 0)).toBe(true)
+    for (let i = 1; i < elapsed.length; i++) expect(elapsed[i]).toBeGreaterThanOrEqual(elapsed[i - 1])
+    // Non-trivial elapsed accrued (the fiber genuinely ran across ticks).
+    expect(elapsed[elapsed.length - 1]).toBeGreaterThan(0)
+    // Carries the conscious/decide context (the step that was actually blocking).
+    expect(liveness[liveness.length - 1].tier).toBe("conscious")
+    expect(liveness[liveness.length - 1].step).toBe("decide")
+  }, 20_000)
+
   it("a failing diary turn is logged LOUDLY (kind:error) and degrades without stalling the loop", async () => {
     // Issue 1: runDiaryTurn failing (model error) must NOT be swallowed silently.
     // A structured kind:"error" event fires and the entry degrades to "" — the

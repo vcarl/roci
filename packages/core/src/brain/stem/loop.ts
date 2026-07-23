@@ -297,6 +297,14 @@ export const runActivation = (config: ActivationConfig) =>
     let deliberationSnapshotCount = 0
     // Guards against forking a fresh deliberation on the same tick one just landed/discarded.
     let deliberationSettledThisTick = false
+    // In-flight observability: epoch-ms the CURRENT deliberation fiber was forked, or
+    // null when none is running. The deliberation runs on a forked fiber that does NOT
+    // block the tick loop and emits nothing until it lands, so a long conscious `decide`
+    // looked identical to an idle or a hung loop. Each tick with a fiber in flight emits
+    // a `deliberation_liveness` note carrying now − this stamp (mirrors body_liveness for
+    // the in-session turn). Cleared the tick the fiber is joined/dropped so elapsed never
+    // leaks into the next deliberation.
+    let deliberationFiberStartedAt: number | null = null
 
     // Wedge visibility (functional-freeze detector): epoch-ms the CURRENT in-flight
     // conscious turn started, or null when no turn is running. Set when a turn is
@@ -638,6 +646,7 @@ export const runActivation = (config: ActivationConfig) =>
         if (deliberationFiber) {
           yield* Fiber.interrupt(deliberationFiber)
           deliberationFiber = null
+          deliberationFiberStartedAt = null
         }
         // A dropped session's in-flight reflexes are moot — interrupt them so the
         // amygdala "cut-the-line" exit leaves no orphaned 2B calls (mirrors the
@@ -778,6 +787,7 @@ export const runActivation = (config: ActivationConfig) =>
           if (done) yield* Fiber.join(deliberationFiber)
           else yield* Fiber.interrupt(deliberationFiber)
           deliberationFiber = null
+          deliberationFiberStartedAt = null
           deliberationSnapshotCount = 0
           deliberationSettledThisTick = true
           forceOrientNext = true
@@ -791,6 +801,7 @@ export const runActivation = (config: ActivationConfig) =>
           if (done) {
             const outcome: DeliberationResult = yield* Fiber.join(deliberationFiber)
             deliberationFiber = null
+            deliberationFiberStartedAt = null
             deliberationSettledThisTick = true
             const maybeCompleted = yield* applyDeliberation(outcome) // returns ActivationResult on terminate, else null
             if (maybeCompleted) return maybeCompleted
@@ -835,6 +846,7 @@ export const runActivation = (config: ActivationConfig) =>
           }
           deliberationSnapshotCount = snapshot.accumulatedEvents.length
           deliberationFiber = yield* Effect.fork(runDeliberation(snapshot))
+          deliberationFiberStartedAt = Date.now()
         }
       } else {
         // 5b. In-session path: apply the graded escalation ladder (§3.2, §4.4).
@@ -1122,6 +1134,22 @@ export const runActivation = (config: ActivationConfig) =>
         })
       } else {
         consciousTurnStartedAt = null
+      }
+
+      // 6d. Deliberation liveness: the sibling of 6c for the pre-plan idle path. A
+      // deliberation runs on a forked fiber that does NOT block the tick loop and (unlike
+      // a body turn) leaves currentPlan null, so `body_liveness` above never covers it —
+      // a multi-minute conscious `decide` emitted only `state`/`appraisal` heartbeats and
+      // was indistinguishable from an idle or a hung loop. While the fiber is in flight,
+      // emit how long it has been running so an observer/QA sees the deliberation cooking.
+      // Best-effort; never disturbs the tick.
+      if (deliberationFiber !== null) {
+        const elapsedMs = deliberationFiberStartedAt === null ? 0 : Date.now() - deliberationFiberStartedAt
+        yield* logBehavior(config.char.name, "cortex", "conscious", {
+          type: "note",
+          label: "deliberation_liveness",
+          data: { elapsedMs, tier: "conscious", step: "decide", tick },
+        })
       }
 
       // 7. Sleep one tick.
