@@ -314,6 +314,38 @@ describe("spaceMoltEventProcessor — logged_in", () => {
     expect(next.ship.hull).toBe(55)
     expect(next.cargo).toEqual([{ item_id: "ore", quantity: 4 }])
   })
+
+  it("stores pending_trades from the handshake payload", () => {
+    const event = {
+      type: "logged_in",
+      payload: {
+        player: { username: "Cmdr" },
+        ship: { hull: 55 },
+        system: { id: "sys1" },
+        poi: null,
+        pending_trades: [{ trade_id: "t1", offerer_name: "Bob" }],
+      },
+    }
+    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
+    expect(next.pendingTrades).toEqual([{ trade_id: "t1", offerer_name: "Bob" }])
+  })
+
+  it("defaults pending_trades to an empty array when the payload omits it", () => {
+    const event = {
+      type: "logged_in",
+      payload: { player: { username: "Cmdr" }, ship: { hull: 55 }, system: { id: "sys1" }, poi: null },
+    }
+    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
+    expect(next.pendingTrades).toEqual([])
+  })
+
+  it("a get_state full_state refresh preserves prior pending_trades (it never carries them)", () => {
+    const prev = makeState({ pendingTrades: [{ trade_id: "t1" }] })
+    const next = spaceMoltEventProcessor
+      .processEvent({ type: "full_state", payload: { ship: { fuel: 3 } } }, prev)
+      .stateUpdate!(prev) as GameState
+    expect(next.pendingTrades).toEqual([{ trade_id: "t1" }])
+  })
 })
 
 describe("spaceMoltEventProcessor — scan_detected", () => {

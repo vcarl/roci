@@ -47,7 +47,7 @@ function deriveFlags(state: GameState): SituationFlags {
 		cargoNearlyFull: cargoRatio > CARGO_NEARLY_FULL_THRESHOLD,
 		cargoFull: ship.cargo_used >= ship.cargo_capacity,
 		lowHull: hullRatio < LOW_HULL_THRESHOLD,
-		hasPendingTrades: false,
+		hasPendingTrades: (state.pendingTrades ?? []).length > 0,
 		hasUnreadChat: notifications.some(
 			(n) => n.msg_type === "chat_message" || n.type === "chat_message",
 		),

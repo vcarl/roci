@@ -1,6 +1,6 @@
 import { Layer } from "effect"
 import { EventProcessorTag, type EventProcessor, type EventResult } from "@roci/core/brain/limbic/thalamus/event-processor.js"
-import type { CargoItem, GameState, NearbyPlayer, PlayerState, PoiState, ShipState, SystemState } from "./types.js"
+import type { CargoItem, GameState, NearbyPlayer, PendingTrade, PlayerState, PoiState, ShipState, SystemState } from "./types.js"
 import type {
   GameEvent,
   LoggedInPayload,
@@ -54,6 +54,11 @@ interface FullStateSnapshot {
   /** `undefined` = leave prior; `null` = clear; object = merge/replace by id. */
   system?: SystemState | null
   poi?: PoiState | null
+  /**
+   * Incoming trade offers. `undefined` = leave prior untouched (the `get_state`
+   * refresh doesn't carry pending_trades, so it preserves what login set).
+   */
+  pendingTrades?: PendingTrade[]
 }
 
 /**
@@ -79,12 +84,30 @@ function applyFullState(s: GameState, snap: FullStateSnapshot): GameState {
     cargo,
     system: mergeLocated(s.system, snap.system),
     poi: mergeLocated(s.poi, snap.poi),
+    // undefined ⇒ keep prior (get_state has no pending_trades); a login snapshot
+    // supplies the fresh array. See the staleness note on loggedInToSnapshot.
+    pendingTrades: snap.pendingTrades ?? s.pendingTrades,
     timestamp: Date.now(),
     lastFullStateAt: Date.now(),
   }
 }
 
-/** Map the `logged_in` handshake payload onto a normalized full-state snapshot. */
+/**
+ * Map the `logged_in` handshake payload onto a normalized full-state snapshot.
+ *
+ * STALENESS LIMITATION (pending_trades): the handshake is the ONLY frame that
+ * carries `pending_trades[]`. Neither the periodic `get_state`/`full_state`
+ * refresh (V2GameState has no such field) nor any typed notification refreshes
+ * it. The trade-RESOLUTION frames (`trade_cancelled`/`trade_complete`/
+ * `trade_declined`) are addressed to the OFFERER, not the recipient whose
+ * pending_trades these are, AND fall outside client-v2's typed `ServerEvent`
+ * union (they'd need a bridge like `battle_damage`) — so the recipient has no
+ * cheap signal for when its incoming offers resolve. Consequently
+ * `hasPendingTrades` reflects the login snapshot and only refreshes on
+ * reconnect/re-login; it may read stale (stuck true) mid-session after the
+ * pilot reviews the offers. Accepted as a documented limitation over building a
+ * resolution-frame bridge that the game doesn't route to the recipient anyway.
+ */
 function loggedInToSnapshot(payload: LoggedInPayload): FullStateSnapshot {
   const ship = payload.ship as unknown as ShipState
   return {
@@ -93,6 +116,7 @@ function loggedInToSnapshot(payload: LoggedInPayload): FullStateSnapshot {
     cargo: ship?.cargo ?? [],
     system: (payload.system as unknown as SystemState) ?? null,
     poi: payload.poi ? (payload.poi as unknown as PoiState) : null,
+    pendingTrades: (payload.pending_trades ?? []) as unknown as PendingTrade[],
   }
 }
 

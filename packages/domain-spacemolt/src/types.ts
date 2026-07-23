@@ -199,6 +199,22 @@ export interface ActiveMission {
 	reward_credits: number;
 }
 
+/**
+ * An incoming player-to-player trade offer awaiting the recipient's review.
+ * Sourced from the `logged_in` handshake's `pending_trades[]` array (whose
+ * entries the client-v2 lib types only as `unknown[]`; shape mirrors
+ * `NotificationTradeOfferReceived`). Only `trade_id` is relied upon; the rest is
+ * carried for possible future rendering. Presence drives the `pending_trades`
+ * interrupt via the `hasPendingTrades` situation flag.
+ */
+export interface PendingTrade {
+	trade_id: string;
+	offerer_id?: string;
+	offerer_name?: string;
+	offer_credits?: number;
+	request_credits?: number;
+}
+
 export interface GameState {
 	player: PlayerState;
 	ship: ShipState;
@@ -221,6 +237,14 @@ export interface GameState {
 	market?: MarketItem[];
 	missions?: MissionInfo[];
 	activeMissions?: ActiveMission[];
+	/**
+	 * Incoming trade offers awaiting review. Populated from the `logged_in`
+	 * handshake snapshot (and preserved across `get_state`/`full_state` refreshes,
+	 * which don't carry it). Drives the `hasPendingTrades` situation flag. See the
+	 * staleness note on `loggedInToSnapshot` in event-processor.ts: the domain has
+	 * no cheap signal for when these resolve, so this reflects the login snapshot.
+	 */
+	pendingTrades?: PendingTrade[];
 	orders?: PlayerOrder[];
 	storage?: StorageItem[];
 	storageCredits?: number;

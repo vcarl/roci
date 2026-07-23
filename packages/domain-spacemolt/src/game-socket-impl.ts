@@ -100,6 +100,10 @@ function buildInitialState(payload: LoggedInPayload, initialTick: number): GameS
     system: payload.system as unknown as SystemState,
     poi: (payload.poi ?? null) as unknown as PoiState | null,
     cargo: (payload.ship as { cargo?: ShipState["cargo"] }).cargo ?? [],
+    // Incoming trade offers from the handshake — drives the `pending_trades`
+    // interrupt via hasPendingTrades. Only refreshed on re-login (see the
+    // staleness note on loggedInToSnapshot in event-processor.ts).
+    pendingTrades: (payload.pending_trades ?? []) as unknown as GameState["pendingTrades"],
     nearby: [],
     notifications: [],
     travelProgress: null,

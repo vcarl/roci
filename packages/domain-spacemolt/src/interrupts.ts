@@ -122,7 +122,8 @@ const interruptRules: ReadonlyArray<InterruptRule> = [
   },
 ]
 
-const spaceMoltInterruptRegistry = createInterruptRegistry(interruptRules)
+/** The domain's interrupt registry. Exported for unit tests; wrapped as a Layer below. */
+export const spaceMoltInterruptRegistry = createInterruptRegistry(interruptRules)
 
 /** Layer providing the SpaceMolt interrupt registry. */
 export const SpaceMoltInterruptRegistryLive = Layer.succeed(InterruptRegistryTag, spaceMoltInterruptRegistry)

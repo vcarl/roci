@@ -55,11 +55,11 @@ Pure function classification based on game state:
 3. `docked` -- `docked_at_base` is non-null
 4. `in_space` -- Default
 
-**Situation flags:** `atMineablePoi`, `atDockablePoi`, `lowFuel`, `cargoNearlyFull`, `cargoFull`, `lowHull`, `hasUnreadChat`, `hasCompletableMission`.
+**Situation flags:** `atMineablePoi`, `atDockablePoi`, `lowFuel`, `cargoNearlyFull`, `cargoFull`, `lowHull`, `hasPendingTrades`, `hasUnreadChat`, `hasCompletableMission`.
 
 ### InterruptRegistry
 
-Nine interrupt rules across four priority levels:
+Ten interrupt rules across four priority levels:
 
 | Rule | Priority | Trigger |
 |------|----------|---------|
@@ -72,6 +72,7 @@ Nine interrupt rules across four priority levels:
 | `completable_mission` | medium | Mission ready to turn in |
 | `cargo_nearly_full` | low | Cargo above 90% |
 | `unread_chat` | low | New chat messages |
+| `fuel_low_docked` | low | Low fuel while docked |
 
 ### PromptBuilder
 
