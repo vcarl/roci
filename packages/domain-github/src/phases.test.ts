@@ -28,7 +28,7 @@ describe("github activePhase — tick interval wiring (Phase B1)", () => {
 
   it("passes tickIntervalMs derived from the connection's tickIntervalSec (×1000) to runActivation", async () => {
     const activePhase = gitHubPhaseRegistry.getPhase("active")!
-    const char = { name: "gh-bot", dir: "/tmp/gh-bot" } as CharacterConfig
+    const char = { name: "gh-bot", root: "/tmp/gh-bot" } as CharacterConfig
     const context = {
       char,
       containerId: "container-1",
@@ -57,7 +57,7 @@ describe("github activePhase — tick interval wiring (Phase B1)", () => {
 
   it("no longer hardcodes 30s — a different connection cadence flows through", async () => {
     const activePhase = gitHubPhaseRegistry.getPhase("active")!
-    const char = { name: "gh-bot", dir: "/tmp/gh-bot" } as CharacterConfig
+    const char = { name: "gh-bot", root: "/tmp/gh-bot" } as CharacterConfig
     const context = {
       char,
       containerId: "container-1",

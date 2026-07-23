@@ -23,7 +23,7 @@ import { OAuthToken } from "../../../services/OAuthToken.js"
 import { DEFAULT_MODEL_CONFIG } from "../../../core/model-config.js"
 import { DEFAULT_CORTEX_MODELS } from "../../../model/handles.js"
 
-const char = { name: "ada", dir: "/work/players/ada/me" }
+const char = { name: "ada", root: "/work/players/ada" }
 
 // Wide lines: each ≥1100 chars so even a 4-line fixture clears the dream size-gate
 // thresholds (DIARY/SECRETS_MIN_COMPRESS_CHARS = 4000) and exercises the compression

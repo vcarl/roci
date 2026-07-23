@@ -20,7 +20,7 @@ const base: TurnConfig = {
   prompt: "do it",
   model: "opus",
   timeoutMs: 1000,
-  char: { name: "ada", dir: "/work/players/ada/me" },
+  char: { name: "ada", root: "/work/players/ada" },
   role: "body",
 }
 

@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import { createHash } from "node:crypto"
 import type { CharacterConfig } from "../../../../services/CharacterFs.js"
+import { containerPlayerRoot } from "../../../../services/character-paths.js"
 import { Docker } from "../../../../services/Docker.js"
 import { MEMORY_CLI_PATH } from "./memory-cli.js"
 import type { Provenance } from "./memory-provenance.js"
@@ -125,7 +126,7 @@ function shQuote(s: string): string {
 }
 
 /** The in-container player cwd the `memory` CLI resolves its `me/longterm.db` against. */
-const playerCwd = (char: CharacterConfig): string => `/work/players/${char.name}`
+const playerCwd = (char: CharacterConfig): string => containerPlayerRoot(char)
 
 /**
  * Production layer: every op shells the in-container `memory` CLI. Captures Docker

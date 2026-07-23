@@ -18,7 +18,7 @@ import {
 import { normalizeClaude, normalizeOpenCode } from "../../../logging/stream-normalizer.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import type { UnifiedEvent } from "../../../logging/events.js"
-import { ARGS_SUMMARY_MAX, setEpisodeLogRoot, resetEpisodeContext } from "../../../logging/episodes.js"
+import { ARGS_SUMMARY_MAX, resetEpisodeContext } from "../../../logging/episodes.js"
 
 const StubCharacterLog = Layer.succeed(
   CharacterLog,
@@ -27,7 +27,7 @@ const StubCharacterLog = Layer.succeed(
 // NodeContext.layer provides a real CommandExecutor (runs actual subprocesses).
 const deps = Layer.merge(NodeContext.layer, StubCharacterLog)
 
-const char = { name: "ada", dir: "/work/players/ada/me" }
+const char = { name: "ada", root: "/work/players/ada" }
 
 describe("parseStreamJson", () => {
   it("returns the object for valid JSON, null otherwise", () => {
@@ -388,13 +388,14 @@ describe("runTransport captureFromRaw", () => {
 
 describe("runTransport tool episodes", () => {
   let root: string
+  // char with episode logging ENABLED under this test's root (was setEpisodeLogRoot(root)).
+  let episChar: { name: string; root: string }
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-transport-"))
-    setEpisodeLogRoot(root)
+    episChar = { ...char, root: path.join(root, "players", "ada") }
     resetEpisodeContext("ada")
   })
   afterEach(() => {
-    setEpisodeLogRoot(null)
     fs.rmSync(root, { recursive: true, force: true })
   })
 
@@ -419,7 +420,7 @@ describe("runTransport tool episodes", () => {
     const command = Command.make("bash", "-c", `printf '%s\\n' '${toolLine("completed")}'`)
     await Effect.runPromise(
       Effect.provide(
-        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char, role: "body", timeoutMs: 5000 }),
+        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char: episChar, role: "body", timeoutMs: 5000 }),
         deps,
       ),
     )
@@ -435,7 +436,7 @@ describe("runTransport tool episodes", () => {
     const command = Command.make("bash", "-c", `printf '%s\\n' '${toolLine("running")}'`)
     await Effect.runPromise(
       Effect.provide(
-        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char, role: "body", timeoutMs: 5000 }),
+        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char: episChar, role: "body", timeoutMs: 5000 }),
         deps,
       ),
     )
@@ -446,7 +447,7 @@ describe("runTransport tool episodes", () => {
     const command = Command.make("bash", "-c", `printf '%s\\n' '${toolLine("error")}'`)
     await Effect.runPromise(
       Effect.provide(
-        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char, role: "body", timeoutMs: 5000 }),
+        runTransport({ command, normalize: normalizeOpenCode, runtimeTag: "opencode", char: episChar, role: "body", timeoutMs: 5000 }),
         deps,
       ),
     )

@@ -14,7 +14,7 @@ import { CharacterFs } from "../../../services/CharacterFs.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { DEFAULT_MODEL_CONFIG } from "../../../core/model-config.js"
-import { setEpisodeLogRoot, appendToolEpisode, appendTransitionEpisode } from "../../../logging/episodes.js"
+import { appendToolEpisode, appendTransitionEpisode } from "../../../logging/episodes.js"
 import { readProposals, proposalsJsonlPath } from "./growth-store.js"
 
 const StubCommandExecutor = Layer.succeed(
@@ -54,24 +54,22 @@ function logLayer(errors: string[], system: string[] = []) {
 }
 
 let root: string
-let char: { name: string; dir: string }
+let char: { name: string; root: string }
 beforeEach(() => {
   runTurnMock.mockReset()
   root = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"))
-  char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
-  setEpisodeLogRoot(root)
+  char = { name: "ada", root: path.join(root, "players", "ada") }
 })
 afterEach(() => {
-  setEpisodeLogRoot(null)
   fs.rmSync(root, { recursive: true, force: true })
 })
 
 const seedCurrentCycle = async () => {
-  await Effect.runPromise(appendTransitionEpisode("ada", {
+  await Effect.runPromise(appendTransitionEpisode(char, {
     type: "step-end", ts: "t", tick: 1, stepId: "s1", task: "burn to Kepler", goal: "arrive",
     verdict: "failed", transition: "replan", skill: "securing-fuel", wmDeltas: null,
   }))
-  await Effect.runPromise(appendToolEpisode("ada", {
+  await Effect.runPromise(appendToolEpisode(char, {
     ts: "t", tick: 1, stepId: "s1", tool: "bash", argsSummary: "{}", status: "error", durationMs: 1,
   }))
 }
@@ -154,19 +152,19 @@ describe("retrospect.execute", () => {
     // a step-end (the boundary that passes the skip gate); the value the turn needs
     // beyond the counts is in the evaluate output + wm deltas, which the digest
     // projection carries.
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "step-end", ts: "t", tick: 4, stepId: "c1-s4-0", task: "long investigation", goal: "g",
       verdict: "failed", transition: "replan", skill: null, wmDeltas: null,
     }))
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "tier", ts: "t", tick: 4, stepId: "c1-s4-0", phase: "evaluate",
       prompt: "HUGE_RAW_PROMPT_SHOULD_NOT_LEAK", output: { judgment: "failed", reasoning: "GAME_SERVER_BUG_DISCOVERED" },
     }))
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "tier", ts: "t", tick: 2, stepId: "c1-s2-0", phase: "orient",
       orientKind: "steer", prompt: "P", output: { headline: "STEER_HEADLINE" },
     }))
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "wm", ts: "t", tick: 4, stepId: "c1-s4-0", deltas: [{ verb: "add", id: "t9", text: "WM_NOTE_BUG" }],
     }))
     let capturedPrompt = ""
@@ -221,26 +219,26 @@ describe("retrospect.execute", () => {
   // worked example, the transition digest, and the directive framing must render.
   const seedCycle2 = async () => {
     // Two completed steps (step-ends → gate passes, and they set "completed steps").
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "step-end", ts: "t", tick: 3, stepId: "c2-s3-0", task: "scan nearby stations", goal: "locate a market",
       verdict: "succeeded", transition: "next_step", skill: "surveying-systems", wmDeltas: null,
     }))
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "step-end", ts: "t", tick: 26, stepId: "c2-s26-1", task: "trade at the Markeb market board", goal: "sell ore",
       verdict: "failed", transition: "replan", skill: "trading-ore", wmDeltas: null,
     }))
     // The long step's evaluate output carries the discovery (digest, not aggregate).
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "tier", ts: "t", tick: 26, stepId: "c2-s26-1", phase: "evaluate",
       prompt: "RAW_EVAL_PROMPT_MUST_NOT_LEAK",
       output: { judgment: "failed", reasoning: "the Markeb market board does not exist — it is a fabrication; no such station is here" },
     }))
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "wm", ts: "t", tick: 26, stepId: "c2-s26-1", deltas: [{ verb: "add", id: "t3", text: "Markeb market is fabricated" }],
     }))
     // Tool episodes joined to the long step.
-    await Effect.runPromise(appendToolEpisode("ada", { ts: "t", tick: 26, stepId: "c2-s26-1", tool: "sm", argsSummary: "{}", status: "error", durationMs: 1 }))
-    await Effect.runPromise(appendToolEpisode("ada", { ts: "t", tick: 26, stepId: "c2-s26-1", tool: "bash", argsSummary: "{}", status: "completed", durationMs: 1 }))
+    await Effect.runPromise(appendToolEpisode(char, { ts: "t", tick: 26, stepId: "c2-s26-1", tool: "sm", argsSummary: "{}", status: "error", durationMs: 1 }))
+    await Effect.runPromise(appendToolEpisode(char, { ts: "t", tick: 26, stepId: "c2-s26-1", tool: "bash", argsSummary: "{}", status: "completed", durationMs: 1 }))
   }
 
   it("renders the worked example, the transition digest, and directive framing on a cycle-2-shaped fixture", async () => {
@@ -269,8 +267,8 @@ describe("retrospect.execute", () => {
 
   it("skip gate: a cycle with tool calls but NO step boundary is skipped (no turn), and logs the skip", async () => {
     // The observed session-start misfire shape: tool calls / setup, zero steps.
-    await Effect.runPromise(appendToolEpisode("ada", { ts: "t", tick: 1, stepId: null, tool: "bash", argsSummary: "{}", status: "completed", durationMs: 1 }))
-    await Effect.runPromise(appendTransitionEpisode("ada", { type: "tier", ts: "t", tick: 1, stepId: null, phase: "orient", prompt: "p", output: {} }))
+    await Effect.runPromise(appendToolEpisode(char, { ts: "t", tick: 1, stepId: null, tool: "bash", argsSummary: "{}", status: "completed", durationMs: 1 }))
+    await Effect.runPromise(appendTransitionEpisode(char, { type: "tier", ts: "t", tick: 1, stepId: null, phase: "orient", prompt: "p", output: {} }))
     const errors: string[] = []
     const system: string[] = []
     const out = await Effect.runPromise(
@@ -283,7 +281,7 @@ describe("retrospect.execute", () => {
   })
 
   it("skip gate: a cycle WITH a step boundary runs the turn (not skipped)", async () => {
-    await Effect.runPromise(appendTransitionEpisode("ada", {
+    await Effect.runPromise(appendTransitionEpisode(char, {
       type: "step-start", ts: "t", tick: 1, stepId: "c2-s1-0", task: "begin work", goal: "g", skill: null, wmDeltas: null,
     }))
     runTurnMock.mockImplementation(() => Effect.succeed({ output: JSON.stringify({ proposals: [] }), timedOut: false, durationMs: 1 }))

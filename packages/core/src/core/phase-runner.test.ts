@@ -18,7 +18,7 @@ afterEach(() => vi.restoreAllMocks())
 
 describe("runPhases — phase behaviors", () => {
   it("emits phase enter then exit behaviors around a phase", async () => {
-    const ctx = { char: { name: "p", dir: "" }, connection: undefined, phaseData: undefined } as unknown as PhaseContext<unknown, unknown>
+    const ctx = { char: { name: "p", root: "" }, connection: undefined, phaseData: undefined } as unknown as PhaseContext<unknown, unknown>
     const registry: PhaseRegistry<unknown, unknown, never> = {
       initialPhase: "only",
       getPhase: (name: string) =>

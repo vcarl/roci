@@ -57,7 +57,7 @@ function logLayer(msgs: string[]) {
 const deps = (state: Parameters<typeof fsLayer>[0], msgs: string[]) =>
   Layer.mergeAll(fsLayer(state), logLayer(msgs), NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)
 
-const char = { name: "ada", dir: "/tmp/does-not-matter/players/ada/me" }
+const char = { name: "ada", root: "/tmp/does-not-matter/players/ada" }
 const runExec = (state: Parameters<typeof fsLayer>[0], msgs: string[]) =>
   Effect.runPromise(
     bootstrapSynthesis

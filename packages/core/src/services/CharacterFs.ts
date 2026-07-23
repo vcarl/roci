@@ -4,6 +4,7 @@ import * as path from "node:path"
 import { TEMPLATE_PALETTE } from "../core/palette.js"
 import { TEMPLATE_SALIENCE } from "../core/salience.js"
 import { TEMPLATE_DRIVES } from "#brain/limbic/hypothalamus/drives.js"
+import { meDir } from "./character-paths.js"
 import {
   parseSkillFile,
   serializeSkillFile,
@@ -44,7 +45,13 @@ export class CharacterFsError {
 
 export interface CharacterConfig {
   name: string
-  dir: string // absolute path to players/<name>/me/
+  /**
+   * Absolute path to the character's PLAYER ROOT, players/<name>/. Every
+   * subtree is derived from this via a named accessor (meDir/logsDir) — no
+   * consumer joins raw paths against `root` directly, so no site can forget the
+   * "me" or "logs" segment. Set by makeCharacterConfig at the composition root.
+   */
+  root: string
 }
 
 export class CharacterFs extends Context.Tag("CharacterFs")<
@@ -98,24 +105,24 @@ export const CharacterFsLive = Layer.effect(
 
     return CharacterFs.of({
       readDiary: (char) =>
-        readFileOr(path.join(char.dir, "DIARY.md"), ""),
+        readFileOr(path.join(meDir(char), "DIARY.md"), ""),
 
       writeDiary: (char, content) =>
-        fs.writeFileString(path.join(char.dir, "DIARY.md"), content).pipe(
+        fs.writeFileString(path.join(meDir(char), "DIARY.md"), content).pipe(
           Effect.mapError((e) => new CharacterFsError("Failed to write diary", e)),
         ),
 
       readSecrets: (char) =>
-        readFileOr(path.join(char.dir, "SECRETS.md"), ""),
+        readFileOr(path.join(meDir(char), "SECRETS.md"), ""),
 
       writeSecrets: (char, content) =>
-        fs.writeFileString(path.join(char.dir, "SECRETS.md"), content).pipe(
+        fs.writeFileString(path.join(meDir(char), "SECRETS.md"), content).pipe(
           Effect.mapError((e) => new CharacterFsError("Failed to write secrets", e)),
         ),
 
       readCredentials: (char) =>
         Effect.gen(function* () {
-          const content = yield* fs.readFileString(path.join(char.dir, "credentials.txt")).pipe(
+          const content = yield* fs.readFileString(path.join(meDir(char), "credentials.txt")).pipe(
             Effect.mapError((e) => new CharacterFsError("Failed to read credentials", e)),
           )
           const creds = parseCredentialsFile(content)
@@ -128,22 +135,22 @@ export const CharacterFsLive = Layer.effect(
         }),
 
       readBackground: (char) =>
-        readFileOr(path.join(char.dir, "background.md"), ""),
+        readFileOr(path.join(meDir(char), "background.md"), ""),
 
       readValues: (char) =>
-        readFileOr(path.join(char.dir, "VALUES.md"), ""),
+        readFileOr(path.join(meDir(char), "VALUES.md"), ""),
 
       readPalette: (char) =>
-        readFileOr(path.join(char.dir, "PALETTE.md"), TEMPLATE_PALETTE),
+        readFileOr(path.join(meDir(char), "PALETTE.md"), TEMPLATE_PALETTE),
 
       readDrives: (char) =>
-        readFileOr(path.join(char.dir, "DRIVES.md"), TEMPLATE_DRIVES),
+        readFileOr(path.join(meDir(char), "DRIVES.md"), TEMPLATE_DRIVES),
 
       readSalience: (char) =>
-        readFileOr(path.join(char.dir, "SALIENCE.md"), TEMPLATE_SALIENCE),
+        readFileOr(path.join(meDir(char), "SALIENCE.md"), TEMPLATE_SALIENCE),
 
       characterExists: (char) =>
-        fs.exists(char.dir).pipe(
+        fs.exists(meDir(char)).pipe(
           Effect.mapError((e) => new CharacterFsError("Failed to check character dir", e)),
         ),
 
@@ -153,7 +160,7 @@ export const CharacterFsLive = Layer.effect(
       // on a cap violation or genuine IO error.
       listSkills: (char) =>
         Effect.gen(function* () {
-          const dir = path.join(char.dir, "skills")
+          const dir = path.join(meDir(char), "skills")
           const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))
           if (!exists) return []
           const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]))
@@ -173,7 +180,7 @@ export const CharacterFsLive = Layer.effect(
       readSkill: (char, name) =>
         Effect.gen(function* () {
           const slug = slugify(name)
-          const file = path.join(char.dir, "skills", `${slug}.md`)
+          const file = path.join(meDir(char), "skills", `${slug}.md`)
           const exists = yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))
           if (!exists) return null
           const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))
@@ -182,7 +189,7 @@ export const CharacterFsLive = Layer.effect(
 
       writeSkill: (char, skill) =>
         Effect.gen(function* () {
-          const dir = path.join(char.dir, "skills")
+          const dir = path.join(meDir(char), "skills")
           yield* fs.makeDirectory(dir, { recursive: true }).pipe(
             Effect.mapError((e) => new CharacterFsError("Failed to make skills dir", e)),
           )
@@ -208,17 +215,17 @@ export const CharacterFsLive = Layer.effect(
       // me/SYNTHESIS.md — read like an identity file (missing → ""), written
       // only by the macro cycle (bounded there). Injected into orient.
       readSynthesis: (char) =>
-        readFileOr(path.join(char.dir, SYNTHESIS_FILE), ""),
+        readFileOr(path.join(meDir(char), SYNTHESIS_FILE), ""),
 
       writeSynthesis: (char, content) =>
         Effect.gen(function* () {
           // Unlike writeDiary/writeSecrets (identity files provisioned before
           // the cortex loop ever runs), me/ may not yet exist when the macro
           // cycle first fires — ensure it does, mirroring writeSkill's dir setup.
-          yield* fs.makeDirectory(char.dir, { recursive: true }).pipe(
+          yield* fs.makeDirectory(meDir(char), { recursive: true }).pipe(
             Effect.mapError((e) => new CharacterFsError("Failed to make character dir", e)),
           )
-          yield* fs.writeFileString(path.join(char.dir, SYNTHESIS_FILE), content).pipe(
+          yield* fs.writeFileString(path.join(meDir(char), SYNTHESIS_FILE), content).pipe(
             Effect.mapError((e) => new CharacterFsError("Failed to write synthesis", e)),
           )
         }),
@@ -228,7 +235,7 @@ export const CharacterFsLive = Layer.effect(
       // directly. Only ever targets a file under me/skills/ (slug-derived).
       deleteSkill: (char, name) =>
         Effect.gen(function* () {
-          const file = path.join(char.dir, "skills", `${slugify(name)}.md`)
+          const file = path.join(meDir(char), "skills", `${slugify(name)}.md`)
           const exists = yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))
           if (!exists) return
           yield* fs.remove(file).pipe(
@@ -245,6 +252,9 @@ export function makeCharacterConfig(
 ): CharacterConfig {
   return {
     name: characterName,
-    dir: path.resolve(projectRoot, "players", characterName, "me"),
+    // The player root. me/ (identity, wm) and logs/ (always-on episodes) both
+    // derive from it via meDir/logsDir — the same single carrier for every
+    // per-character subtree, host and container.
+    root: path.resolve(projectRoot, "players", characterName),
   }
 }

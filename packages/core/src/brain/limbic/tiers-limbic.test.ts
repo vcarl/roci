@@ -12,7 +12,6 @@ import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import type { UnifiedEvent } from "../../logging/events.js"
 import { fixedClient, recordingService, recordingLog, silentLog } from "../../testing/model-test-layers.js"
 import {
-  setEpisodeLogRoot,
   setEpisodeTick,
   setEpisodeStep,
   resetEpisodeContext,
@@ -21,10 +20,18 @@ import {
 } from "../../logging/episodes.js"
 
 const config: ActivationRunnerConfig = {
-  char: { name: "ada", dir: "/work/players/ada/me" },
+  char: { name: "ada", root: "/work/players/ada" },
   cadence: "real-time",
   models: DEFAULT_CORTEX_MODELS,
 }
+
+/** The base config with episode logging ENABLED, rooted under `r` (players/ada/logs).
+ *  Replaces the former module-level setEpisodeLogRoot(root): the persistence root now
+ *  flows explicitly through char.logsDir. */
+const configWithLogs = (r: string): ActivationRunnerConfig => ({
+  ...config,
+  char: { ...config.char, root: path.join(r, "players", "ada") },
+})
 
 describe("extractJson / parseOr", () => {
   it("unwraps a ```json fence", () => {
@@ -317,12 +324,10 @@ describe("transition episodes — OODA tier calls", () => {
   let root: string
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-tiers-limbic-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     setEpisodeTick("ada", 7)
   })
   afterEach(() => {
-    setEpisodeLogRoot(null)
     fs.rmSync(root, { recursive: true, force: true })
   })
 
@@ -333,7 +338,7 @@ describe("transition episodes — OODA tier calls", () => {
   it("orient appends a full-fidelity tier record: rendered prompt, parsed output, tick", async () => {
     await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["combat happened"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😰"),
+        runForebrain(configWithLogs(root), ["combat happened"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😰"),
         Layer.mergeAll(
           fixedClient('{"headline":"act now","sections":[],"whatChanged":"x","emotionalState":"😰","confidence":"high","metrics":{}}'),
           recordingService([]),
@@ -352,11 +357,11 @@ describe("transition episodes — OODA tier calls", () => {
   })
 
   it("stamps the current run epoch on every tier record once a run has begun (scan-invariant carrier)", async () => {
-    const epoch = beginEpisodeEpoch("ada") // clears the context…
+    const epoch = beginEpisodeEpoch(configWithLogs(root).char) // clears the context…
     setEpisodeTick("ada", 7) // …so restamp the tick
     await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
+        runForebrain(configWithLogs(root), ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐"),
         Layer.mergeAll(
           fixedClient('{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}'),
           recordingService([]),
@@ -374,7 +379,7 @@ describe("transition episodes — OODA tier calls", () => {
     // Steer path: the in-session orient produces a directive, not a plan.
     await Effect.runPromise(
       Effect.provide(
-        runForebrain(config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐", "", "", "steer"),
+        runForebrain(configWithLogs(root), ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐", "", "", "steer"),
         layersFor(okOrient),
       ),
     )
@@ -391,7 +396,7 @@ describe("transition episodes — OODA tier calls", () => {
   it("observe never appends a transition record", async () => {
     await Effect.runPromise(
       Effect.provide(
-        runHindbrain(config, "type: noise\n{}", null),
+        runHindbrain(configWithLogs(root), "type: noise\n{}", null),
         Layer.mergeAll(
           fixedClient('{"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"reason":"x"}'),
           recordingService([]),
@@ -403,7 +408,7 @@ describe("transition episodes — OODA tier calls", () => {
   })
 
   it("stamps a forked deliberation's tier record with the CAPTURED attribution, not the live context", async () => {
-    const epoch = beginEpisodeEpoch("ada") // clears + issues the run epoch
+    const epoch = beginEpisodeEpoch(configWithLogs(root).char) // clears + issues the run epoch
     setEpisodeTick("ada", 5)
     setEpisodeStep("ada", null)
     const captured = captureEpisodeAttribution("ada") // { tick: 5, stepId: null, epoch }
@@ -412,7 +417,7 @@ describe("transition episodes — OODA tier calls", () => {
     await Effect.runPromise(
       Effect.provide(
         runForebrain(
-          config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" },
+          configWithLogs(root), ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" },
           "😐", "", "", "plan", captured,
         ),
         Layer.mergeAll(
@@ -432,12 +437,11 @@ describe("working-memory prompt variable (spec §2)", () => {
 
   it("orient renders the open-todo tree into the prompt", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-tiers-limbic-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     try {
       await Effect.runPromise(
         Effect.provide(
-          runForebrain(config, ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐", "", "- t1 WM_ORIENT_MARKER"),
+          runForebrain(configWithLogs(root), ["evt"], "{}", { background: "", values: "", diary: "", synthesis: "" }, "😐", "", "- t1 WM_ORIENT_MARKER"),
           layers('{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}'),
         ),
       )
@@ -446,7 +450,6 @@ describe("working-memory prompt variable (spec §2)", () => {
       expect(rec.prompt).toContain("Working Memory")
       expect(rec.prompt).toContain("- t1 WM_ORIENT_MARKER")
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
@@ -457,13 +460,12 @@ describe("memory-index prompt variable (synthesis)", () => {
 
   it("renders the SYNTHESIS memory-index block into the orient prompt", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "synthesis-tiers-limbic-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     try {
       await Effect.runPromise(
         Effect.provide(
           runForebrain(
-            config,
+            configWithLogs(root),
             ["evt"],
             "{}",
             { background: "", values: "", diary: "", synthesis: "SYNTH_SELF_MODEL" },
@@ -477,7 +479,6 @@ describe("memory-index prompt variable (synthesis)", () => {
       expect(rec.prompt).toContain("Memory Index")
       expect(rec.prompt).toContain("SYNTH_SELF_MODEL")
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })

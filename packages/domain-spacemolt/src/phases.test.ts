@@ -28,7 +28,7 @@ describe("spacemolt activePhase — tick interval wiring (Phase B1)", () => {
 
   it("passes tickIntervalMs derived from the connection's tickIntervalSec (×1000) to runActivation", async () => {
     const activePhase = spaceMoltPhaseRegistry.getPhase("active")!
-    const char = { name: "vcarl", dir: "/tmp/vcarl" } as CharacterConfig
+    const char = { name: "vcarl", root: "/tmp/vcarl" } as CharacterConfig
     const context = {
       char,
       containerId: "container-1",
@@ -56,7 +56,7 @@ describe("spacemolt activePhase — tick interval wiring (Phase B1)", () => {
 
   it("does not hardcode a fixed tickIntervalMs — a different connection cadence flows through", async () => {
     const activePhase = spaceMoltPhaseRegistry.getPhase("active")!
-    const char = { name: "vcarl", dir: "/tmp/vcarl" } as CharacterConfig
+    const char = { name: "vcarl", root: "/tmp/vcarl" } as CharacterConfig
     const context = {
       char,
       containerId: "container-1",

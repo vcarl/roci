@@ -144,8 +144,8 @@ export const makeGameSocketLive = () =>
             } as never).pipe(Effect.catchAll(() => Effect.void))
 
           // --- Credentials from the per-player session file (Phase-0 helper). ---
-          // char.dir is <root>/players/<name>/me, so root is three levels up.
-          const projectRoot = path.resolve(char.dir, "..", "..", "..")
+          // char.root is <root>/players/<name>, so projectRoot is two levels up.
+          const projectRoot = path.resolve(char.root, "..", "..")
           const creds = yield* Effect.try({
             try: () => readPlayerCredentials(projectRoot, char.name),
             catch: (e) =>

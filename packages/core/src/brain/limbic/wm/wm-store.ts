@@ -24,6 +24,7 @@ import * as fsp from "node:fs/promises"
 import * as path from "node:path"
 import { Effect } from "effect"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
+import { meDir } from "../../../services/character-paths.js"
 import type { PlanStep } from "../../../core/types.js"
 import {
   applyWmMutation,
@@ -43,11 +44,11 @@ export const WM_MD_FILE = "WM.md"
 export const WM_PROMPT_CAP = 20
 
 export function wmJsonPath(char: CharacterConfig): string {
-  return path.join(char.dir, WM_JSON_FILE)
+  return path.join(meDir(char), WM_JSON_FILE)
 }
 
 export function wmMarkdownPath(char: CharacterConfig): string {
-  return path.join(char.dir, WM_MD_FILE)
+  return path.join(meDir(char), WM_MD_FILE)
 }
 
 // ── Raw IO (private) ─────────────────────────────────────────
@@ -177,7 +178,7 @@ function isWellFormedDelta(el: unknown): el is WmDelta {
  * the headline truthfully. wm.json and WM.md render the SAME pruned file.
  */
 const persistWm = async (char: CharacterConfig, file: WmFile): Promise<void> => {
-  await fsp.mkdir(char.dir, { recursive: true })
+  await fsp.mkdir(meDir(char), { recursive: true })
   const pruned = pruneSettledTodos(file)
   await writeAtomic(wmJsonPath(char), JSON.stringify(pruned, null, 2))
   await writeAtomic(wmMarkdownPath(char), renderWmMarkdown(pruned))

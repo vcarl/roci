@@ -1,7 +1,8 @@
 import { Context, Effect, Layer } from "effect"
 import { FileSystem } from "@effect/platform"
 import * as path from "node:path"
-import type { CharacterConfig } from "../services/CharacterFs.js"
+import { makeCharacterConfig, type CharacterConfig } from "../services/CharacterFs.js"
+import { logsDir } from "../services/character-paths.js"
 import { ProjectRoot } from "../services/ProjectRoot.js"
 import type { LogLevel, UnifiedEvent } from "./events.js"
 import { eventBase } from "./events.js"
@@ -44,8 +45,11 @@ export const CharacterLogLive = Layer.effect(
             }
           }
 
-          // 2. Append the full event (with resolved level) to events.jsonl
-          const logDir = path.resolve(projectRoot, "players", char.name, "logs")
+          // 2. Append the full event (with resolved level) to events.jsonl.
+          // Derive the canonical player root from projectRoot + name (log helpers
+          // hand us name-only configs), then resolve the logs subtree through the
+          // shared logsDir accessor — the single players/<name>/logs derivation.
+          const logDir = logsDir(makeCharacterConfig(projectRoot, char.name))
           yield* fs.makeDirectory(logDir, { recursive: true }).pipe(
             Effect.catchAll(() => Effect.void),
           )
@@ -73,7 +77,7 @@ export const logToConsole = (
   Effect.gen(function* () {
     const log = yield* CharacterLog
     yield* log.emit(
-      { name: character, dir: "" } as CharacterConfig,
+      { name: character, root: "" } as CharacterConfig,
       { ...eventBase(character, source, source), kind: "system", message, ...(level ? { level } : {}) },
     )
   })
@@ -93,7 +97,7 @@ export const logError = (
   Effect.gen(function* () {
     const log = yield* CharacterLog
     yield* log.emit(
-      { name: character, dir: "" } as CharacterConfig,
+      { name: character, root: "" } as CharacterConfig,
       { ...eventBase(character, source, source), kind: "error", message },
     )
   })
@@ -114,7 +118,7 @@ export const logExchange = (
   Effect.gen(function* () {
     const log = yield* CharacterLog
     yield* log.emit(
-      { name: character, dir: "" } as CharacterConfig,
+      { name: character, root: "" } as CharacterConfig,
       {
         ...eventBase(character, channel, step),
         kind: "exchange",
@@ -149,7 +153,7 @@ export const logBehavior = (
         : behavior
     const log = yield* CharacterLog
     yield* log.emit(
-      { name: character, dir: "" } as CharacterConfig,
+      { name: character, root: "" } as CharacterConfig,
       { ...base, kind: "behavior", behavior: finalBehavior },
     )
   }).pipe(Effect.catchAll(() => Effect.void))

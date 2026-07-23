@@ -42,7 +42,7 @@ describe.skipIf(!containerId)("OpenCode conscious session (real container)", () 
       modelLabel,
     })
 
-    const char = { name: playerName, dir: `/work/players/${playerName}/me` }
+    const char = { name: playerName, root: `/work/players/${playerName}` }
     const base: TurnConfig = {
       containerId: containerId as string,
       playerName,

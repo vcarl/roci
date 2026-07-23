@@ -24,10 +24,10 @@ import { EventProcessorTag } from "#brain/limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "#brain/limbic/thalamus/situation-classifier.js"
 import { InterruptRegistryTag } from "#brain/limbic/amygdala/interrupt.js"
 import type { PlannedActionTempo } from "#brain/limbic/hypothalamus/tempo.js"
-import { setEpisodeLogRoot, appendToolEpisode, appendTransitionEpisode } from "../../logging/episodes.js"
+import { appendToolEpisode, appendTransitionEpisode } from "../../logging/episodes.js"
 import { readProposals, appendProposals, bumpMacroCount, adjudicationsJsonlPath } from "#brain/limbic/hippocampus/growth-store.js"
 
-// `char.dir` mirrors the (host-side) character directory growth-store.ts reads
+// `char.root` (players/<name>) mirrors the host-side character root growth-store.ts reads
 // and writes real files under — now that runReflection wires in the macro
 // stage, every runReflection(char, ...) call performs a real (never-fail)
 // filesystem bump of the macro-cycle counter here. A fixed, non-existent path
@@ -38,7 +38,7 @@ import { readProposals, appendProposals, bumpMacroCount, adjudicationsJsonlPath 
 // fresh, writable temp dir per test keeps every pre-existing test's counter at
 // a genuinely low, non-multiple-of-N value, so macro's internal gate skips the
 // turn exactly as it did before this stage existed.
-let char: { name: string; dir: string }
+let char: { name: string; root: string }
 let charRoot: string
 
 const lines = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}-${i}`).join("\n")
@@ -155,7 +155,7 @@ beforeEach(() => {
   runTurnMock.mockReset()
   vi.spyOn(Math, "random").mockReturnValue(0.5)
   charRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planned-action-char-"))
-  char = { name: "ada", dir: path.join(charRoot, "players", "ada", "me") }
+  char = { name: "ada", root: path.join(charRoot, "players", "ada") }
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -561,17 +561,17 @@ describe("runBreak — event-processing error path", () => {
 describe("runReflection — episode cycle rotation", () => {
   it("closes the episode cycle: cycle-boundary appended to both streams, best-effort", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-reflect-"))
-    setEpisodeLogRoot(root)
+    const charT = { name: "ada", root: path.join(root, "players", "ada") }
     try {
       await Effect.runPromise(
-        appendToolEpisode("ada", {
+        appendToolEpisode(charT, {
           ts: "t", tick: 1, stepId: "s1-0", tool: "bash", argsSummary: "{}", status: "completed", durationMs: 1,
         }),
       )
       const fsx = makeFs({ diary: lines(3, "d"), secrets: lines(4, "s") })
       runTurnMock.mockImplementation(() => Effect.succeed({ output: "x", timedOut: false, durationMs: 1 }))
       await run(
-        runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
+        runReflection(charT, "c1", DEFAULT_MODEL_CONFIG).pipe(
           Effect.provide(Layer.mergeAll(fsx.layer, makeStore().layer, fakeLog, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)),
         ) as Effect.Effect<unknown, unknown, never>,
       )
@@ -581,7 +581,6 @@ describe("runReflection — episode cycle rotation", () => {
         expect(recs.some((r) => r.type === "cycle-boundary")).toBe(true)
       }
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
@@ -590,15 +589,14 @@ describe("runReflection — episode cycle rotation", () => {
 describe("runReflection — meso retrospect (Stage 4)", () => {
   it("runs the retrospect AFTER promote and appends evidence-bearing proposals", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reflect-retro-"))
-    setEpisodeLogRoot(root)
-    const charT = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    const charT = { name: "ada", root: path.join(root, "players", "ada") }
     try {
       // Current cycle: one failed step worn with a skill, one tool error.
-      await Effect.runPromise(appendTransitionEpisode("ada", {
+      await Effect.runPromise(appendTransitionEpisode(charT, {
         type: "step-end", ts: "t", tick: 1, stepId: "s1", task: "burn", goal: "arrive",
         verdict: "failed", transition: "replan", skill: "securing-fuel", wmDeltas: null,
       }))
-      await Effect.runPromise(appendToolEpisode("ada", {
+      await Effect.runPromise(appendToolEpisode(charT, {
         ts: "t", tick: 1, stepId: "s1", tool: "bash", argsSummary: "{}", status: "error", durationMs: 1,
       }))
 
@@ -630,22 +628,20 @@ describe("runReflection — meso retrospect (Stage 4)", () => {
       // consolidate + dream still ran (calls 2..4).
       expect(call).toBe(4)
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
 
   it("a retrospect turn failure logs a STRUCTURED error and does NOT disturb consolidate/dream", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reflect-retro-fail-"))
-    setEpisodeLogRoot(root)
-    const charT = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    const charT = { name: "ada", root: path.join(root, "players", "ada") }
     const errors: string[] = []
     const recordingLog = Layer.succeed(
       CharacterLog,
       CharacterLog.of({ emit: (_c, e) => Effect.sync(() => { if (e.kind === "error") errors.push(e.message) }) }),
     )
     try {
-      await Effect.runPromise(appendTransitionEpisode("ada", {
+      await Effect.runPromise(appendTransitionEpisode(charT, {
         type: "step-end", ts: "t", tick: 1, stepId: "s1", task: "burn", goal: "arrive",
         verdict: "failed", transition: "replan", skill: null, wmDeltas: null,
       }))
@@ -670,7 +666,6 @@ describe("runReflection — meso retrospect (Stage 4)", () => {
       expect(fsFake.secretsWrites.length).toBeGreaterThanOrEqual(1)
       expect(call).toBe(4)
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
@@ -679,15 +674,14 @@ describe("runReflection — meso retrospect (Stage 4)", () => {
 describe("runReflection — macro growth stimulation (Stage 5)", () => {
   it("on the Nth cycle, runs the macro stage AFTER dream and applies the worker document", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reflect-macro-"))
-    setEpisodeLogRoot(root)
-    const charT = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    const charT = { name: "ada", root: path.join(root, "players", "ada") }
     try {
       // Pending proposal + a graded cycle.
       await Effect.runPromise(appendProposals(charT, [{
         id: "revise:securing-fuel:top up earlier", ts: "t", action: "revise",
         skill: "securing-fuel", summary: "top up earlier", body: "old", evidence: "s1 failed", status: "pending",
       }]))
-      await Effect.runPromise(appendTransitionEpisode("ada", {
+      await Effect.runPromise(appendTransitionEpisode(charT, {
         type: "step-end", ts: "t", tick: 1, stepId: "s1", task: "burn", goal: "arrive",
         verdict: "failed", transition: "replan", skill: "securing-fuel", wmDeltas: null,
       }))
@@ -729,15 +723,13 @@ describe("runReflection — macro growth stimulation (Stage 5)", () => {
       expect(fsFake.synthesisWrites.at(-1)).toContain("tops up early")
       expect(fsFake.diaryWrites.at(-1)).toContain("reached into me")
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
 
   it("a macro failure leaves proposals accumulated and does NOT disturb the mark/rotate", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reflect-macro-fail-"))
-    setEpisodeLogRoot(root)
-    const charT = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    const charT = { name: "ada", root: path.join(root, "players", "ada") }
     const errors: string[] = []
     const recordingLog = Layer.succeed(CharacterLog, CharacterLog.of({
       emit: (_c, e) => Effect.sync(() => { if (e.kind === "error") errors.push(e.message) }),
@@ -746,7 +738,7 @@ describe("runReflection — macro growth stimulation (Stage 5)", () => {
       await Effect.runPromise(appendProposals(charT, [{
         id: "create:x:junk", ts: "t", action: "create", skill: "x", summary: "junk", evidence: "e", status: "pending",
       }]))
-      await Effect.runPromise(appendTransitionEpisode("ada", {
+      await Effect.runPromise(appendTransitionEpisode(charT, {
         type: "step-end", ts: "t", tick: 1, stepId: "s1", task: "t", goal: "g",
         verdict: "failed", transition: "replan", skill: null, wmDeltas: null,
       }))
@@ -771,7 +763,6 @@ describe("runReflection — macro growth stimulation (Stage 5)", () => {
       expect((await Effect.runPromise(readProposals(charT))).length).toBe(1) // NOT dropped
       expect(fsFake.markWrites.length).toBeGreaterThanOrEqual(1) // re-baseline mark still ran
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })

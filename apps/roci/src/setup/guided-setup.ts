@@ -6,6 +6,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { DOMAIN_REGISTRY, resolveConfigs } from "../domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, type ReviewDecision } from "@roci/core/core/character-scaffold.js"
+import { makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
+import { meDir } from "@roci/core/services/character-paths.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { validateAndStart } from "./validate-and-start.js"
 import { DEFAULT_MODEL_CONFIG } from "@roci/core/core/model-config.js"
@@ -149,7 +151,7 @@ export const runGuidedSetup = (projectRoot: string) =>
         }
 
         const name = charName.trim()
-        const charDir = path.resolve(projectRoot, "players", name, "me")
+        const charDir = meDir(makeCharacterConfig(projectRoot, name))
 
         const charDescription: string = yield* Prompt.text({
           message: "Describe this character in a sentence or two (or press Enter to skip)",

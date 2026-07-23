@@ -12,7 +12,7 @@ let root: string
 let char: CharacterConfig
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "plan-todos-"))
-  char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+  char = { name: "ada", root: path.join(root, "players", "ada") }
 })
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })

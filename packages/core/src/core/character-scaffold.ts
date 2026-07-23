@@ -16,6 +16,8 @@ import {
   type IdentityStep,
 } from "./identity-gen/prompts.js"
 import { generateArtifact, EmptyGenerationError } from "./identity-gen/generate.js"
+import { makeCharacterConfig } from "../services/CharacterFs.js"
+import { meDir } from "../services/character-paths.js"
 
 const BACKGROUND_TEMPLATE = `# Background
 
@@ -102,7 +104,7 @@ export const scaffoldCharacter = (opts: {
   Effect.gen(function* () {
     const { projectRoot, characterName, identityTemplate, characterDescription } = opts
     const review = opts.review ?? autoAcceptReview
-    const charDir = path.resolve(projectRoot, "players", characterName, "me")
+    const charDir = meDir(makeCharacterConfig(projectRoot, characterName))
     const results: string[] = []
 
     if (!existsSync(charDir)) {

@@ -200,7 +200,7 @@ export function makeConsciousSession(deps: ConsciousSessionDeps): ConsciousSessi
       // step-end record). The trace is a bounded read of the current cycle's tool
       // episodes filtered to the step; a missing stepId/root degrades to empty.
       const stepId = episodeContext(char.name).stepId
-      const episodes = stepId === null ? [] : yield* readCurrentStepToolEpisodes(char.name, stepId)
+      const episodes = stepId === null ? [] : yield* readCurrentStepToolEpisodes(char, stepId)
       return yield* runConsciousEvaluate(runnerConfig, {
         ...input,
         executionReport: formatExecutionReport(stepReport),

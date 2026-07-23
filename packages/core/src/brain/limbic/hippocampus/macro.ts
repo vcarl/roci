@@ -309,7 +309,7 @@ export const macro = {
 
       // 2. Gather bounded inputs (every read never-fails / degrades to empty).
       const pending = yield* readProposals(input.char)
-      const { tool, transition } = yield* readCurrentCycleEpisodes(input.char.name)
+      const { tool, transition } = yield* readCurrentCycleEpisodes(input.char)
       const skills = yield* charFs.listSkills(input.char).pipe(Effect.catchAll(() => Effect.succeed([])))
       const currentSynthesis = yield* charFs.readSynthesis(input.char).pipe(Effect.catchAll(() => Effect.succeed("")))
       const values = yield* charFs.readValues(input.char).pipe(Effect.catchAll(() => Effect.succeed("")))

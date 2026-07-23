@@ -7,16 +7,23 @@
  *
  * Episode writes are logging, not control flow: every writer is
  * Effect<void, never, never> — failures are swallowed after a console.error and
- * can never disturb the tick loop. Writers are a no-op until setEpisodeLogRoot
- * is called (apps/roci/src/cli.ts does this once at startup with PROJECT_ROOT).
+ * can never disturb the tick loop. The persistence root is ALWAYS the character's
+ * logsDir(char) = players/<name>/logs/ (derived from CharacterConfig.root). Episode
+ * logging is not optional — logs are always on — so every writer/reader resolves
+ * that same subtree; a write that fails (e.g. an unmountable root) is swallowed
+ * after a console.error, never turned into a silent no-op.
  *
  * Module-level per-character context (tick/stepId) mirrors behavior-digest.ts:
- * the cortex loop stamps it; the transport and tier emitters read it.
+ * the cortex loop stamps it; the transport and tier emitters read it. Unlike the
+ * persistence root, this is genuinely in-memory per-run state keyed by character
+ * name, not a filesystem resolution surface.
  */
 import * as fs from "node:fs"
 import * as fsp from "node:fs/promises"
 import * as path from "node:path"
 import { Effect } from "effect"
+import type { CharacterConfig } from "../services/CharacterFs.js"
+import { logsDir } from "../services/character-paths.js"
 import type { Judgment } from "../skills/types.js"
 import type { InternalEvent } from "./stream-normalizer.js"
 
@@ -140,18 +147,6 @@ export type TransitionEpisode =
   | WmTransitionEpisode
   | CycleBoundaryEpisode
 
-// ── Root config ──────────────────────────────────────────────
-let episodeRoot: string | null = null
-
-/** Enable episode writes rooted at `root` (the harness project root); null disables. */
-export function setEpisodeLogRoot(root: string | null): void {
-  episodeRoot = root
-}
-
-function logsDir(root: string, character: string): string {
-  return path.resolve(root, "players", character, "logs")
-}
-
 // ── Per-character tick/step context ──────────────────────────
 export interface EpisodeContext {
   tick: number | null
@@ -268,45 +263,42 @@ export function setEpisodeStep(character: string, stepId: string | null): void {
  * unique across the whole retained window INCLUDING process restarts — see the
  * module comment above for the derivation (disk tail-scan, in-process guard,
  * timestamp fallback). Sync by design: one bounded read per run start, before
- * the tick loop begins. With no episode root configured nothing is ever
- * persisted, so the in-process counter alone suffices.
+ * the tick loop begins.
  */
-export function beginEpisodeEpoch(character: string): string {
+export function beginEpisodeEpoch(char: CharacterConfig): string {
+  const character = char.name
   contexts.set(character, { tick: null, stepId: null })
   const issue = (epoch: string): string => {
     issuedEpochs.set(character, epoch)
     return epoch
   }
   const timestampEpoch = () => `t${Date.now().toString(36)}`
-  const root = episodeRoot
+  const dir = logsDir(char)
   let onDisk = 0
   let sawTimestamp = false
-  if (root !== null) {
-    try {
-      const dir = logsDir(root, character)
-      const transition = scanEpochEvidence(path.join(dir, TRANSITION_EPISODE_FILE))
-      const tool = scanEpochEvidence(path.join(dir, TOOL_EPISODE_FILE))
-      onDisk = Math.max(transition.max, tool.max)
-      sawTimestamp = transition.sawTimestamp || tool.sawTimestamp
-    } catch (e) {
-      // Fail to a TIMESTAMP epoch, never to a low counter: ms-since-epoch in
-      // base36, `t`-prefixed so it is disjoint from every numeric epoch. Loud —
-      // a scan failure is diagnosable, and the ids stay collision-free.
-      const fallback = timestampEpoch()
-      console.error(
-        `[episodes] epoch scan failed for ${character}: ${e}; using timestamp epoch ${fallback}`,
-      )
-      return issue(fallback)
-    }
-    if (onDisk === 0 && sawTimestamp && !lastEpochs.has(character)) {
-      // Fail closed: the window shows a prior timestamp-epoch run but NO
-      // numeric evidence and this process has no numeric baseline — numeric
-      // history may be buried beneath the t-run's records, so restarting the
-      // counter at 1 could silently collide. Issue another t-epoch instead
-      // (ids stay unique; the counter resumes once numeric evidence is back
-      // in the window or the t-records rotate out).
-      return issue(timestampEpoch())
-    }
+  try {
+    const transition = scanEpochEvidence(path.join(dir, TRANSITION_EPISODE_FILE))
+    const tool = scanEpochEvidence(path.join(dir, TOOL_EPISODE_FILE))
+    onDisk = Math.max(transition.max, tool.max)
+    sawTimestamp = transition.sawTimestamp || tool.sawTimestamp
+  } catch (e) {
+    // Fail to a TIMESTAMP epoch, never to a low counter: ms-since-epoch in
+    // base36, `t`-prefixed so it is disjoint from every numeric epoch. Loud —
+    // a scan failure is diagnosable, and the ids stay collision-free.
+    const fallback = timestampEpoch()
+    console.error(
+      `[episodes] epoch scan failed for ${character}: ${e}; using timestamp epoch ${fallback}`,
+    )
+    return issue(fallback)
+  }
+  if (onDisk === 0 && sawTimestamp && !lastEpochs.has(character)) {
+    // Fail closed: the window shows a prior timestamp-epoch run but NO
+    // numeric evidence and this process has no numeric baseline — numeric
+    // history may be buried beneath the t-run's records, so restarting the
+    // counter at 1 could silently collide. Issue another t-epoch instead
+    // (ids stay unique; the counter resumes once numeric evidence is back
+    // in the window or the t-records rotate out).
+    return issue(timestampEpoch())
   }
   const next = Math.max(onDisk, lastEpochs.get(character) ?? 0) + 1
   lastEpochs.set(character, next)
@@ -418,31 +410,31 @@ export function buildToolEpisodes(
 }
 
 // ── Append writers (swallow-and-log; never fail) ─────────────
-const append = (character: string, file: string, record: unknown): Effect.Effect<void> => {
-  const root = episodeRoot
-  if (root === null) return Effect.void
+const append = (char: CharacterConfig, file: string, record: unknown): Effect.Effect<void> => {
+  const dir = logsDir(char)
   return Effect.tryPromise({
     try: async () => {
       const line = `${JSON.stringify(record)}\n`
-      const dir = logsDir(root, character)
       await fsp.mkdir(dir, { recursive: true })
       await fsp.appendFile(path.join(dir, file), line, "utf8")
     },
     catch: (e) => e,
   }).pipe(
     Effect.catchAll((e) =>
-      Effect.sync(() => console.error(`[episodes] append to ${file} failed for ${character}: ${e}`)),
+      Effect.sync(() => console.error(`[episodes] append to ${file} failed for ${char.name}: ${e}`)),
     ),
   )
 }
 
-export const appendToolEpisode = (character: string, record: ToolEpisode): Effect.Effect<void> =>
-  append(character, TOOL_EPISODE_FILE, record)
+export const appendToolEpisode = (
+  char: CharacterConfig,
+  record: ToolEpisode,
+): Effect.Effect<void> => append(char, TOOL_EPISODE_FILE, record)
 
 export const appendTransitionEpisode = (
-  character: string,
+  char: CharacterConfig,
   record: TransitionEpisode,
-): Effect.Effect<void> => append(character, TRANSITION_EPISODE_FILE, record)
+): Effect.Effect<void> => append(char, TRANSITION_EPISODE_FILE, record)
 
 // ── Named transition-record writers (composite assembly) ─────
 // The cortex loop used to hand-assemble these three transition records inline
@@ -458,26 +450,26 @@ export const appendTransitionEpisode = (
  * context. (Was the loop's inline `emitWmRecord`.)
  */
 export const appendWmDeltas = (
-  character: string,
+  char: CharacterConfig,
   tick: number,
   deltas: readonly unknown[],
 ): Effect.Effect<void> =>
   deltas.length === 0
     ? Effect.void
-    : appendTransitionEpisode(character, {
+    : appendTransitionEpisode(char, {
         type: "wm",
         ts: new Date().toISOString(),
         tick,
-        stepId: episodeContext(character).stepId,
+        stepId: episodeContext(char.name).stepId,
         deltas: [...deltas],
       })
 
 /** A `type:"step-start"` boundary record (turn-1 open; wmDeltas always null). */
 export const appendStepStart = (
-  character: string,
+  char: CharacterConfig,
   r: { tick: number; stepId: string; task: string; goal: string; skill: string | null },
 ): Effect.Effect<void> =>
-  appendTransitionEpisode(character, {
+  appendTransitionEpisode(char, {
     type: "step-start",
     ts: new Date().toISOString(),
     tick: r.tick,
@@ -494,7 +486,7 @@ export const appendStepStart = (
  * path. Owns the `wmDeltas` empty→null guard the loop applied at both sites.
  */
 export const appendStepEnd = (
-  character: string,
+  char: CharacterConfig,
   r: {
     tick: number
     stepId: string
@@ -506,7 +498,7 @@ export const appendStepEnd = (
     wmDeltas: unknown[] | null
   },
 ): Effect.Effect<void> =>
-  appendTransitionEpisode(character, {
+  appendTransitionEpisode(char, {
     type: "step-end",
     ts: new Date().toISOString(),
     tick: r.tick,
@@ -558,9 +550,9 @@ export function sliceCurrentCycle(lines: readonly string[]): string[] {
   return lines.slice(last + 1)
 }
 
-async function readCurrentStream<T>(root: string, character: string, file: string): Promise<T[]> {
+async function readCurrentStream<T>(dir: string, file: string): Promise<T[]> {
   try {
-    const text = await fsp.readFile(path.join(logsDir(root, character), file), "utf8")
+    const text = await fsp.readFile(path.join(dir, file), "utf8")
     const lines = text.split("\n").filter((l) => l.trim().length > 0)
     const out: T[] = []
     for (const line of sliceCurrentCycle(lines)) {
@@ -583,13 +575,12 @@ async function readCurrentStream<T>(root: string, character: string, file: strin
  * safe to call right before finishEpisodeCycle's rotation.
  */
 export const readCurrentCycleEpisodes = (
-  character: string,
+  char: CharacterConfig,
 ): Effect.Effect<{ tool: ToolEpisode[]; transition: TransitionEpisode[] }> => {
-  const root = episodeRoot
-  if (root === null) return Effect.succeed({ tool: [], transition: [] })
+  const dir = logsDir(char)
   return Effect.promise(async () => ({
-    tool: await readCurrentStream<ToolEpisode>(root, character, TOOL_EPISODE_FILE),
-    transition: await readCurrentStream<TransitionEpisode>(root, character, TRANSITION_EPISODE_FILE),
+    tool: await readCurrentStream<ToolEpisode>(dir, TOOL_EPISODE_FILE),
+    transition: await readCurrentStream<TransitionEpisode>(dir, TRANSITION_EPISODE_FILE),
   }))
 }
 
@@ -601,13 +592,12 @@ export const readCurrentCycleEpisodes = (
  * is cheap and self-bounding.
  */
 export const readCurrentStepToolEpisodes = (
-  character: string,
+  char: CharacterConfig,
   stepId: string,
 ): Effect.Effect<ToolEpisode[]> => {
-  const root = episodeRoot
-  if (root === null) return Effect.succeed([])
+  const dir = logsDir(char)
   return Effect.promise(async () => {
-    const all = await readCurrentStream<ToolEpisode>(root, character, TOOL_EPISODE_FILE)
+    const all = await readCurrentStream<ToolEpisode>(dir, TOOL_EPISODE_FILE)
     return all.filter((e) => e.stepId === stepId)
   })
 }
@@ -623,17 +613,15 @@ export const readCurrentStepToolEpisodes = (
  * rotation. Stale `.tmp` files from a previously crashed rotation are removed
  * up front, and a failed rotation cleans up its own `.tmp`.
  */
-export const finishEpisodeCycle = (character: string): Effect.Effect<void> => {
-  const root = episodeRoot
-  if (root === null) return Effect.void
+export const finishEpisodeCycle = (char: CharacterConfig): Effect.Effect<void> => {
+  const dir = logsDir(char)
   return Effect.promise(async () => {
     const boundary: CycleBoundaryEpisode = { type: "cycle-boundary", ts: new Date().toISOString() }
     const line = `${JSON.stringify(boundary)}\n`
-    const dir = logsDir(root, character)
     try {
       await fsp.mkdir(dir, { recursive: true })
     } catch (e) {
-      console.error(`[episodes] cycle rotation failed for ${character}: ${e}`)
+      console.error(`[episodes] cycle rotation failed for ${char.name}: ${e}`)
       return
     }
     for (const file of [TOOL_EPISODE_FILE, TRANSITION_EPISODE_FILE]) {
@@ -650,7 +638,7 @@ export const finishEpisodeCycle = (character: string): Effect.Effect<void> => {
           await fsp.rename(tmp, filePath)
         }
       } catch (e) {
-        console.error(`[episodes] cycle rotation failed for ${character} (${file}): ${e}`)
+        console.error(`[episodes] cycle rotation failed for ${char.name} (${file}): ${e}`)
         await fsp.rm(tmp, { force: true }).catch(() => {})
       }
     }

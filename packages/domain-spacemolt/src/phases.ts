@@ -8,6 +8,7 @@ import { GameSocket } from "./game-socket.js"
 import { runReflection } from "@roci/core/core/orchestrator/planned-action.js"
 import { runActivation } from "@roci/core/brain/stem/loop.js"
 import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
+import { meDir } from "@roci/core/services/character-paths.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { registerCharacter, deriveUsername, pickEmpire } from "./register.js"
 import { sessionFilePath, validateSessionFile } from "./session.js"
@@ -26,15 +27,15 @@ const startupPhase = {
       const gameSocket = yield* GameSocket
 
       // Auth source of truth: the per-player .spacemolt-session.json. Compute
-      // projectRoot from char.dir (<root>/players/<name>/me).
-      const projectRoot = path.resolve(context.char.dir, "..", "..", "..")
+      // projectRoot from char.root (<root>/players/<name>).
+      const projectRoot = path.resolve(context.char.root, "..", "..")
       const sessionPath = sessionFilePath(projectRoot, context.char.name)
       const sessionCheck = validateSessionFile(sessionPath)
 
       if (!sessionCheck.ok) {
         // No valid session file — register via a registration code.
         const fs = yield* FileSystem.FileSystem
-        const regCodePath = path.join(context.char.dir, "registration-code.txt")
+        const regCodePath = path.join(meDir(context.char), "registration-code.txt")
         const regCodeExists = yield* fs.exists(regCodePath).pipe(
           Effect.catchAll(() => Effect.succeed(false)),
         )

@@ -183,7 +183,7 @@ export const runActivation = (config: ActivationConfig) =>
     // failure), so ids stay unique across the retained multi-cycle window even
     // though `tick` restarts at 0 each run AND across process restarts (the
     // streams are append-mode across restarts; rotation is by cycle, not session).
-    const runEpoch = beginEpisodeEpoch(config.char.name)
+    const runEpoch = beginEpisodeEpoch(config.char)
 
     const eventProcessor = yield* EventProcessorTag
     const classifier = yield* SituationClassifierTag
@@ -331,7 +331,7 @@ export const runActivation = (config: ActivationConfig) =>
         const agentDeltas = yield* drainWmDeltas(config.char)
         const wmDeltas = [...agentDeltas, ...orphanDeltas]
         if (ctx.stepId !== null && step) {
-          yield* appendStepEnd(config.char.name, {
+          yield* appendStepEnd(config.char, {
             tick,
             stepId: ctx.stepId,
             task: step.task,
@@ -341,7 +341,7 @@ export const runActivation = (config: ActivationConfig) =>
             wmDeltas,
           })
         } else {
-          yield* appendWmDeltas(config.char.name, tick, wmDeltas)
+          yield* appendWmDeltas(config.char, tick, wmDeltas)
         }
         cortex.currentPlan = null
         cortex.lastOrientTick = 0
@@ -482,7 +482,7 @@ export const runActivation = (config: ActivationConfig) =>
             planTitleFromHeadline(orient.headline),
             decideSteps(cortex.currentPlan),
           )
-          yield* appendWmDeltas(config.char.name, tick, seededDeltas)
+          yield* appendWmDeltas(config.char, tick, seededDeltas)
         } else if (decideSteps(decide).length > 0) {
           // decideSteps is array-safe: a parseable `{"decision":"plan"}` with
           // a missing/non-array/empty `steps` yields [] here (parseOr's
@@ -502,7 +502,7 @@ export const runActivation = (config: ActivationConfig) =>
             planTitleFromHeadline(orient.headline),
             decideSteps(cortex.currentPlan),
           )
-          yield* appendWmDeltas(config.char.name, tick, seededDeltas)
+          yield* appendWmDeltas(config.char, tick, seededDeltas)
         } else if (decide.decision === "plan") {
           // Issue 4 (fail loud): the model decided "plan" but produced no
           // actionable steps. The guard above correctly keeps it from going
@@ -545,7 +545,7 @@ export const runActivation = (config: ActivationConfig) =>
         "cortex",
         `discarded ${sweptOrphans.length} stale plan todo(s) orphaned by a prior session`,
       ).pipe(Effect.catchAll(() => Effect.void))
-      yield* appendWmDeltas(config.char.name, tick, sweptOrphans)
+      yield* appendWmDeltas(config.char, tick, sweptOrphans)
     }
 
     while (true) {
@@ -649,7 +649,7 @@ export const runActivation = (config: ActivationConfig) =>
         // WM.md permanently (uncapped, injected on every request, forever).
         if (cortex.currentPlan !== null) {
           const orphanDeltas = yield* planTodos.discardOrphans()
-          yield* appendWmDeltas(config.char.name, tick, orphanDeltas)
+          yield* appendWmDeltas(config.char, tick, orphanDeltas)
         }
         return { _tag: "Interrupted" as const, finalState: state, criticals }
       }
@@ -995,7 +995,7 @@ export const runActivation = (config: ActivationConfig) =>
             )
             // Episode substrate (spec §1): step-end with the evaluate verdict.
             // skill is the worn skill's name (spec §3); wmDeltas is Stage 2's payload.
-            yield* appendStepEnd(config.char.name, {
+            yield* appendStepEnd(config.char, {
               tick,
               stepId: episodeContext(config.char.name).stepId ?? mintStepId(runEpoch, stepStartTick, stepIdx),
               task: step.task,
@@ -1087,7 +1087,7 @@ export const runActivation = (config: ActivationConfig) =>
               stepStartSnapshot = renderer.richSnapshot(state as never)
               const episodeStepId = mintStepId(runEpoch, tick, cortex.currentStepIndex)
               setEpisodeStep(config.char.name, episodeStepId)
-              yield* appendStepStart(config.char.name, {
+              yield* appendStepStart(config.char, {
                 tick,
                 stepId: episodeStepId,
                 task: step.task,

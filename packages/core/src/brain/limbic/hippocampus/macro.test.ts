@@ -17,7 +17,7 @@ import { CharacterLog } from "../../../logging/log-writer.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { LongtermStore } from "#brain/limbic/hippocampus/memory/longterm-store.js"
 import { DEFAULT_MODEL_CONFIG } from "../../../core/model-config.js"
-import { setEpisodeLogRoot, appendToolEpisode, appendTransitionEpisode } from "../../../logging/episodes.js"
+import { appendToolEpisode, appendTransitionEpisode } from "../../../logging/episodes.js"
 import {
   appendProposals, readProposals, bumpMacroCount, macroStatePath, adjudicationsJsonlPath,
   type SkillProposal,
@@ -83,16 +83,15 @@ const deps = (state: Parameters<typeof fsLayer>[0], errors: string[], store = st
   Layer.mergeAll(fsLayer(state), logLayer(errors), store, NodeFileSystem.layer, StubCommandExecutor, StubOAuthToken)
 
 let root: string
-let char: { name: string; dir: string }
+let char: { name: string; root: string }
 let state: Parameters<typeof fsLayer>[0]
 beforeEach(() => {
   runTurnMock.mockReset()
   root = fs.mkdtempSync(path.join(os.tmpdir(), "macro-"))
-  char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+  char = { name: "ada", root: path.join(root, "players", "ada") }
   state = { skills: new Map(), synthesis: { value: "" }, diary: { value: "Day 1." } }
-  setEpisodeLogRoot(root)
 })
-afterEach(() => { setEpisodeLogRoot(null); fs.rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { fs.rmSync(root, { recursive: true, force: true }) })
 
 const run = <A>(eff: Effect.Effect<A, never, never>) => Effect.runPromise(eff)
 const N = 4
@@ -103,11 +102,11 @@ const seedPendingAndCycle = async () => {
     skill: "securing-fuel", summary: "top up earlier", body: "old", evidence: "s1 failed", status: "pending",
   }
   await run(appendProposals(char, [prop]))
-  await run(appendTransitionEpisode("ada", {
+  await run(appendTransitionEpisode(char, {
     type: "step-end", ts: "t", tick: 1, stepId: "s1", task: "burn to Kepler", goal: "arrive",
     verdict: "failed", transition: "replan", skill: "securing-fuel", wmDeltas: null,
   }))
-  await run(appendToolEpisode("ada", { ts: "t", tick: 1, stepId: "s1", tool: "bash", argsSummary: "{}", status: "error", durationMs: 1 }))
+  await run(appendToolEpisode(char, { ts: "t", tick: 1, stepId: "s1", tool: "bash", argsSummary: "{}", status: "error", durationMs: 1 }))
 }
 const bumpTo = async (n: number) => { for (let i = 0; i < n; i++) await run(bumpMacroCount(char)) }
 

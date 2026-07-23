@@ -4,6 +4,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { CharacterFs } from "../../../services/CharacterFs.js"
+import { meDir } from "../../../services/character-paths.js"
 import { CharacterLog } from "../../../logging/log-writer.js"
 import { MemoryGateway } from "#brain/limbic/hippocampus/memory/memory-gateway.js"
 import { readIdentityContext, IDENTITY_PLACEHOLDERS } from "./identity-context.js"
@@ -41,8 +42,8 @@ const memoryWith = (recall: string) =>
     MemoryGateway.of({ remember: () => Effect.void, recall: () => Effect.succeed(recall) }),
   )
 
-// char.dir points at a non-existent path → readWm degrades to an empty wm file.
-const emptyWmChar = { name: "ada", dir: "/nonexistent/players/ada/me" }
+// char.root points at a non-existent path → readWm degrades to an empty wm file.
+const emptyWmChar = { name: "ada", root: "/nonexistent/players/ada" }
 
 const run = (
   vals: { background?: string; values?: string; diary?: string; synthesis?: string },
@@ -101,9 +102,10 @@ describe("readIdentityContext", () => {
 
   it("renders the live working-memory todo tree when the wm file has open todos", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "identity-wm-"))
-    const char = { name: "ada", dir }
+    const char = { name: "ada", root: dir }
+    fs.mkdirSync(meDir(char), { recursive: true })
     fs.writeFileSync(
-      path.join(dir, "wm.json"),
+      path.join(meDir(char), "wm.json"),
       JSON.stringify({
         version: 1,
         nextId: 2,

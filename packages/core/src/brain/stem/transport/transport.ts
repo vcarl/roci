@@ -197,7 +197,7 @@ export const runTransport = (input: TransportInput): Effect.Effect<
               // disturb the transport.
               const ctx = episodeContext(input.char.name)
               for (const rec of buildToolEpisodes(internal, ctx)) {
-                yield* appendToolEpisode(input.char.name, rec)
+                yield* appendToolEpisode(input.char, rec)
               }
             } else if (line.trim()) {
               // A non-empty line that isn't JSON (malformed / non-stream-json

@@ -53,7 +53,7 @@ describe("ConsciousThought service contract", () => {
           return yield* ct.turn({
             containerId: "c1",
             playerName: "ada",
-            char: { name: "ada", dir: "/work/players/ada/me" },
+            char: { name: "ada", root: "/work/players/ada" },
             prompt: "do the task",
             timeoutMs: 60_000,
             modelLabel: "local/mlx-community/Qwen3.5-122B-A10B-4bit",
@@ -83,7 +83,7 @@ describe("ConsciousThought service contract", () => {
           return yield* ct.turn({
             containerId: "c1",
             playerName: "ada",
-            char: { name: "ada", dir: "/work/players/ada/me" },
+            char: { name: "ada", root: "/work/players/ada" },
             prompt: "steer: focus on the login flow",
             timeoutMs: 60_000,
             modelLabel: "local/mlx-community/Qwen3.5-122B-A10B-4bit",
@@ -109,7 +109,7 @@ describe("ConsciousThought service contract", () => {
           return yield* ct.turn({
             containerId: "c1",
             playerName: "ada",
-            char: { name: "ada", dir: "/work/players/ada/me" },
+            char: { name: "ada", root: "/work/players/ada" },
             prompt: "do it",
             timeoutMs: 1000,
             modelLabel: "local/mlx-community/Qwen3.5-122B-A10B-4bit",
@@ -139,7 +139,7 @@ describe("ConsciousThought service contract", () => {
           return yield* ct.turn({
             containerId: "c1",
             playerName: "ada",
-            char: { name: "ada", dir: "/work/players/ada/me" },
+            char: { name: "ada", root: "/work/players/ada" },
             prompt: "do the task",
             timeoutMs: 60_000,
             modelLabel: label,
@@ -164,7 +164,7 @@ describe("ConsciousThought service contract", () => {
             const ct = yield* ConsciousThought
             yield* ct.provision({
               containerId: "c1",
-              char: { name: "ada", dir: "/work/players/ada/me" },
+              char: { name: "ada", root: "/work/players/ada" },
               handle: { tier: "conscious", provider: "mlx", baseUrl: "http://127.0.0.1:8083/v1", model: "qwen3" },
               systemPrompt: "you are ada",
               frontierModel: "sonnet",
@@ -188,7 +188,7 @@ describe("index re-exports ConsciousThought", () => {
 describe("ConsciousThought.provision writes the frontier CLI", () => {
   const provisionOpts = (tempDir: string) => ({
     containerId: "cabc",
-    char: { name: "ada", dir: nodePath.join(tempDir, "me") },
+    char: { name: "ada", root: nodePath.join(tempDir) },
     handle: DEFAULT_CORTEX_MODELS.conscious,
     systemPrompt: "You are Ada.",
     frontierModel: "sonnet" as const,
@@ -233,7 +233,7 @@ describe("ConsciousThought.provision writes the frontier CLI", () => {
     const charDir = nodePath.join(tempDir, "players", "ada", "me")
     const program = Effect.gen(function* () {
       const ct = yield* ConsciousThought
-      yield* ct.provision({ ...provisionOpts(tempDir), char: { name: "ada", dir: charDir } })
+      yield* ct.provision({ ...provisionOpts(tempDir), char: { name: "ada", root: nodePath.join(tempDir, "players", "ada") } })
     })
     await Effect.runPromise(
       Effect.provide(program, Layer.mergeAll(ConsciousThoughtLive, StubDockerOk, StubCharacterLog)),
@@ -262,7 +262,7 @@ describe("ConsciousThought.provision writes the frontier CLI", () => {
     const provision = () =>
       Effect.provide(
         Effect.flatMap(ConsciousThought, (ct) =>
-          ct.provision({ ...provisionOpts(tempDir), char: { name: "ada", dir: charDir } }),
+          ct.provision({ ...provisionOpts(tempDir), char: { name: "ada", root: nodePath.join(tempDir, "players", "ada") } }),
         ),
         Layer.mergeAll(ConsciousThoughtLive, StubDockerOk, StubCharacterLog),
       )

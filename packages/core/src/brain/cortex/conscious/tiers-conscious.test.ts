@@ -8,13 +8,21 @@ import { runConsciousDecide, runConsciousEvaluate, runDiaryTurn } from "./tiers-
 import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import type { OrientResult } from "../../../skills/types.js"
 import { fixedClient, recordingService, silentLog } from "../../../testing/model-test-layers.js"
-import { setEpisodeLogRoot, setEpisodeTick, resetEpisodeContext } from "../../../logging/episodes.js"
+import { setEpisodeTick, resetEpisodeContext } from "../../../logging/episodes.js"
 
 const config: ActivationRunnerConfig = {
-  char: { name: "ada", dir: "/work/players/ada/me" },
+  char: { name: "ada", root: "/work/players/ada" },
   cadence: "real-time",
   models: DEFAULT_CORTEX_MODELS,
 }
+
+/** The base config with episode logging ENABLED, rooted under `r` (players/ada/logs).
+ *  Replaces the former module-level setEpisodeLogRoot(root): the persistence root now
+ *  flows explicitly through char.logsDir. */
+const configWithLogs = (r: string): ActivationRunnerConfig => ({
+  ...config,
+  char: { ...config.char, root: path.join(r, "players", "ada") },
+})
 
 // The decide path consumes the orient result's `sections` via `.map`. Even if
 // a malformed OrientResult slips through (e.g. constructed directly), the
@@ -132,12 +140,10 @@ describe("transition episodes — OODA tier calls", () => {
   let root: string
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-tiers-conscious-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     setEpisodeTick("ada", 7)
   })
   afterEach(() => {
-    setEpisodeLogRoot(null)
     fs.rmSync(root, { recursive: true, force: true })
   })
 
@@ -158,12 +164,12 @@ describe("transition episodes — OODA tier calls", () => {
     const layersFor = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
 
     await Effect.runPromise(
-      Effect.provide(runConsciousDecide(config, orientFixture, "No active plan.", "actions"),
+      Effect.provide(runConsciousDecide(configWithLogs(root), orientFixture, "No active plan.", "actions"),
         layersFor('{"decision":"continue","reasoning":"r"}')),
     )
     await Effect.runPromise(
       Effect.provide(
-        runConsciousEvaluate(config, {
+        runConsciousEvaluate(configWithLogs(root), {
           task: "t", goal: "g", successCondition: "s", ticksBudgeted: 2, ticksConsumed: 1,
           executionReport: "r", stateDiff: "", conditionCheck: "c", emotionalState: "😐", remainingSteps: "None.",
         }),
@@ -172,7 +178,7 @@ describe("transition episodes — OODA tier calls", () => {
     )
     await Effect.runPromise(
       Effect.provide(
-        runDiaryTurn(config, {
+        runDiaryTurn(configWithLogs(root), {
           charName: "ada", task: "t", goal: "g", judgment: "succeeded",
           reasoning: "r", executionReport: "e", emotionalState: "😐",
         }),
@@ -200,12 +206,11 @@ describe("working-memory prompt variable (spec §2)", () => {
 
   it("decide renders the open-todo tree into the prompt", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-tiers-conscious-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     try {
       await Effect.runPromise(
         Effect.provide(
-          runConsciousDecide(config, wmOrientFixture, "No active plan.", "actions", "", "- t2 WM_DECIDE_MARKER"),
+          runConsciousDecide(configWithLogs(root), wmOrientFixture, "No active plan.", "actions", "", "- t2 WM_DECIDE_MARKER"),
           layers('{"decision":"continue","reasoning":"r"}'),
         ),
       )
@@ -213,7 +218,6 @@ describe("working-memory prompt variable (spec §2)", () => {
       const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
       expect(rec.prompt).toContain("- t2 WM_DECIDE_MARKER")
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
@@ -227,12 +231,11 @@ describe("decide skill selection (spec §3)", () => {
 
   it("renders the skill index into the decide prompt", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-idx-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     try {
       await Effect.runPromise(
         Effect.provide(
-          runConsciousDecide(config, orientFixture, "No active plan.", "actions", "", "", "- learning — SKILL_INDEX_MARKER"),
+          runConsciousDecide(configWithLogs(root), orientFixture, "No active plan.", "actions", "", "", "- learning — SKILL_INDEX_MARKER"),
           layers('{"decision":"continue","reasoning":"r"}'),
         ),
       )
@@ -240,7 +243,6 @@ describe("decide skill selection (spec §3)", () => {
       const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
       expect(rec.prompt).toContain("SKILL_INDEX_MARKER")
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   })

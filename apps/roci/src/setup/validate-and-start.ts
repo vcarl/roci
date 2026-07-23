@@ -4,6 +4,7 @@ import * as path from "node:path"
 import type { ResolvedDomain } from "../domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { CharacterFs, makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
+import { meDir } from "@roci/core/services/character-paths.js"
 import { runOrchestrator } from "../orchestrator.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
 import type { ModelConfig } from "@roci/core/core/model-config.js"
@@ -41,7 +42,7 @@ export const validateAndStart = (
 
       // Validate each character
       for (const charName of rd.characters) {
-        const charDir = path.resolve(projectRoot, "players", charName, "me")
+        const charDir = meDir(makeCharacterConfig(projectRoot, charName))
         const charDirExists = yield* fs.exists(charDir)
         if (!charDirExists) {
           yield* logToConsole("roci", "cli", `MISSING: ${charDir} — create this directory with character files`)
@@ -90,7 +91,7 @@ export const validateAndStart = (
         const char = makeCharacterConfig(projectRoot, name)
         const exists = yield* charFs.characterExists(char)
         if (!exists) {
-          yield* Effect.logError(`Character directory not found: ${char.dir}`)
+          yield* Effect.logError(`Character directory not found: ${meDir(char)}`)
           return
         }
       }

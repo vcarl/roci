@@ -79,7 +79,7 @@ describe("LongtermStoreLive — in-container command construction (N2)", () => {
       },
     } as unknown as typeof Docker.Service),
   )
-  const char = { name: "ada space", dir: "/work/players/ada space/me" }
+  const char = { name: "ada space", root: "/work/players/ada space" }
 
   const runWith = <A>(eff: Effect.Effect<A, unknown, LongtermStore>) =>
     Effect.runPromise(

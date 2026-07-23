@@ -4,6 +4,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
+import { meDir } from "../../../services/character-paths.js"
 import { applyWmMutation, emptyWmFile, parseWmFile, type WmTodo } from "./wm-core.js"
 import {
   WM_PROMPT_CAP,
@@ -26,7 +27,7 @@ let root: string
 let char: CharacterConfig
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-store-"))
-  char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+  char = { name: "ada", root: path.join(root, "players", "ada") }
 })
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
@@ -37,7 +38,7 @@ const run = <A>(e: Effect.Effect<A>) => Effect.runPromise(e)
 describe("readWm / ensureWmFiles", () => {
   it("readWm returns the empty file when wm.json is missing or corrupt", async () => {
     expect(await run(readWm(char))).toEqual(emptyWmFile())
-    fs.mkdirSync(char.dir, { recursive: true })
+    fs.mkdirSync(meDir(char), { recursive: true })
     fs.writeFileSync(wmJsonPath(char), "garbage")
     expect(await run(readWm(char))).toEqual(emptyWmFile())
   })
@@ -71,7 +72,7 @@ describe("mutateWm", () => {
     expect(md).toContain("- [ ] t2 b")
     expect(md).not.toContain("t1")
     // Atomic write-via-rename: no temp artifacts remain.
-    expect(fs.readdirSync(char.dir).filter((f) => f.includes(".tmp"))).toEqual([])
+    expect(fs.readdirSync(meDir(char)).filter((f) => f.includes(".tmp"))).toEqual([])
   })
 
   it("skips invalid mutations but applies the rest; never fails the effect", async () => {
@@ -80,7 +81,7 @@ describe("mutateWm", () => {
     expect(deltas[0].op).toBe("add")
   })
 
-  it("never fails even when char.dir is unwritable (wm must never disturb the tick loop)", async () => {
+  it("never fails even when the character's me dir is unwritable (wm must never disturb the tick loop)", async () => {
     // Make the players/ ancestor a FILE so mkdir -p fails.
     fs.mkdirSync(root, { recursive: true })
     fs.writeFileSync(path.join(root, "players"), "not a directory")
@@ -171,7 +172,7 @@ describe("discardDeadPlanTodos — cross-session orphan sweep", () => {
   })
 
   it("legacy todos without an origin field are treated as harness and swept", async () => {
-    fs.mkdirSync(char.dir, { recursive: true })
+    fs.mkdirSync(meDir(char), { recursive: true })
     fs.writeFileSync(
       wmJsonPath(char),
       JSON.stringify({

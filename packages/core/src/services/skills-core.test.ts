@@ -4,6 +4,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import type { CharacterConfig } from "./CharacterFs.js"
+import { meDir } from "./character-paths.js"
 import {
   MAX_SKILLS,
   MAX_SKILL_BODY_CHARS,
@@ -191,13 +192,13 @@ describe("ensureSeedSkills — idempotent host seeding", () => {
   let char: CharacterConfig
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "skills-seed-"))
-    char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    char = { name: "ada", root: path.join(root, "players", "ada") }
   })
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 
   it("seeds both skill files, then leaves an edited file untouched on re-run", async () => {
     await Effect.runPromise(ensureSeedSkills(char))
-    const dir = path.join(char.dir, "skills")
+    const dir = path.join(meDir(char), "skills")
     expect(fs.readdirSync(dir).sort()).toEqual(["editing-skills.md", "learning.md"])
     expect(fs.readFileSync(path.join(dir, "learning.md"), "utf8")).toContain("name: learning")
 

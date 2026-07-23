@@ -14,6 +14,7 @@ import { InterruptRegistryTag } from "#brain/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
 import { PromptBuilderTag } from "../../core/prompt-builder.js"
 import { CharacterFs, CharacterFsError } from "../../services/CharacterFs.js"
+import { meDir } from "../../services/character-paths.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
 import { MemoryGateway } from "#brain/limbic/hippocampus/memory/memory-gateway.js"
@@ -22,19 +23,23 @@ import { ModelService } from "../../services/ModelService.js"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { setEpisodeLogRoot, resetEpisodeContext, setEpisodeStep, setEpisodeTick } from "../../logging/episodes.js"
+import { resetEpisodeContext, setEpisodeStep, setEpisodeTick } from "../../logging/episodes.js"
 import { parseWmFile } from "#brain/limbic/wm/wm-core.js"
 import { parseSkillFile, serializeSkillFile, slugify } from "../../services/skills-core.js"
 
-// Silence one class of hermetic best-effort noise: the vast majority of fixtures
-// below pass an opaque, non-existent char.dir ("/work/players/ada/me") as a bare
-// identity (see the fakeFs note ~L168), so the non-DI'd wm-store's seedWmPlan
-// tries `mkdir -p /work`, fails ENOENT at the filesystem root, swallows it, and
-// logs to console.error. That failure is by-design (it writes nothing) and no
-// test here asserts on wm state — the real wm-lifecycle tests use their own
-// tmpdir char.dir. This drops ONLY that /work console spam; the loud EACCES line
-// from the read-only "POPULATED character" test (~L2838), which that test's own
-// comment documents as expected, is deliberately left intact.
+// Silence two classes of hermetic best-effort noise from the fixtures below that
+// pass an opaque, non-existent player root ("/work/players/ada", so meDir/logsDir
+// resolve under /work) as a bare identity (see the fakeFs note ~L168):
+//   1. the non-DI'd wm-store's seedWmPlan tries `mkdir -p /work`, fails ENOENT at
+//      the filesystem root, swallows it, and logs `[wm] plan seed failed`.
+//   2. episode logging is ALWAYS ON now (logs are not optional): every writer
+//      resolves logsDir(char) = /work/players/ada/logs and its append/rotate
+//      mkdir fails on the host, swallowed after an `[episodes] …` console.error.
+// Both failures are by-design (they write nothing) and no test here asserts on wm
+// state or episode files against a /work root — the real wm-lifecycle and episode
+// tests use their own tmpdir roots. This drops ONLY that /work console spam; the
+// loud EACCES line from the read-only "POPULATED character" test (~L2838), which
+// that test's own comment documents as expected, is deliberately left intact.
 let wmWorkNoiseSpy: ReturnType<typeof vi.spyOn>
 beforeAll(() => {
   const real = console.error.bind(console)
@@ -43,6 +48,14 @@ beforeAll(() => {
       typeof args[0] === "string" &&
       args[0].startsWith("[wm] plan seed failed") &&
       args[0].includes("mkdir '/work'")
+    )
+      return
+    // Always-on episode writers targeting the opaque /work player root fail on the
+    // host and log `[episodes] … failed for ada: …/work/players/ada/logs …`.
+    if (
+      typeof args[0] === "string" &&
+      args[0].startsWith("[episodes]") &&
+      args[0].includes("/work/players/")
     )
       return
     real(...args)
@@ -192,7 +205,7 @@ const fakeDomain = Layer.mergeAll(
 )
 
 // Default CharacterFs stub: hardcoded [] / null, no disk access. The vast
-// majority of tests below pass a non-existent literal char.dir (e.g.
+// majority of tests below pass a non-existent literal player root (e.g.
 // "/work/players/ada/me") purely as an opaque identity — they don't care
 // about skills at all. A REAL disk read keyed on that literal would only
 // coincidentally return [] / null because the path doesn't exist on this
@@ -225,9 +238,9 @@ const fakeFs = Layer.succeed(
 const fakeLog = Layer.succeed(CharacterLog, CharacterLog.of({ emit: () => Effect.void }))
 const fakeIo = Layer.mergeAll(fakeFs, fakeLog)
 
-// Real disk reads (mirrors CharacterFsLive), scoped to char.dir: used ONLY by
+// Real disk reads (mirrors CharacterFsLive), scoped to meDir(char): used ONLY by
 // the "wears a chosen skill" test, which seeds an actual skill file under a
-// real tmpdir char.dir and asserts it gets read back and worn. Everything
+// real tmpdir player root and asserts it gets read back and worn. Everything
 // else stays on the hermetic fakeFs stub above.
 const realSkillFs = Layer.succeed(
   CharacterFs,
@@ -245,7 +258,7 @@ const realSkillFs = Layer.succeed(
     characterExists: () => Effect.succeed(true),
     listSkills: (char) =>
       Effect.sync(() => {
-        const dir = path.join(char.dir, "skills")
+        const dir = path.join(meDir(char), "skills")
         if (!fs.existsSync(dir)) return []
         return fs
           .readdirSync(dir)
@@ -259,7 +272,7 @@ const realSkillFs = Layer.succeed(
     readSkill: (char, name) =>
       Effect.sync(() => {
         const slug = slugify(name)
-        const file = path.join(char.dir, "skills", `${slug}.md`)
+        const file = path.join(meDir(char), "skills", `${slug}.md`)
         if (!fs.existsSync(file)) return null
         return parseSkillFile(slug, fs.readFileSync(file, "utf8"))
       }),
@@ -315,7 +328,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       const result = yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -353,7 +366,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       const result = yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -386,7 +399,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -443,7 +456,7 @@ describe("runActivation (conscious-session executor)", () => {
         ),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -501,7 +514,7 @@ describe("runActivation (conscious-session executor)", () => {
         ),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -563,7 +576,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -617,7 +630,7 @@ describe("runActivation (conscious-session executor)", () => {
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "event-b" }))),
       )
       const result = yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -665,7 +678,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -723,7 +736,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -783,7 +796,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -833,7 +846,7 @@ describe("runActivation (conscious-session executor)", () => {
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -902,7 +915,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -940,7 +953,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       const result = yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -977,7 +990,7 @@ describe("runActivation (conscious-session executor)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "boot" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -1029,7 +1042,7 @@ describe("runActivation (conscious-session executor)", () => {
         ),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -1081,7 +1094,7 @@ describe("runActivation (conscious-session executor)", () => {
         ),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -1138,7 +1151,7 @@ describe("runActivation (conscious-session executor)", () => {
         Effect.sleep("12 millis").pipe(Effect.andThen(Queue.offer(events, { type: "wakeup" }))),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -1184,7 +1197,7 @@ describe("runActivation (conscious-session executor)", () => {
       // rather than hanging until the test timeout.
       const fiber = yield* Effect.fork(
         runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: "/work/players/ada" },
           containerId: "c1",
           events,
           initialState: {},
@@ -1238,7 +1251,7 @@ describe("runActivation (conscious-session executor)", () => {
       yield* Queue.offer(events, { type: "combat" }) // the ONLY event ever queued
       const fiber = yield* Effect.fork(
         runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: "/work/players/ada" },
           containerId: "c1",
           events,
           initialState: {},
@@ -1258,7 +1271,6 @@ describe("runActivation (conscious-session executor)", () => {
 
   it("emits step-start and step-end transition episodes (verdict, null skill field)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-loop-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     try {
       const ctLayer = ConsciousThoughtTest((config) => ({
@@ -1269,7 +1281,7 @@ describe("runActivation (conscious-session executor)", () => {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -1297,14 +1309,12 @@ describe("runActivation (conscious-session executor)", () => {
         skill: null,
       })
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
 
   it("resets a stale per-character episode context at runActivation entry (no stepId bleed across sessions)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-loop-stale-"))
-    setEpisodeLogRoot(root)
     // Simulate the dangling context a prior runActivation invocation can leave behind
     // when it exits via the terminate/critical-interrupt paths (which return before
     // the per-step reset) — a fresh invocation must not inherit it.
@@ -1319,7 +1329,7 @@ describe("runActivation (conscious-session executor)", () => {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -1348,14 +1358,12 @@ describe("runActivation (conscious-session executor)", () => {
       expect(start.stepId).toMatch(/^c\d+-s\d+-0$/)
       expect(start.stepId).toBe(`c${firstTier.epoch}-s${start.tick}-0`)
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
 
   it("wm lifecycle: decide seeds plan todos under a headline todo; evaluate marks done; deltas reach the episode log", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-loop-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     const charDir = path.join(root, "players", "ada", "me")
     try {
@@ -1367,7 +1375,7 @@ describe("runActivation (conscious-session executor)", () => {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -1405,7 +1413,6 @@ describe("runActivation (conscious-session executor)", () => {
         ["done", "t1"],
       ])
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
@@ -1440,7 +1447,7 @@ describe("runActivation (conscious-session executor)", () => {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -1475,7 +1482,7 @@ describe("runActivation (conscious-session executor)", () => {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -1496,7 +1503,6 @@ describe("runActivation (conscious-session executor)", () => {
 
   it("wears a chosen skill: injects its body into the step task and records the name on step boundaries", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-worn-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     const charDir = path.join(root, "players", "ada", "me")
     fs.mkdirSync(path.join(charDir, "skills"), { recursive: true })
@@ -1522,7 +1528,7 @@ describe("runActivation (conscious-session executor)", () => {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -1542,14 +1548,12 @@ describe("runActivation (conscious-session executor)", () => {
       expect(records.find((r) => r.type === "step-start").skill).toBe("securing-fuel")
       expect(records.find((r) => r.type === "step-end").skill).toBe("securing-fuel")
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
 
   it("degrades to a plain step task when the chosen skill does not exist (never fails the step)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-missing-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     const charDir = path.join(root, "players", "ada", "me")
     try {
@@ -1569,7 +1573,7 @@ describe("runActivation (conscious-session executor)", () => {
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -1586,7 +1590,6 @@ describe("runActivation (conscious-session executor)", () => {
       expect(records.find((r) => r.type === "step-start").skill).toBeNull()
       expect(records.find((r) => r.type === "step-end").skill).toBeNull()
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
@@ -1668,7 +1671,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "change-b" })
       yield* Queue.offer(events, { type: "noise" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -1707,7 +1710,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "chat", from: "ada", text: "hello" })
       const domain = domainWith(["chat"], () => (++bound.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []))
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -1738,7 +1741,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "chat", from: "ada", text: "hi" })
       const domain = domainWith(["chat"], () => (++bound.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []))
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -1773,7 +1776,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, frameB)
       const domain = domainWith([], () => (++bound.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []))
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -1818,7 +1821,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "attack-now" }))),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -1860,7 +1863,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -1909,7 +1912,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         return criticalsRef.n >= 4 ? [{ priority: "critical" as const, message: "hull critical" }] : []
       })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(blockingDecideClient, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -1955,7 +1958,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         return criticalsRef.n >= 4 ? [{ priority: "critical" as const, message: "hull critical" }] : []
       })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(blockingObserveClient, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -1992,7 +1995,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "b" })
       const fiber = yield* Effect.fork(
         runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: "/work/players/ada" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1000, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, StubCommandExecutor, StubOAuthToken, StubDocker, countingMemory, noopModelService))),
       )
@@ -2052,7 +2055,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         return []
       })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 100, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -2082,7 +2085,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "seed" })
       const fiber = yield* Effect.fork(
         runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: "/work/players/ada" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
       )
@@ -2097,7 +2100,6 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
 
   it("reorient closes the abandoned in-flight step with a replan step-end (no verdict, no double-emit)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "episodes-abandon-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     try {
       const client = limbicClient({
@@ -2124,7 +2126,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
           Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
         )
         return yield* runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -2146,14 +2148,12 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       expect(ends[0]).toMatchObject({ stepId: starts[0].stepId, task: "act", transition: "replan", skill: null })
       expect(ends[0].verdict).toBeUndefined()
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
 
   it("wm lifecycle: a reorient discards the dropped plan's seeded orphans, recorded on the abandoned step-end", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-orphan-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     const charDir = path.join(root, "players", "ada", "me")
     try {
@@ -2180,7 +2180,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
           Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))),
         )
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -2211,7 +2211,6 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         ["discard", "t1"],
       ])
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
@@ -2223,7 +2222,6 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     // WM.md (uncapped, injected forever — the loop never runs again for this
     // session to clean them up).
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-critical-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     const charDir = path.join(root, "players", "ada", "me")
     try {
@@ -2239,7 +2237,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       // Tick 1 forks the idle deliberation; it lands + seeds the plan (t1 headline
       // + t2 step) — and writes wm.json — on a LATER tick's poll. Unlike the other
       // timing-coupled tests, this one's fork does real episode-log disk I/O
-      // (setEpisodeLogRoot above), so its landing can span a couple of ticks — a
+      // (char.logsDir set above), so its landing can span a couple of ticks — a
       // fixed +1 tick threshold would race the write. Fire the critical
       // DETERMINISTICALLY the first tick AFTER wm.json exists (i.e. the plan is truly
       // in-flight), so the interrupt always has an active plan whose orphans to discard.
@@ -2252,7 +2250,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "plan-seed" })
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -2273,7 +2271,6 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       ])
       expect(fs.readFileSync(path.join(charDir, "WM.md"), "utf8")).not.toContain("t1")
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
@@ -2284,7 +2281,6 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     // plan ids. At the NEXT session's loop entry, discardDeadPlanTodos sweeps
     // them; a free-standing agent (CLI) todo is deliberate memory and survives.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "wm-crosssession-"))
-    setEpisodeLogRoot(root)
     resetEpisodeContext("ada")
     const charDir = path.join(root, "players", "ada", "me")
     fs.mkdirSync(charDir, { recursive: true })
@@ -2308,7 +2304,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "wake" })
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -2338,7 +2334,6 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         ["discard", "t2"],
       ])
     } finally {
-      setEpisodeLogRoot(null)
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
@@ -2372,7 +2367,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "steer-evt" }))),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -2430,7 +2425,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         return tickRef.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []
       })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -2505,7 +2500,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
         return sinceOpen.n >= 5 ? [{ priority: "critical" as const, message: "bound" }] : []
       })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -2545,7 +2540,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "seed" }) // tick 1 → fork deliberation (decide #1 blocks)
       yield* Effect.forkDaemon(Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "termination-60s" }))))
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -2578,7 +2573,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "seed" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -2667,7 +2662,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       // after the empty tick-1 deliberation — giving SEED_EVENT's forked reflex
       // time to land + accumulate before decide #2's fork captures its snapshot.
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 3, tickIntervalMs: 1,
       }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
     })
@@ -2710,7 +2705,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "seed" }) // the ONLY event ever queued
       const fiber = yield* Effect.fork(
         runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: "/work/players/ada" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
       )
@@ -2749,7 +2744,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       yield* Queue.offer(events, { type: "seed" }) // the ONLY event ever queued
       const fiber = yield* Effect.fork(
         runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: "/work/players/ada" },
           containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
         }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domainWith([]), fakeIo, fakeRuntimeDeps, noopModelService))),
       )
@@ -2790,7 +2785,7 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, { type: "combat" })
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -2841,7 +2836,7 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
         Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "mid-session-update" }))),
       )
       return yield* runActivation({
-        char: { name: "ada", dir: "/work/players/ada/me" },
+        char: { name: "ada", root: "/work/players/ada" },
         containerId: "c1",
         events,
         initialState: {},
@@ -2948,7 +2943,7 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
           Effect.sleep("8 millis").pipe(Effect.andThen(Queue.offer(events, { type: "mid-session-update" }))),
         )
         return yield* runActivation({
-          char: { name: "ada", dir: charDir },
+          char: { name: "ada", root: path.join(root, "players", "ada") },
           containerId: "c1",
           events,
           initialState: {},
@@ -3016,7 +3011,7 @@ describe("runActivation — Phase 0 characterization (decomposition-invariant co
         const events = yield* Queue.unbounded<unknown>()
         yield* Queue.offer(events, { type: "combat" })
         return yield* runActivation({
-          char: { name: "ada", dir: "/work/players/ada/me" },
+          char: { name: "ada", root: "/work/players/ada" },
           containerId: "c1",
           events,
           initialState: {},
@@ -3036,7 +3031,7 @@ describe("runActivation — Phase 0 characterization (decomposition-invariant co
         yield* Queue.offer(events, { type: "combat" })
         const fiber = yield* Effect.fork(
           runActivation({
-            char: { name: "ada", dir: "/work/players/ada/me" },
+            char: { name: "ada", root: "/work/players/ada" },
             containerId: "c1",
             events,
             initialState: {},

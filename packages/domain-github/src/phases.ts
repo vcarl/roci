@@ -5,6 +5,7 @@ import type { GitHubState } from "./types.js"
 import type { GitHubEvent } from "./types.js"
 import { getModels, type Phase, type PhaseContext, type PhaseResult, type PhaseRegistry, type ConnectionState } from "@roci/core/core/phase.js"
 import { Docker } from "@roci/core/services/Docker.js"
+import { meDir } from "@roci/core/services/character-paths.js"
 import { CharacterLog, logToConsole } from "@roci/core/logging/log-writer.js"
 import { eventBase } from "@roci/core/logging/events.js"
 import { GitHubClientTag } from "./github-client.js"
@@ -125,7 +126,7 @@ const startupPhase = {
   name: "startup",
   run: (context: PhaseContext) =>
     Effect.gen(function* () {
-      const ghConfig = yield* readGitHubConfig(context.char.dir)
+      const ghConfig = yield* readGitHubConfig(meDir(context.char))
       const parsedRepos = ghConfig.repos.map((r) => {
         const [owner, repo] = r.split("/")
         return { owner, repo }

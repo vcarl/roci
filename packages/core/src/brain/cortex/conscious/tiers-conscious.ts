@@ -96,7 +96,7 @@ export function runConsciousDecide(
         parseOr<DecideResult>(text, { decision: "continue", reasoning: "parse failure — defaulting to continue" }),
       ),
     ),
-    Effect.tap((result) => emitTier(config.char.name, "decide", prompt, result, undefined, attribution)),
+    Effect.tap((result) => emitTier(config.char, "decide", prompt, result, undefined, attribution)),
   )
 }
 
@@ -169,7 +169,7 @@ export function runConsciousEvaluate(
       // object — a bare-string or wrong-typed transition is coerced here.
       return { ...result, transition: normalizeTransition(result.transition) }
     }),
-    Effect.tap((result) => emitTier(config.char.name, "evaluate", prompt, result)),
+    Effect.tap((result) => emitTier(config.char, "evaluate", prompt, result)),
   )
 }
 
@@ -196,6 +196,6 @@ export function runDiaryTurn(
   })
   return callTier(config, "forebrain", "diary", prompt).pipe(
     Effect.map((text) => text.trim()),
-    Effect.tap((entry) => emitTier(config.char.name, "diary", prompt, entry)),
+    Effect.tap((entry) => emitTier(config.char, "diary", prompt, entry)),
   )
 }

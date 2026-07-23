@@ -19,6 +19,7 @@ import { buildExecArgs } from "#brain/stem/transport/process-runner.js"
 import { buildOpenCodeSessionCommand, openCodeBodyEnv, wrapWithTimeout } from "#brain/stem/transport/payload.js"
 import { runTransport, bodySilenceTimeoutMs } from "#brain/stem/transport/transport.js"
 import { ClaudeError } from "../../../services/Claude.js"
+import { containerPlayerRoot } from "../../../services/character-paths.js"
 import { OAuthToken } from "../../../services/OAuthToken.js"
 import { CharacterLog, logToConsole, logExchange } from "../../../logging/log-writer.js"
 import { normalizeOpenCode, type InternalEvent } from "../../../logging/stream-normalizer.js"
@@ -109,7 +110,7 @@ export const killWedgedInContainerTurn = (
   playerName: string,
 ): Effect.Effect<void, never, CommandExecutor.CommandExecutor> =>
   Effect.gen(function* () {
-    const dir = `/work/players/${playerName}`
+    const dir = containerPlayerRoot(playerName)
     // POSIX sh: match each pid's cwd symlink against this player's dir (or a subdir)
     // and SIGKILL it. `${d##*/}` is the bare pid; all `$(...)`/`${...}` are shell,
     // escaped so they survive the JS template literal.

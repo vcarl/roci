@@ -119,16 +119,16 @@ export const callTier = (
  * Never fails; never disturbs the tier call.
  */
 export const emitTier = (
-  character: string,
+  char: CharacterConfig,
   phase: "orient" | "decide" | "evaluate" | "diary",
   prompt: string,
   output: unknown,
   orientKind?: "plan" | "steer",
   attribution?: EpisodeAttribution,
 ): Effect.Effect<void> => {
-  const ctx = attribution ?? episodeContext(character)
-  const epoch = attribution ? attribution.epoch : currentEpisodeEpoch(character)
-  return appendTransitionEpisode(character, {
+  const ctx = attribution ?? episodeContext(char.name)
+  const epoch = attribution ? attribution.epoch : currentEpisodeEpoch(char.name)
+  return appendTransitionEpisode(char, {
     type: "tier",
     ts: new Date().toISOString(),
     tick: ctx.tick,

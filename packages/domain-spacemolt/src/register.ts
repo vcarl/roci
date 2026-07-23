@@ -88,7 +88,7 @@ export function registerCharacter(
 
     // Persist credentials as the client-v2 v2 multi-account session file so
     // readPlayerCredentials / validateSessionFile can recover them later.
-    const projectRoot = path.resolve(char.dir, "..", "..", "..")
+    const projectRoot = path.resolve(char.root, "..", "..")
     const filePath = sessionFilePath(projectRoot, char.name)
     const sessionContent = JSON.stringify(
       {

@@ -265,7 +265,7 @@ describe("readProposals / appendProposals — atomic, dedup, total cap, never-fa
   let char: CharacterConfig
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "growth-"))
-    char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    char = { name: "ada", root: path.join(root, "players", "ada") }
   })
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 
@@ -319,7 +319,7 @@ describe("macro counter — persisted, atomic, never-fail", () => {
   let char: CharacterConfig
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "macro-"))
-    char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    char = { name: "ada", root: path.join(root, "players", "ada") }
   })
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 
@@ -386,7 +386,7 @@ describe("appendAdjudications / removeProposals", () => {
   let char: CharacterConfig
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "adj-"))
-    char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+    char = { name: "ada", root: path.join(root, "players", "ada") }
   })
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 

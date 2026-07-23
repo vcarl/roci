@@ -5,6 +5,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { CharacterFs, CharacterFsLive, SYNTHESIS_FILE, type CharacterConfig } from "./CharacterFs.js"
+import { meDir } from "./character-paths.js"
 import { MAX_SKILLS, type SkillDoc } from "./skills-core.js"
 import { parseSalience, TEMPLATE_SALIENCE } from "../core/salience.js"
 
@@ -12,7 +13,7 @@ let root: string
 let char: CharacterConfig
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "charfs-skills-"))
-  char = { name: "ada", dir: path.join(root, "players", "ada", "me") }
+  char = { name: "ada", root: path.join(root, "players", "ada") }
 })
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 
@@ -31,7 +32,7 @@ describe("CharacterFs skills surface (spec §3)", () => {
   it("writeSkill persists a skill; readSkill resolves it by name; listSkills reports its meta", async () => {
     await run(Effect.flatMap(CharacterFs, (s) => s.writeSkill(char, doc({ name: "Securing Fuel", body: "top up early" }))))
     // File landed at the slugified path.
-    expect(fs.existsSync(path.join(char.dir, "skills", "securing-fuel.md"))).toBe(true)
+    expect(fs.existsSync(path.join(meDir(char), "skills", "securing-fuel.md"))).toBe(true)
     const read = await run(Effect.flatMap(CharacterFs, (s) => s.readSkill(char, "Securing Fuel")))
     expect(read).toMatchObject({ slug: "securing-fuel", name: "Securing Fuel", body: "top up early" })
     const metas = await run(Effect.flatMap(CharacterFs, (s) => s.listSkills(char)))
@@ -76,7 +77,7 @@ describe("readSynthesis / writeSynthesis / deleteSkill (Stage 5 macro surface)",
   it("readSynthesis returns '' when SYNTHESIS.md is absent, round-trips after write", async () => {
     expect(await run(Effect.flatMap(CharacterFs, (s) => s.readSynthesis(char)))).toBe("")
     await run(Effect.flatMap(CharacterFs, (s) => s.writeSynthesis(char, "I am the ship that remembers.\n")))
-    expect(fs.existsSync(path.join(char.dir, SYNTHESIS_FILE))).toBe(true)
+    expect(fs.existsSync(path.join(meDir(char), SYNTHESIS_FILE))).toBe(true)
     expect(await run(Effect.flatMap(CharacterFs, (s) => s.readSynthesis(char)))).toBe(
       "I am the ship that remembers.\n",
     )
@@ -88,9 +89,9 @@ describe("readSynthesis / writeSynthesis / deleteSkill (Stage 5 macro surface)",
         s.writeSkill(char, doc({ slug: "securing-fuel", name: "securing-fuel", description: "d", whenToUse: "w", body: "b" })),
       ),
     )
-    expect(fs.existsSync(path.join(char.dir, "skills", "securing-fuel.md"))).toBe(true)
+    expect(fs.existsSync(path.join(meDir(char), "skills", "securing-fuel.md"))).toBe(true)
     await run(Effect.flatMap(CharacterFs, (s) => s.deleteSkill(char, "securing-fuel")))
-    expect(fs.existsSync(path.join(char.dir, "skills", "securing-fuel.md"))).toBe(false)
+    expect(fs.existsSync(path.join(meDir(char), "skills", "securing-fuel.md"))).toBe(false)
     // idempotent: deleting again does not throw
     await run(Effect.flatMap(CharacterFs, (s) => s.deleteSkill(char, "securing-fuel")))
     expect(await run(Effect.flatMap(CharacterFs, (s) => s.listSkills(char)))).toEqual([])
@@ -106,9 +107,9 @@ describe("CharacterFs.readSalience (Phase 2 salience profile)", () => {
   })
 
   it("reads a written SALIENCE.md verbatim", async () => {
-    fs.mkdirSync(char.dir, { recursive: true })
+    fs.mkdirSync(meDir(char), { recursive: true })
     const body = "- safety: 0.9  # jumpy\n- sustenance: 0.4  # steady\n- agency: 0.7  # willful"
-    fs.writeFileSync(path.join(char.dir, "SALIENCE.md"), body)
+    fs.writeFileSync(path.join(meDir(char), "SALIENCE.md"), body)
     const md = await run(Effect.flatMap(CharacterFs, (s) => s.readSalience(char)))
     expect(md).toBe(body)
     expect(parseSalience(md)).toEqual({ safety: 0.9, sustenance: 0.4, agency: 0.7 })

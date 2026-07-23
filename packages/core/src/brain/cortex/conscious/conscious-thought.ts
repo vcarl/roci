@@ -84,10 +84,10 @@ const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker |
   Effect.gen(function* () {
     // Write the project-local agent file (host-side fs). Deferred into the Effect so a
     // filesystem failure becomes a swallowed error, not a synchronous throw / defect.
-    // char.dir = players/<name>/me, grandparent = players/.
+    // char.root = players/<name>, parent = players/.
     yield* Effect.try(() =>
       writeCharacterAgentFile({
-        playersDir: path.resolve(opts.char.dir, "../.."),
+        playersDir: path.resolve(opts.char.root, ".."),
         playerName: opts.char.name,
         systemPrompt: opts.systemPrompt,
         // Frontmatter `model:` = handle-derived label; agrees with the `-m` label at turn time.
@@ -104,7 +104,7 @@ const provisionImpl = (opts: ProvisionOpts): Effect.Effect<void, never, Docker |
     // a lazy in-loop load.
     yield* Effect.try(() =>
       writeCharacterOpencodeConfig({
-        playersDir: path.resolve(opts.char.dir, "../.."),
+        playersDir: path.resolve(opts.char.root, ".."),
         playerName: opts.char.name,
       }),
     )

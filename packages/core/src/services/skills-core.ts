@@ -12,6 +12,7 @@ import * as fsp from "node:fs/promises"
 import * as path from "node:path"
 import { Effect } from "effect"
 import type { CharacterConfig } from "./CharacterFs.js"
+import { meDir } from "./character-paths.js"
 
 /** At most this many distinct skills per character (spec §3 Caps). */
 export const MAX_SKILLS = 12
@@ -284,7 +285,7 @@ export const SEED_SKILLS: readonly SkillDoc[] = [
 export const ensureSeedSkills = (char: CharacterConfig): Effect.Effect<void> =>
   Effect.promise(async () => {
     try {
-      const dir = path.join(char.dir, "skills")
+      const dir = path.join(meDir(char), "skills")
       await fsp.mkdir(dir, { recursive: true })
       for (const doc of SEED_SKILLS) {
         const file = path.join(dir, `${doc.slug}.md`)

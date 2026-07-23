@@ -152,7 +152,7 @@ export const retrospect = {
       const charFs = yield* CharacterFs
 
       // 1. Read the just-ended cycle's episode streams (before rotation).
-      const { tool, transition } = yield* readCurrentCycleEpisodes(input.char.name)
+      const { tool, transition } = yield* readCurrentCycleEpisodes(input.char)
       // Skip gate: a cycle with NO step boundaries (no step-start/step-end) had no
       // step activity to grade. The observed session-start misfire is exactly this
       // shape — setup tool calls / idle tier calls, zero steps — so a cycle that

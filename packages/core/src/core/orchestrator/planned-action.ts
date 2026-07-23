@@ -245,7 +245,7 @@ export const runReflection = (
 		// retain the last EPISODE_RETAIN_CYCLES cycles, dropping only whole
 		// cycles. finishEpisodeCycle is swallow-and-log — it can never fail
 		// reflection, mirroring the best-effort stages above.
-		yield* finishEpisodeCycle(char.name)
+		yield* finishEpisodeCycle(char)
 	})
 
 // ── runBreak ─────────────────────────────────────────────────

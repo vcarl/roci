@@ -21,6 +21,7 @@ import * as fsp from "node:fs/promises"
 import * as path from "node:path"
 import { Effect } from "effect"
 import type { CharacterConfig } from "../../../services/CharacterFs.js"
+import { meDir } from "../../../services/character-paths.js"
 import { slugify } from "../../../services/skills-core.js"
 import type { Judgment } from "../../../skills/types.js"
 import type {
@@ -407,7 +408,7 @@ export function parseProposals(text: string, now: string): SkillProposal[] {
 // ── Store IO (never fails) ───────────────────────────────────────────────────
 export const PROPOSALS_JSONL_FILE = "proposals.jsonl"
 export function growthDir(char: CharacterConfig): string {
-  return path.join(char.dir, "growth")
+  return path.join(meDir(char), "growth")
 }
 export function proposalsJsonlPath(char: CharacterConfig): string {
   return path.join(growthDir(char), PROPOSALS_JSONL_FILE)

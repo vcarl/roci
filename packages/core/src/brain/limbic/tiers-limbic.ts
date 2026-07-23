@@ -196,6 +196,6 @@ export function runForebrain(
         Effect.as<OrientResult>(fallback),
       )
     }),
-    Effect.tap((result) => emitTier(config.char.name, "orient", prompt, result, orientKind, attribution)),
+    Effect.tap((result) => emitTier(config.char, "orient", prompt, result, orientKind, attribution)),
   )
 }
