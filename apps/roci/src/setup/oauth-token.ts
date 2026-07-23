@@ -9,14 +9,6 @@ import {
   isClaudeCliAvailable,
 } from "@roci/core/services/oauth-token.js"
 
-export {
-  loadSavedToken,
-  saveToken,
-  extractTokenFromOutput,
-  runSetupToken,
-  isClaudeCliAvailable,
-} from "@roci/core/services/oauth-token.js"
-
 /**
  * Interactive step for guided setup: ensure OAuth token is available.
  * If missing, prompts the user and runs `claude setup-token` to acquire one.

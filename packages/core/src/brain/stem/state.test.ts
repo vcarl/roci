@@ -3,7 +3,6 @@ import {
   freshActivationState,
   shouldForceOrient,
   formatStepTask,
-  planSteps,
   decideSteps,
   discoverToPlan,
   isWedgedEmptyPlan,
@@ -317,15 +316,6 @@ describe("formatStepTask", () => {
   })
 })
 
-describe("planSteps", () => {
-  it("returns steps for a plan decision and [] otherwise", () => {
-    const plan: DecideResult = { decision: "plan", reasoning: "go", steps: [{ task: "t", goal: "g", tier: "fast", successCondition: "c", timeoutTicks: 2 }] }
-    expect(planSteps(plan)).toHaveLength(1)
-    expect(planSteps({ decision: "continue", reasoning: "x" })).toEqual([])
-    expect(planSteps(null)).toEqual([])
-  })
-})
-
 // Regression: a small conscious model emits parseable `{"decision":"plan"}`
 // with no `steps` (or `steps` a non-array). parseOr's fallback is the
 // `continue` variant, so `steps` stays undefined → `decide.steps.length`
@@ -360,16 +350,14 @@ describe("decideSteps — shape-safe step access", () => {
     expect(decideSteps(empty)).toEqual([])
   })
 
+  it("returns [] for a plan decision with a NULL steps (no crash)", () => {
+    const malformed = { decision: "plan", reasoning: "go", steps: null } as unknown as DecideResult
+    expect(decideSteps(malformed)).toEqual([])
+  })
+
   it("returns [] for non-plan decisions and null", () => {
     expect(decideSteps({ decision: "continue", reasoning: "x" })).toEqual([])
     expect(decideSteps(null)).toEqual([])
-  })
-})
-
-describe("planSteps — array safety (delegates to decideSteps)", () => {
-  it("returns [] for a plan decision with a non-array steps (no crash)", () => {
-    const malformed = { decision: "plan", reasoning: "go", steps: null } as unknown as DecideResult
-    expect(planSteps(malformed)).toEqual([])
   })
 })
 
@@ -474,7 +462,7 @@ describe("discoverToPlan", () => {
       },
     }
     const plan = discoverToPlan(decide)
-    const steps = planSteps(plan)
+    const steps = decideSteps(plan)
     expect(steps).toHaveLength(1)
     expect(steps[0].task).toBe("discover")
     expect(steps[0].tier).toBe("fast")

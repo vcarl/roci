@@ -2,31 +2,6 @@
 // API Layer Types
 // =====================================================
 
-export interface Credentials {
-	username: string;
-	password: string;
-}
-
-export interface ApiSession {
-	id: string;
-	player_id?: string;
-	created_at: string;
-	expires_at: string;
-}
-
-export interface ApiResponse<T = unknown> {
-	result?: T;
-	notifications?: GameNotification[];
-	session?: ApiSession;
-	error?: ApiError;
-}
-
-export interface ApiError {
-	code: string;
-	message: string;
-	wait_seconds?: number;
-}
-
 export interface GameNotification {
 	id?: string;
 	type: string;
@@ -224,24 +199,6 @@ export interface ActiveMission {
 	reward_credits: number;
 }
 
-export interface ChatMessage {
-	id?: string;
-	sender_id?: string;
-	sender: string;
-	channel: string;
-	content: string;
-	timestamp?: number;
-}
-
-export interface ForumThread {
-	id: string;
-	title: string;
-	author: string;
-	category?: string;
-	reply_count: number;
-	last_activity?: number;
-}
-
 export interface GameState {
 	player: PlayerState;
 	ship: ShipState;
@@ -292,22 +249,7 @@ export interface SituationFlags {
 	hasCompletableMission: boolean;
 }
 
-export interface Alert {
-	priority: "critical" | "high" | "medium" | "low";
-	message: string;
-	suggestedAction?: string;
-}
-
 export interface Situation {
 	type: SituationType;
 	flags: SituationFlags;
-}
-
-// =====================================================
-// Social Data Types
-// =====================================================
-
-export interface SocialState {
-	chatHistory: ChatMessage[];
-	forumThreads: ForumThread[];
 }

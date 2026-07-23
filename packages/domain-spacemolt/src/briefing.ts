@@ -7,7 +7,6 @@ import type {
 	StorageItem,
 	SystemState,
 	GalaxyMap,
-	SocialState,
 } from "./types.js";
 
 /**
@@ -337,28 +336,4 @@ function formatStorageSummary(items: StorageItem[], credits: number): string | n
 	}
 	if (items.length > 10) parts.push(`and ${items.length - 10} more`);
 	return `Station storage: ${parts.join(", ")}`;
-}
-
-/**
- * Formats social state (chat + forum) into a briefing section.
- */
-export function formatSocialBriefing(social: SocialState): string {
-	const lines: string[] = [];
-
-	if (social.chatHistory.length > 0) {
-		lines.push("## Recent Chat");
-		for (const msg of social.chatHistory.slice(-15)) {
-			lines.push(`[${msg.channel}] ${msg.sender}: ${msg.content}`);
-		}
-	}
-
-	if (social.forumThreads.length > 0) {
-		lines.push("");
-		lines.push("## Forum Threads");
-		for (const t of social.forumThreads) {
-			lines.push(`- [${t.reply_count}] ${t.title} (by ${t.author}, id:${t.id})`);
-		}
-	}
-
-	return lines.join("\n");
 }

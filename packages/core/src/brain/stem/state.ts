@@ -667,25 +667,17 @@ export function shouldForceOrient(state: ActivationState, tick: number, orientIn
 }
 
 /**
- * The steps of a plan decision, or [] for any other decision.
- *
- * A small conscious model can emit a parseable `{"decision":"plan"}` with no
- * `steps` (or `steps` a non-array). `parseOr`'s fallback is a DIFFERENT union
- * variant (`{decision:"continue",...}`) so it does not supply `steps` → a
- * "plan" decision can reach here with `steps` undefined/non-array. The
- * `Array.isArray` guard makes this always return a real array, so callers can
- * `.length` / `.map` / index it without throwing.
- */
-export function planSteps(plan: DecideResult | null): readonly PlanStep[] {
-  return decideSteps(plan)
-}
-
-/**
  * The actionable plan steps of a decide result — always a real array.
  * Returns [] unless `decide.decision === "plan"` AND `decide.steps` is a
  * genuine array. A "plan" decision whose `steps` is missing/non-array/empty
  * yields [] (no actionable steps), which the loop treats as "don't start a
  * plan" rather than crashing on `decide.steps.length`.
+ *
+ * A small conscious model can emit a parseable `{"decision":"plan"}` with no
+ * `steps` (or `steps` a non-array): `parseOr`'s fallback is a DIFFERENT union
+ * variant (`{decision:"continue",...}`) so it does not supply `steps`. The
+ * `Array.isArray` guard absorbs that, so callers can `.length` / `.map` /
+ * index the result without throwing.
  */
 export function decideSteps(decide: DecideResult | null): readonly PlanStep[] {
   if (decide && decide.decision === "plan" && Array.isArray(decide.steps)) {

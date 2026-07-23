@@ -26,8 +26,6 @@
   "dependencies": {
     "@effect/platform": "^0.94.5",
     "@effect/platform-node": "^0.104.1",
-    "@effect/printer": "^0.47.0",
-    "@effect/printer-ansi": "^0.47.0",
     "effect": "^3.19.19"
   }
 }

@@ -39,7 +39,6 @@ import type { ActivationRunnerConfig } from "./tier-config.js"
 import {
   freshActivationState,
   shouldForceOrient,
-  planSteps,
   decideSteps,
   discoverToPlan,
   isWedgedEmptyPlan,
@@ -324,7 +323,7 @@ export const runActivation = (config: ActivationConfig) =>
         // so a non-null stepId means exactly "in-flight, not yet closed" — a
         // double emission is impossible.
         const ctx = episodeContext(config.char.name)
-        const step = planSteps(cortex.currentPlan)[cortex.currentStepIndex]
+        const step = decideSteps(cortex.currentPlan)[cortex.currentStepIndex]
         // wm (spec §2): the dropped plan's seeded todos are orphans — discard
         // them, and drain any agent-journaled deltas from the abandoned step,
         // so the abandoned step-end carries the full wm story.
@@ -481,7 +480,7 @@ export const runActivation = (config: ActivationConfig) =>
           // orient narrative can't masquerade in WM.md as a committed plan.
           const seededDeltas = yield* planTodos.seed(
             planTitleFromHeadline(orient.headline),
-            planSteps(cortex.currentPlan),
+            decideSteps(cortex.currentPlan),
           )
           yield* appendWmDeltas(config.char.name, tick, seededDeltas)
         } else if (decideSteps(decide).length > 0) {
@@ -501,7 +500,7 @@ export const runActivation = (config: ActivationConfig) =>
           // orient narrative can't masquerade in WM.md as a committed plan.
           const seededDeltas = yield* planTodos.seed(
             planTitleFromHeadline(orient.headline),
-            planSteps(cortex.currentPlan),
+            decideSteps(cortex.currentPlan),
           )
           yield* appendWmDeltas(config.char.name, tick, seededDeltas)
         } else if (decide.decision === "plan") {
@@ -617,7 +616,7 @@ export const runActivation = (config: ActivationConfig) =>
       // alert) is now visibly accounted for instead of silently invisible.
       const currentStepTask =
         cortex.currentPlan !== null
-          ? planSteps(cortex.currentPlan)[cortex.currentStepIndex]?.task
+          ? decideSteps(cortex.currentPlan)[cortex.currentStepIndex]?.task
           : undefined
       const interruptEvals = interrupts.explain(state as never, summary.situation, currentStepTask)
       if (interruptEvals.length > 0) {
@@ -814,7 +813,7 @@ export const runActivation = (config: ActivationConfig) =>
       // when a plan is active + no turn is in flight; false otherwise.)
       let willEvaluate = false
       if (cortex.currentPlan !== null && !session.turnInFlight() && !isWedgedEmptyPlan(cortex.currentPlan)) {
-        const step = planSteps(cortex.currentPlan)[cortex.currentStepIndex]
+        const step = decideSteps(cortex.currentPlan)[cortex.currentStepIndex]
         if (step) {
           const budgetElapsed = session.isOpen() && tick - stepStartTick >= step.timeoutTicks
           willEvaluate = session.doneSignaled() || budgetElapsed
@@ -917,7 +916,7 @@ export const runActivation = (config: ActivationConfig) =>
 
       // 6. Step execution — when a plan is active and no conscious turn is in flight.
       if (cortex.currentPlan !== null && !session.turnInFlight()) {
-        const steps = planSteps(cortex.currentPlan)
+        const steps = decideSteps(cortex.currentPlan)
         const step = steps[cortex.currentStepIndex]
         if (isWedgedEmptyPlan(cortex.currentPlan)) {
           // Issue 4 (structural invariant): an active plan with no executable

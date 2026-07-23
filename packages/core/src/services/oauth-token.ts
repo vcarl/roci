@@ -1,9 +1,6 @@
-import { Effect } from "effect"
 import { readFileSync, writeFileSync } from "node:fs"
 import { execFileSync, spawnSync } from "node:child_process"
 import * as path from "node:path"
-import { logToConsole } from "../logging/log-writer.js"
-import { DockerError } from "./Docker.js"
 
 export const TOKEN_FILENAME = ".oauth-token"
 
@@ -67,45 +64,4 @@ export function runSetupToken(): { status: number; stdout: string } {
   })
   return { status: result.status ?? 1, stdout: result.stdout ?? "" }
 }
-
-/**
- * Ensure an OAuth token is available, acquiring one if necessary.
- * Tries the saved `.oauth-token` file first, then falls back to `claude setup-token`.
- * Returns the token string.
- */
-export const ensureToken = (projectRoot: string) =>
-  Effect.gen(function* () {
-    const saved = loadSavedToken(projectRoot)
-    if (saved) {
-      yield* logToConsole("orchestrator", "main", "Loaded OAuth token from .oauth-token")
-      return saved
-    }
-
-    if (!isClaudeCliAvailable()) {
-      return yield* Effect.fail(
-        new DockerError(
-          "'claude' CLI is not installed or not in PATH. Install it with: npm install -g @anthropic-ai/claude-code",
-        ),
-      )
-    }
-
-    yield* logToConsole("orchestrator", "main", "Acquiring OAuth token via 'claude setup-token'...")
-    const { status, stdout } = runSetupToken()
-    if (status !== 0) {
-      return yield* Effect.fail(
-        new DockerError("'claude setup-token' failed. Is the 'claude' CLI installed?"),
-      )
-    }
-
-    const token = extractTokenFromOutput(stdout)
-    if (!token) {
-      return yield* Effect.fail(
-        new DockerError("Could not extract token from 'claude setup-token' output."),
-      )
-    }
-
-    saveToken(projectRoot, token)
-    yield* logToConsole("orchestrator", "main", "OAuth token saved to .oauth-token")
-    return token
-  })
 

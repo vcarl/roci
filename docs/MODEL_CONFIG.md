@@ -196,5 +196,3 @@ first-class local-model label while a typo like `local/…` misspelled or a bare
 | `packages/core/src/core/model-config.test.ts` | Unit tests for `resolveModel` resolution and `assertValidModelConfig` |
 | `packages/core/src/model/runtime.ts` | `modelRuntime()` (single source of truth), `runtimeBinary()`, and `runtimeBaseArgs()` |
 | `.roci/models.json` | Per-project legacy model configuration (not checked in) |
-</content>
-</invoke>

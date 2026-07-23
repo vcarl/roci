@@ -142,8 +142,8 @@ critical-interrupt check (step 2).
 
 ## 4. Plans, steps, and completion
 
-A `decide=plan` decision carries an array of plan steps. `planSteps` / `decideSteps`
-(`brain/stem/state.ts`) always return a real array even when a small model emits a malformed
+A `decide=plan` decision carries an array of plan steps. `decideSteps`
+(`brain/stem/state.ts`) always returns a real array even when a small model emits a malformed
 `plan` with missing or non-array `steps`, so the loop never crashes on `.length`/`.map`. An
 active plan with no executable steps is a wedged-plan invariant violation
 (`isWedgedEmptyPlan`, `state.ts`) that the loop fails loudly on and self-heals by re-orienting.

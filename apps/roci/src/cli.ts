@@ -616,20 +616,9 @@ const createAppCommand = Command.make("create-app", { characters: createAppChara
 ).pipe(Command.withDescription("Create GitHub Apps for character identities via manifest flow"))
 
 // --- default (no subcommand) handler ---
-// Reuse the same options as `start` so `roci` and `roci start` accept the same filters.
-const defaultCharacters = Args.text({ name: "characters" }).pipe(Args.repeated)
-
-const defaultTickInterval = Options.integer("tick-interval").pipe(
-  Options.withDefault(30),
-)
-
-const defaultDomainOption = Options.text("domain").pipe(
-  Options.repeated,
-)
-
-const defaultManualApproval = Options.boolean("manual-approval").pipe(
-  Options.optional,
-)
+// The root command reuses `start`'s own option descriptors (below) so `roci` and
+// `roci start` accept the same filters — an @effect/cli descriptor can be shared
+// across commands, as the tier options already are.
 
 /**
  * Auto-detect flow: if characters are configured, validate and start.
@@ -685,7 +674,7 @@ const runAutoDetect = (args: {
 // --- root command ---
 const rociCommand = Command.make(
   "roci",
-  { characters: defaultCharacters, tickInterval: defaultTickInterval, domain: defaultDomainOption, manualApproval: defaultManualApproval, tierFast, tierSmart, tierReasoning },
+  { characters: startCharacters, tickInterval, domain: domainOption, manualApproval, tierFast, tierSmart, tierReasoning },
   // The bare `roci` invocation can start a session via auto-detect, so the model
   // layer is provided directly onto THIS handler's effect (not via
   // Command.provide on the root command — that would re-wrap every dispatched
