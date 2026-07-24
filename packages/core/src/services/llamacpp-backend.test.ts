@@ -27,7 +27,7 @@ describe("buildLlamaArgs", () => {
       "--host", "127.0.0.1",
       "--port", "8083",
       "--alias", spec.model,
-      "-c", "32768",
+      "-c", "131072",
       "-ngl", "99",
       "--jinja",
       "--reasoning-format", "deepseek",
@@ -47,10 +47,10 @@ describe("buildLlamaArgs", () => {
     expect(args[args.indexOf("--port") + 1]).toBe(String(spec.port))
   })
 
-  it("routes reasoning to the final channel via --reasoning-format deepseek and a 32768 context", () => {
+  it("routes reasoning to the final channel via --reasoning-format deepseek and a 131072 context", () => {
     const args = buildLlamaArgs(spec, gguf)
     expect(args[args.indexOf("--reasoning-format") + 1]).toBe("deepseek")
-    expect(args[args.indexOf("-c") + 1]).toBe("32768")
+    expect(args[args.indexOf("-c") + 1]).toBe("131072")
   })
 })
 

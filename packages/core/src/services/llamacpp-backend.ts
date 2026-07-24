@@ -135,8 +135,13 @@ export function ggufNotFoundMessage(searchedGlob: string): string {
  *
  * `--jinja --reasoning-format deepseek` makes llama.cpp apply the model's harmony
  * chat template and route the FINAL channel to `message.content` (reasoning to
- * `reasoning_content`), so the HTTP path reads a real answer. `-c 32768` context,
- * `-ngl 99` offloads all layers to the GPU.
+ * `reasoning_content`), so the HTTP path reads a real answer. `-c 131072` gives
+ * the full native 128k context: the opencode BODY accumulates a large
+ * conversation (game state + progress notes + tool history) that overflowed a
+ * 32768 window live — the overflow triggered opencode's compaction, whose
+ * (multimodal-assuming) "request exceeded size limit / media removed" message
+ * derailed gpt-oss into an irrelevant apology and failed the step. `-ngl 99`
+ * offloads all layers to the GPU.
  */
 export function buildLlamaArgs(spec: TierSpec, ggufPath: string): ReadonlyArray<string> {
   return [
@@ -144,7 +149,7 @@ export function buildLlamaArgs(spec: TierSpec, ggufPath: string): ReadonlyArray<
     "--host", "127.0.0.1",
     "--port", String(spec.port),
     "--alias", spec.model,
-    "-c", "32768",
+    "-c", "131072",
     "-ngl", "99",
     "--jinja",
     "--reasoning-format", "deepseek",
