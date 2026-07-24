@@ -16,6 +16,8 @@ import { LongtermStoreLive } from "@roci/core/brain/limbic/hippocampus/memory/lo
 import { MemoryGatewayLive } from "@roci/core/brain/limbic/hippocampus/memory/memory-gateway.js"
 import { ModelServiceLive, ModelBackendTag } from "@roci/core/services/ModelService.js"
 import { makeMlxBackend } from "@roci/core/services/mlx-backend.js"
+import { makeLlamaCppBackend } from "@roci/core/services/llamacpp-backend.js"
+import { makeCompositeBackend } from "@roci/core/services/composite-backend.js"
 import { runOrchestrator } from "./orchestrator.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
@@ -46,7 +48,25 @@ const PROJECT_ROOT = process.cwd()
 // root command globally, or every subcommand (stop/status/pause/...) would spawn
 // the mlx server. The backend needs CommandExecutor from NodeContext, which is
 // provided globally in main.ts.
-const modelBackendLayer = Layer.effect(ModelBackendTag, makeMlxBackend())
+// ONE ModelBackend is provided to ModelService for all tiers, but the tiers now
+// span two serving runtimes: hindbrain/forebrain on mlx, the resident conscious
+// on llama.cpp (llama-server, gpt-oss-20b GGUF). We build both backends and wrap
+// them in a composite that dispatches per tier by the handle's `provider` field.
+// Both need CommandExecutor (from NodeContext, provided globally in main.ts).
+const modelBackendLayer = Layer.effect(
+  ModelBackendTag,
+  Effect.gen(function* () {
+    const mlx = yield* makeMlxBackend()
+    const llamacpp = yield* makeLlamaCppBackend()
+    return makeCompositeBackend({
+      mlx,
+      llamacpp,
+      // No tier uses the generic openai-compatible provider today; route it to
+      // mlx so the map is total (composite throws on an unregistered provider).
+      "openai-compatible": mlx,
+    })
+  }),
+)
 const modelServiceLayer = ModelServiceLive.pipe(Layer.provide(modelBackendLayer))
 
 /**

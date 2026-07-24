@@ -1,4 +1,4 @@
-import type { CortexTier } from "../model/handles.js"
+import type { CortexTier, ModelProvider } from "../model/handles.js"
 import { DEFAULT_CORTEX_MODELS } from "../model/handles.js"
 
 export type TierLifecycle = "resident" | "per-phase"
@@ -6,6 +6,12 @@ export type TierLifecycle = "resident" | "per-phase"
 export interface TierSpec {
   readonly tier: CortexTier
   readonly model: string
+  /**
+   * Serving provider, DERIVED from the handle. The composite ModelBackend
+   * dispatches each spawn/probe/kill to the matching backend by this field
+   * (conscious → llamacpp, hindbrain/forebrain → mlx).
+   */
+  readonly provider: ModelProvider
   readonly port: number
   readonly baseUrl: string
   readonly spawnArgs: ReadonlyArray<string>
@@ -33,11 +39,21 @@ function specFor(
       `TierSpec port/baseUrl mismatch for ${tier}: spec port=${port} (${fromPort}) handles=${baseUrl}`,
     )
   }
-  return { tier, model: handle.model, port, baseUrl, spawnArgs: [], lifecycle, timeoutMs }
+  return {
+    tier,
+    model: handle.model,
+    provider: handle.provider,
+    port,
+    baseUrl,
+    spawnArgs: [],
+    lifecycle,
+    timeoutMs,
+  }
 }
 
-// The conscious tier (gemma-4-31b) can lose the cold-load race for minutes;
-// the light tiers load in seconds. Timeouts are generous headroom over observed cold-load times.
+// The conscious tier (gpt-oss-20b GGUF on llama.cpp) can lose the cold-load race
+// for minutes; the light tiers load in seconds. Timeouts are generous headroom
+// over observed cold-load times.
 export const MODEL_TIER_SPECS: Readonly<Record<CortexTier, TierSpec>> = {
   hindbrain: specFor("hindbrain", 8081, "per-phase", 120_000),
   forebrain: specFor("forebrain", 8082, "per-phase", 180_000),

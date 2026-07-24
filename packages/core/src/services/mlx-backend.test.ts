@@ -83,11 +83,13 @@ describe("mlxNotFoundMessage", () => {
 })
 
 describe("buildMlxArgs", () => {
-  it("builds mlx_lm.server --model <id> --port <p> for the conscious tier", () => {
-    const args = buildMlxArgs(resolveTierSpec("conscious"))
+  it("builds mlx_lm.server --model <id> --port <p> for an mlx tier", () => {
+    // conscious is no longer mlx (it runs on llama.cpp), so exercise buildMlxArgs
+    // against the forebrain mlx tier (port 8082).
+    const args = buildMlxArgs(resolveTierSpec("forebrain"))
     expect(args).toEqual([
-      "--model", "mlx-community/gemma-4-31b-it-8bit",
-      "--port", "8083",
+      "--model", "mlx-community/Qwen3.5-9B-4bit",
+      "--port", "8082",
     ])
   })
   it("appends spawnArgs after the base flags", () => {

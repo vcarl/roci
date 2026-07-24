@@ -149,7 +149,7 @@ describe("ConsciousThought service contract", () => {
       ),
     )
     expect(seenLabel).toBe(label)
-    expect(seenLabel).toBe("local/mlx-community/gemma-4-31b-it-8bit")
+    expect(seenLabel).toBe("local/unsloth/gpt-oss-20b-GGUF")
   })
 
   it("provision is a no-op in ConsciousThoughtTest (does not throw)", async () => {

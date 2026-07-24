@@ -92,6 +92,8 @@ export type { ConsciousTurnConfig, ProvisionOpts } from "#brain/cortex/conscious
 // ModelService — tier lifecycle management
 export { ModelService, ModelServiceLive, ModelBackendTag, makeModelService } from "./services/ModelService.js"
 export { makeMlxBackend, buildMlxArgs, buildProbeRequest } from "./services/mlx-backend.js"
+export { makeLlamaCppBackend, buildLlamaArgs } from "./services/llamacpp-backend.js"
+export { makeCompositeBackend } from "./services/composite-backend.js"
 // Synchronous orphan-reaper backstop for resident mlx servers (the tsx double-fork
 // shutdown race). The signal handlers in apps/roci/src/main.ts call reapResidentServers.
 export {

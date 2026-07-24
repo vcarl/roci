@@ -50,7 +50,7 @@ describe("consciousModelLabel", () => {
     )
     // Concretely the multi-slash form opencode parses (provider split on first slash).
     expect(consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious)).toBe(
-      "local/mlx-community/gemma-4-31b-it-8bit",
+      "local/unsloth/gpt-oss-20b-GGUF",
     )
   })
 })

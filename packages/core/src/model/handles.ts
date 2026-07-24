@@ -69,8 +69,8 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
   //   - forebrain (`enable_thinking: false`) — same decision after measurement;
   //     prompt-level discipline replaces the monologue for ambiguity handling.
   // The conscious tier (decide/evaluate) omits chat_template_kwargs entirely —
-  // gemma-4-31b-it is an instruction model with no Qwen3.5-style enable_thinking
-  // gate, so no kwarg is needed or meaningful.
+  // gpt-oss-20b is a harmony reasoning model served via llama.cpp, where reasoning
+  // is toggled server-side by `--reasoning-format`, not a request-body kwarg.
   // hindbrain (observe) runs the per-event limbic appraisal (Subteam A). The
   // empirical spike tuned it to temperature 0.05 (the human's "some variation"
   // choice): temp 0.0 eliminated run-to-run noise but the human accepted mild ±1
@@ -118,15 +118,23 @@ export const DEFAULT_CORTEX_MODELS: CortexModelConfig = {
       extraBody: { chat_template_kwargs: { enable_thinking: false } },
     },
   },
-  // conscious (decide/evaluate) is the designated deep-thinker. gemma-4-31b-it
-  // is a large instruction-tuned model — not a chain-of-thought reasoner like
-  // the former Qwen3.5-122B-A10B. The generous token budget gives headroom for
-  // multi-step decide/evaluate tasks.
+  // conscious (decide/evaluate) is the designated deep-thinker. gpt-oss-20b is a
+  // harmony REASONING model served natively by llama.cpp (llama-server) from a
+  // Q8_0 GGUF — NOT an mlx instruction model. `provider: "llamacpp"` routes it to
+  // the llama.cpp backend (the composite dispatches by this field); the light
+  // tiers stay on mlx. Reasoning is handled SERVER-SIDE by llama-server's
+  // `--reasoning-format deepseek`, which routes the harmony FINAL channel to
+  // `message.content` (chain-of-thought to `reasoning_content`) — so no extraBody
+  // / chat_template_kwargs is needed here. The HTTP path is doubly protected by
+  // client.ts's `firstNonEmpty(content, reasoning, reasoning_content)` fallback.
+  // The `model` id is BOTH the llama-server `--alias` and the readiness-probe key;
+  // they MUST match (the probe checks response.model === spec.model). The generous
+  // token budget gives headroom for multi-step decide/evaluate tasks.
   conscious: {
     tier: "conscious",
-    provider: "mlx",
+    provider: "llamacpp",
     baseUrl: "http://127.0.0.1:8083/v1",
-    model: "mlx-community/gemma-4-31b-it-8bit",
+    model: "unsloth/gpt-oss-20b-GGUF",
     params: { temperature: 0.7, maxTokens: 16384 },
   },
 }

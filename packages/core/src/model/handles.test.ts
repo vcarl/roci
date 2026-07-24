@@ -40,10 +40,18 @@ describe("DEFAULT_CORTEX_MODELS", () => {
     expect(DEFAULT_CORTEX_MODELS.conscious.params?.maxTokens).toBeGreaterThanOrEqual(1024)
   })
 
-  it("pins hindbrain/forebrain to the Qwen3.5 ladder and conscious to gemma-4-31b-it", () => {
+  it("pins hindbrain/forebrain to the Qwen3.5 ladder and conscious to gpt-oss-20b GGUF", () => {
     expect(DEFAULT_CORTEX_MODELS.hindbrain.model).toBe("mlx-community/Qwen3.5-2B-4bit")
     expect(DEFAULT_CORTEX_MODELS.forebrain.model).toBe("mlx-community/Qwen3.5-9B-4bit")
-    expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("mlx-community/gemma-4-31b-it-8bit")
+    expect(DEFAULT_CORTEX_MODELS.conscious.model).toBe("unsloth/gpt-oss-20b-GGUF")
+  })
+
+  // The conscious tier is now served natively by llama.cpp (llama-server) while
+  // the light tiers stay on mlx. The composite backend dispatches by this field.
+  it("serves conscious via llamacpp and the light tiers via mlx", () => {
+    expect(DEFAULT_CORTEX_MODELS.hindbrain.provider).toBe("mlx")
+    expect(DEFAULT_CORTEX_MODELS.forebrain.provider).toBe("mlx")
+    expect(DEFAULT_CORTEX_MODELS.conscious.provider).toBe("llamacpp")
   })
 
   // The Qwen3.5 ladder models are "thinking" models (enable_thinking defaults ON).
@@ -73,9 +81,11 @@ describe("DEFAULT_CORTEX_MODELS", () => {
     expect(foreKwargs?.enable_thinking).toBe(false)
   })
 
-  // conscious (decide/evaluate) is the designated deep-reasoner and must KEEP
-  // thinking: no extraBody → no chat_template_kwargs → thinking stays ON.
-  it("keeps thinking enabled on the conscious tier (no extraBody)", () => {
+  // conscious (decide/evaluate) is the designated deep-reasoner. It is now a
+  // harmony reasoning model served via llama.cpp; reasoning is handled SERVER-SIDE
+  // by `--reasoning-format deepseek` (final channel → content, CoT →
+  // reasoning_content), so NO extraBody / chat_template_kwargs is needed.
+  it("carries no extraBody on the conscious tier (reasoning handled server-side)", () => {
     expect(DEFAULT_CORTEX_MODELS.conscious.params?.extraBody).toBeUndefined()
   })
 })

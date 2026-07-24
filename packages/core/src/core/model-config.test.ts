@@ -60,14 +60,14 @@ describe("resolveModel", () => {
     expect(resolveModel(config, "dreamCompression", "smart")).toBe("opus")
   })
 
-  it("routes dreamCompression to the local conscious mlx model by default", () => {
+  it("routes dreamCompression to the local conscious model by default", () => {
     // Single source of truth: the default is DERIVED from the conscious handle,
     // so this equality can never drift from the model the cortex serves.
     expect(resolveModel(DEFAULT_MODEL_CONFIG, "dreamCompression", "smart")).toBe(
       consciousModelLabel(DEFAULT_CORTEX_MODELS.conscious),
     )
     expect(resolveModel(DEFAULT_MODEL_CONFIG, "dreamCompression", "smart")).toBe(
-      "local/mlx-community/gemma-4-31b-it-8bit",
+      "local/unsloth/gpt-oss-20b-GGUF",
     )
     // The resolved dreamCompression model must NEVER be a Claude tier (no claude runtime
     // in the reflection path).
