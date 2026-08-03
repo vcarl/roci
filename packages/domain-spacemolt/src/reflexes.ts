@@ -38,8 +38,9 @@ import type { CombatState, GameState } from "./types.js"
 /**
  * Quiet-tick backstop for re-arming the onset edge.
  *
- * The primary arm is `inCombat` going false: `battle_ended` and `player_died`
- * (`event-processor.ts`) both reset `combat.lastEventTick` to `null` while
+ * The primary arm is `inCombat` going false: `battle_ended`, `battle_left`
+ * (see `endsSelfCombat`) and `player_died` (`event-processor.ts`) all reset
+ * `combat.lastEventTick` to `null` while
  * PRESERVING `onsetSeq`, and `nextCombatState` treats "was not in combat" as
  * the fresh-onset signal directly — it no longer infers freshness from tick
  * nullability, because three of the five combat frame types
@@ -47,7 +48,7 @@ import type { CombatState, GameState } from "./types.js"
  * all, and a null-means-fresh rule made every tickless participation frame
  * re-fire the reflex.
  *
- * This constant is the BACKSTOP for the case the primary arm misses: a
+ * This constant is a PARTIAL backstop for the case the primary arm misses: a
  * dropped `battle_ended` would otherwise leave `inCombat` (and therefore the
  * latch) stuck true forever, silencing the reflex for the rest of the
  * character's run — worse than one that occasionally re-fires. So a combat
@@ -57,18 +58,15 @@ import type { CombatState, GameState } from "./types.js"
  * that a lull inside one real fight will not trip it, short enough that a
  * dropped end-frame costs one spurious escalation rather than permanent
  * silence.
+ *
+ * It only backstops the REFLEX, never `inCombat` itself: it re-arms `onsetSeq`
+ * and needs a further TICKED combat frame to do even that. Once a fight is
+ * genuinely over no such frame arrives, so a missed exit frame still leaves
+ * `SituationType.InCombat` latched on the briefing and the state bar forever.
+ * That is why `endsSelfCombat` — not this constant — is the real guarantee,
+ * and why it errs toward clearing.
  */
 export const COMBAT_REARM_QUIET_TICKS = 12
-
-/** Frames that can indicate you are a participant in a fight, including the end frame. */
-export const COMBAT_FRAME_TYPES: ReadonlySet<string> = new Set([
-  "battle_started",
-  "battle_joined",
-  "battle_update",
-  "battle_damage",
-  "battle_alert",
-  "battle_ended",
-])
 
 /**
  * Is THIS player a participant in the fight this frame describes?
@@ -103,6 +101,56 @@ export function isSelfParticipant(type: string, payload: unknown, playerId: stri
         Array.isArray(p.participants) &&
         p.participants.some((x) => (x as { player_id?: string } | null)?.player_id === playerId)
       )
+    default:
+      return false
+  }
+}
+
+/**
+ * Does this frame END this player's participation in a fight?
+ *
+ * A SEPARATE predicate from `isSelfParticipant`, and deliberately so: the two
+ * ask opposite questions and must fail in opposite directions. Entering combat
+ * demands positive evidence (a bystander's fight is not yours). LEAVING combat
+ * must not: `inCombat` is a latch, and the only two writers of `false` were
+ * `battle_ended` and `player_died` — so any exit this predicate misses leaves
+ * the character reading `SituationType.InCombat` FOREVER
+ * (`generateInCombatBriefing` replaces the whole briefing; the state bar shows
+ * COMBAT), and `COMBAT_REARM_QUIET_TICKS` cannot rescue it because that
+ * backstop re-arms `onsetSeq` only and needs a further TICKED combat frame
+ * that will never arrive once the fight is over.
+ *
+ * The two frames, keyed off the generated payload shapes:
+ *
+ *   `battle_left` — `{player_id, reason, username}`, all required, one frame
+ *   per departing pilot. This is the FLEE frame: the outcome the `interrupt`
+ *   rung exists to make possible. It was unhandled entirely (it fell through
+ *   the frame switch's `default: {}`), so a character that successfully fled
+ *   stayed in combat for the rest of the run. Only YOUR departure ends YOUR
+ *   fight, and `player_id` is unambiguous, so this arm is an exact match.
+ *
+ *   `battle_ended` — `participants` is OPTIONAL on the generated
+ *   `NotificationBattleEnded` (the rest of the payload is battle-level:
+ *   battle_id, duration, reason, winning_side, ships_destroyed, total_damage).
+ *   When the server omits it there is NO field left that names you, so a
+ *   membership test can only answer "no" — which is the answer that latches.
+ *   An absent list therefore means "the battle is over", not "the fight
+ *   continues": the frame is scoped to one battle_id and its arrival is itself
+ *   the evidence. The cost of being wrong here is bounded and self-correcting
+ *   — if you really were still fighting, the next `battle_damage` reads
+ *   `inCombat: false`, is treated as a fresh onset, and the reflex fires once
+ *   more. The cost of the other error is unbounded: silence for the rest of
+ *   the session.
+ *
+ * Pure; total; never throws on a malformed payload.
+ */
+export function endsSelfCombat(type: string, payload: unknown, playerId: string): boolean {
+  const p = (payload ?? {}) as Record<string, unknown>
+  switch (type) {
+    case "battle_left":
+      return playerId.length > 0 && p.player_id === playerId
+    case "battle_ended":
+      return !Array.isArray(p.participants) || isSelfParticipant("battle_ended", payload, playerId)
     default:
       return false
   }
@@ -152,10 +200,18 @@ export function nextCombatState(prev: CombatState, tick: number | undefined, pre
  * The latch is a Map keyed by PLAYER ID, not a plain variable, because
  * `spaceMoltEventProcessor` is a module-level singleton shared by every
  * character running in this host process — a bare closure variable would let
- * one character's fight suppress another's. `runDeterministicAppraisers`
- * (`loop.ts:794`) is this function's only caller and calls it exactly once per
- * tick, so mutating the latch here is safe; nothing else evaluates it
- * speculatively the way `InterruptRegistry.explain()` does for rules.
+ * one character's fight suppress another's. `runDeterministicAppraisers` —
+ * specifically the `runDeterministicAppraisers(eventProcessor, ...)` call site
+ * in `brain/stem/loop.ts` (grep for it; the line has moved under this very
+ * docblock before and will again) — is this function's only caller, so
+ * mutating the latch here is safe; nothing else evaluates it speculatively the
+ * way `InterruptRegistry.explain()` does for rules. That caller runs at most
+ * once per tick, NOT once per tick unconditionally: on a tick where an
+ * amygdala critical fires, the loop returns `Interrupted` before reaching it,
+ * so this appraiser is skipped for that tick. That is harmless for the latch —
+ * an onset that coincides with a critical tick is simply deferred to the next
+ * tick that does reach here, never lost, because the equality latch below
+ * compares against whatever `onsetSeq` the (unadvanced) state still carries.
  *
  * The comparison is EQUALITY (`prevSeq === seq`), not a high-water mark
  * (`prevSeq >= seq`). A high-water mark looks safer but isn't: `onsetSeq`
@@ -184,7 +240,7 @@ export function nextCombatState(prev: CombatState, tick: number | undefined, pre
  * fires.
  *
  * Routes to the `interrupt` RUNG via `interrupt: true`, which `eventRung`
- * (`state.ts:381`) gates on explicitly rather than on weight. That rung kills
+ * (`brain/stem/state.ts`) gates on explicitly rather than on weight. That rung kills
  * the conscious turn and drops the plan but STAYS IN THE LOOP — strictly
  * gentler than an amygdala critical, and correct: you are in a fight, not
  * between lives.
@@ -226,9 +282,11 @@ export const combatOnsetAppraiser: DeterministicAppraiser = createCombatOnsetApp
  * ever ran — which is exactly the class of bug that made `suppressWhenTaskIs`
  * inert. The clear lives at the point the exit is consumed instead.
  *
- * No `suppressWhenTaskIs`: `criticals()` is called without `currentStepTask`
- * (`loop.ts:668`) so suppression is inert, and there is no task during which
- * being dead is acceptable anyway.
+ * No `suppressWhenTaskIs`: `runActivation`'s call to `interrupts.criticals()`
+ * (`brain/stem/loop.ts` — grep for it; the line has moved under this docblock
+ * before and will again) is made without `currentStepTask`, unlike the
+ * neighboring `interrupts.explain()` call, so suppression is inert, and there
+ * is no task during which being dead is acceptable anyway.
  */
 export const playerDeathRule: InterruptRule = {
   name: "player_died",
@@ -242,9 +300,11 @@ export const playerDeathRule: InterruptRule = {
  * The domain's interrupt registry: exactly one rule.
  *
  * It stays a registry rather than being deleted because `runActivation`
- * resolves `InterruptRegistryTag` unconditionally (`loop.ts:660,668`) — and
- * because death genuinely wants the amygdala's cut-the-line exit, which is the
- * one thing the appraisal ladder deliberately does not offer.
+ * (`brain/stem/loop.ts`) resolves `InterruptRegistryTag` and calls
+ * `interrupts.explain()`/`interrupts.criticals()` unconditionally — grep for
+ * those symbols rather than trust a line number here, it has drifted before —
+ * and because death genuinely wants the amygdala's cut-the-line exit, which is
+ * the one thing the appraisal ladder deliberately does not offer.
  */
 export const spaceMoltInterruptRegistry = createInterruptRegistry([playerDeathRule])
 

@@ -7,7 +7,6 @@ import {
   SESSION_FILE_NAME,
   spaceMoltUrl,
   spaceMoltWsUrl,
-  spaceMoltSocketBaseUrl,
   sessionFilePath,
   validateSessionFile,
   readPlayerCredentials,
@@ -41,11 +40,6 @@ describe("SPACEMOLT_URL wiring", () => {
   it("honors the env override", () => {
     process.env.SPACEMOLT_URL = "https://staging.spacemolt.com/api/v2"
     expect(spaceMoltUrl()).toBe("https://staging.spacemolt.com/api/v2")
-  })
-
-  it("derives the socket origin without the /api/v2 path", () => {
-    delete process.env.SPACEMOLT_URL
-    expect(spaceMoltSocketBaseUrl()).toBe("https://game.spacemolt.com")
   })
 
   it("derives the library's wss /ws/v2 URL from the same base", () => {

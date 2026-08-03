@@ -397,6 +397,64 @@ describe("spaceMoltEventProcessor — combat participation gating", () => {
     expect(next.inCombat).toBe(false)
   })
 
+  it("battle_ended clears inCombat even when the payload carries NO participants list", () => {
+    // `participants` is optional on the generated NotificationBattleEnded. This
+    // frame was previously a no-op whenever the server omitted it, which left
+    // inCombat latched true for the rest of the run.
+    const prev = { ...withId(), inCombat: true, combat: { lastEventTick: 400, onsetSeq: 1 } } as GameState
+    const next = spaceMoltEventProcessor
+      .processEvent(
+        { type: "battle_ended", payload: { battle_id: "b", duration: 9, reason: "all_destroyed", winning_side: 1 } },
+        prev,
+      )
+      .stateUpdate!(prev) as GameState
+    expect(next.inCombat).toBe(false)
+    expect(next.combat).toEqual({ lastEventTick: null, onsetSeq: 1 })
+  })
+
+  it("battle_left clears inCombat when the leaver is you, and is a no-op when it is not", () => {
+    // battle_left was unhandled — it fell through the switch's `default: {}`.
+    const prev = { ...withId(), inCombat: true, combat: { lastEventTick: 400, onsetSeq: 1 } } as GameState
+    const mine = spaceMoltEventProcessor
+      .processEvent({ type: "battle_left", payload: { player_id: "me", reason: "fled", username: "Pilot" } }, prev)
+      .stateUpdate!(prev) as GameState
+    expect(mine.inCombat).toBe(false)
+    expect(mine.combat).toEqual({ lastEventTick: null, onsetSeq: 1 })
+
+    const theirs = spaceMoltEventProcessor
+      .processEvent({ type: "battle_left", payload: { player_id: "other", reason: "fled", username: "X" } }, prev)
+      .stateUpdate!(prev) as GameState
+    expect(theirs.inCombat).toBe(true)
+    expect(theirs.combat).toEqual({ lastEventTick: 400, onsetSeq: 1 })
+  })
+
+  it("REGRESSION: a character that FLEES ends up out of combat, and the next fight is a fresh onset", () => {
+    // The whole point of the interrupt rung is to let the character break off
+    // and run. Before this fix the flee frame was unhandled, so the character
+    // stayed SituationType.InCombat forever: generateInCombatBriefing replaced
+    // the briefing and the state bar read COMBAT for the rest of the session,
+    // and COMBAT_REARM_QUIET_TICKS could not rescue it because it re-arms
+    // onsetSeq only and needs a further ticked combat frame that never comes.
+    const flee = [
+      { type: "battle_alert", payload: { battle_id: "b1", participants: [{ player_id: "me" }] } },
+      { type: "battle_damage", payload: { attacker_id: "foe", target_id: "me", tick: 600 } },
+      { type: "battle_damage", payload: { attacker_id: "foe", target_id: "me", tick: 601 } },
+      { type: "battle_left", payload: { player_id: "me", reason: "fled", username: "Pilot" } },
+    ]
+    const fled = fold(flee, withId())
+    expect(fled.inCombat).toBe(false)
+    expect(fled.combat.onsetSeq).toBe(1)
+
+    // Well inside COMBAT_REARM_QUIET_TICKS: only the cleared latch can make this
+    // read as a new fight, which is exactly what the backstop cannot do.
+    const later = fold(
+      [{ type: "battle_damage", payload: { attacker_id: "foe2", target_id: "me", tick: 603 } }],
+      fled,
+    )
+    expect(later.inCombat).toBe(true)
+    expect(later.combat.onsetSeq).toBe(2)
+  })
+
   it("player_died sets deathPending and clears inCombat", () => {
     const prev = { ...withId(), inCombat: true } as GameState
     const res = spaceMoltEventProcessor.processEvent({ type: "player_died", payload: { respawn_base: "b" } }, prev)

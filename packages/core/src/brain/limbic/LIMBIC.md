@@ -179,8 +179,15 @@ priority sorting, and partitioning:
 - `softAlerts(state, situation, currentTask?)` -- non-critical alerts
 
 Critical alerts cause `runActivation` to return `Interrupted` (exiting to the break phase),
-carrying the firing `Alert[]`. Soft alerts are surfaced to the running conscious turn so
-it can factor them into its work.
+carrying the firing `Alert[]`.
+
+`softAlerts()` is declared on the interface and has **zero production callers repo-wide** —
+it was never wired to anything. It is kept only because `createInterruptRegistry` builds it
+for free and `explain()`'s audit trail is genuinely useful. A non-critical rule is a log
+line in the `interrupt_eval` note and nothing more. The escalation path that a non-critical
+condition actually wants is `EventProcessor.deterministicAppraisers` (above), whose results
+flow through the appraisal ladder and can reach `steer` — a forebrain nudge into the
+*running* session, which is what "surfaced to the running conscious turn" was reaching for.
 
 **Tag:** `InterruptRegistryTag`. Domains provide a `Layer` built from
 `createInterruptRegistry()`.

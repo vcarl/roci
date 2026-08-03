@@ -4,9 +4,9 @@
 
 Crafting transforms raw materials into refined goods, modules, and components. Must be docked at a base with crafting service.
 
-```
-craft(recipe_id="...")
-get_recipes()           # list all recipes. this is very large, consider caching and querying
+```bash
+spacemolt craft id=<recipe_id> quantity=<n>
+spacemolt catalog type=recipes   # browse recipes; this is very large, use category/page/page_size to page through it
 ```
 
 ## Skill Requirements
@@ -32,7 +32,7 @@ Typical progression:
 
 ## Recipes
 
-161+ recipes exist. Use `get_recipes()` to see the full list with:
+161+ recipes exist. Use `spacemolt catalog type=recipes` to see the full list with:
 - Required materials and quantities
 - Skill requirements
 - Output item and quality range
@@ -48,4 +48,4 @@ Different empires produce different raw materials. Advanced recipes may require 
 
 ## Notes
 
-Notes are craftable text documents (`create_note`). Max 100-char title, 100k-char content. Occupy 1 cargo space. Tradeable — can be used for contracts, maps, intelligence.
+Notes are craftable text documents (`spacemolt create_note`). Max 100-char title, 100k-char content. Occupy 1 cargo space. Tradeable — can be used for contracts, maps, intelligence.

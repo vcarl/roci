@@ -23,15 +23,15 @@ const processorWith = (
 
 describe("runDeterministicAppraisers", () => {
   it("returns [] for a domain that registers no appraisers at all", () => {
-    expect(runDeterministicAppraisers(processorWith(), {}, {})).toEqual([])
+    expect(runDeterministicAppraisers(processorWith(), {}, {}).results).toEqual([])
   })
 
   it("returns [] for a domain that registers an empty array", () => {
-    expect(runDeterministicAppraisers(processorWith([]), {}, {})).toEqual([])
+    expect(runDeterministicAppraisers(processorWith([]), {}, {}).results).toEqual([])
   })
 
   it("drops null results and keeps non-null ones, in registration order", () => {
-    const out = runDeterministicAppraisers(
+    const { results: out } = runDeterministicAppraisers(
       processorWith([
         () => ruleResult({ reason: "first" }),
         () => null,
@@ -46,7 +46,7 @@ describe("runDeterministicAppraisers", () => {
   it("stamps source:'deterministic' even when the rule claims otherwise", () => {
     // The stamp is applied HERE, not trusted from the rule, so a domain cannot
     // mint an appraisal that appraiseTick's tie-break treats as model output.
-    const out = runDeterministicAppraisers(
+    const { results: out } = runDeterministicAppraisers(
       processorWith([() => ruleResult({ source: "model" }), () => ruleResult({})]),
       {},
       {},
@@ -85,7 +85,7 @@ describe("runDeterministicAppraisers", () => {
       ]),
       {},
       {},
-    )
+    ).results
     expect(out).toEqual({
       disposition: "escalate",
       emotionalWeight: "😰",
@@ -98,8 +98,10 @@ describe("runDeterministicAppraisers", () => {
     })
   })
 
-  it("a THROWING rule is skipped, not propagated — a domain bug cannot kill the tick", () => {
-    const out = runDeterministicAppraisers(
+  it("a THROWING rule is skipped, RECORDED, and never propagated", () => {
+    // Skipping without recording made a rule that throws every tick look
+    // identical to a rule whose condition is simply false, forever.
+    const run = runDeterministicAppraisers(
       processorWith([
         () => {
           throw new Error("domain bug")
@@ -109,6 +111,43 @@ describe("runDeterministicAppraisers", () => {
       {},
       {},
     )
-    expect(out.map((o) => o.reason)).toEqual(["survivor"])
+    expect(run.results.map((o) => o.reason)).toEqual(["survivor"])
+    expect(run.errors).toEqual(["0: domain bug"])
+  })
+
+  it("records a non-Error throw too", () => {
+    const run = runDeterministicAppraisers(
+      processorWith([
+        () => {
+          throw "just a string"
+        },
+      ]),
+      {},
+      {},
+    )
+    expect(run.errors).toEqual(["0: just a string"])
+  })
+
+  it("CLAMPS a rule's result — a domain cannot push weight 99 onto the ladder", () => {
+    const [out] = runDeterministicAppraisers(
+      processorWith([
+        () => ({ ...ruleResult(), weight: 99, disposition: "panic" as never, emotionalWeight: "" }),
+      ]),
+      {},
+      {},
+    ).results
+    expect(out!.weight).toBe(5)
+    expect(out!.disposition).toBe("accumulate")
+    expect(out!.emotionalWeight).toBe("😐")
+    expect(out!.source).toBe("deterministic")
+  })
+
+  it("normalizes the string \"null\" drive so it cannot be read as a real drive", () => {
+    const [out] = runDeterministicAppraisers(
+      processorWith([() => ({ ...ruleResult(), drive: "null" })]),
+      {},
+      {},
+    ).results
+    expect(out!.drive).toBeNull()
   })
 })

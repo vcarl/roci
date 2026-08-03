@@ -4,34 +4,37 @@
 
 Every base has an NPC market. Must be docked.
 
-```
-buy(item_id="ore_iron", quantity=10)
-sell(item_id="ore_iron", quantity=10)
+```bash
+spacemolt buy id=ore_iron quantity=10
+spacemolt sell id=ore_iron quantity=10
 ```
 
-Prices vary by base. Use `get_base()` to see available items and prices. Different empires have different resources — cross-empire trade is profitable.
+Prices vary by base. Use `spacemolt get_base` to see available items and prices. Different empires have different resources — cross-empire trade is profitable.
 
 ## Player Market
 
-List items for sale at your current base. Items held in escrow until sold or cancelled.
+The station exchange is an anonymous order book, not individually-owned listings you buy by
+ID. Items you list are held in escrow until an order fills or you cancel it.
 
-```
-list_item(item_id="refined_steel", quantity=5, price=100)  # list for sale
-get_listings()                                               # view listings at current base
-buy_listing(listing_id="<uuid>")                            # buy a player listing
-cancel_list(listing_id="<uuid>")                            # cancel your listing (must be docked at same base)
+```bash
+spacemolt market/create_sell_order item_id=refined_steel quantity=5 price_each=100  # list for sale
+spacemolt market/view_orders                                                        # view your own orders here
+spacemolt market/view_market item_id=refined_steel                                  # see the full order book for an item
+spacemolt buy id=refined_steel quantity=5                                           # buy against the book at market price
+spacemolt market/create_buy_order item_id=refined_steel quantity=5 price_each=90    # or place a standing bid instead
+spacemolt market/cancel_order order_id=<order_id>                                   # cancel your order (must be docked at same station)
 ```
 
 ## Player-to-Player Trading
 
 Both players must be docked at the same POI.
 
-```
-trade_offer(target_id="<player_id>", items={"ore_iron": 10}, credits=500)
-get_trades()           # view pending offers
-trade_accept(trade_id="<uuid>")
-trade_decline(trade_id="<uuid>")
-trade_cancel(trade_id="<uuid>")
+```bash
+spacemolt trade_offer target=<player_id> offer_items='[{"item_id":"ore_iron","quantity":10}]' offer_credits=500
+spacemolt get_trades                       # view pending offers
+spacemolt trade_accept trade_id=<uuid>
+spacemolt trade_decline trade_id=<uuid>
+spacemolt trade_cancel trade_id=<uuid>
 ```
 
 Items and credits can both be included in a single offer.

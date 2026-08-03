@@ -128,7 +128,7 @@ Sessions progress through a sequence of named phases. Each phase returns a `Phas
 startup --> active (brain/stem) --> social --> reflection (dream) --> active
 ```
 
-- **startup** -- Read credentials, connect via WebSocket, compress diary if over threshold
+- **startup** -- Read `.spacemolt-session.json`, connect via `@spacemolt/lib`'s `Account`, compress diary if over threshold
 - **active** -- `runActivation` with domain bundle. On interrupt: restart active. On completion: proceed to social
 - **social** -- A quiet wind-down boundary at the end of a session (the old `dinner.execute()` diary rewrite is now the domain-agnostic consolidate turn inside `runReflection`)
 - **reflection** -- Run `runReflection`, whose unified `dream.execute()` consolidates then culls the diary/secrets toward the `DIARY_TARGET_LINES` target (150 lines, `dream.ts:16`), all on the local model. Loop back to active
@@ -235,16 +235,18 @@ Per character at `players/<name>/logs/`:
 
 ## Adding an Interrupt Rule
 
-Add to the rules array in the domain's `interrupts.ts`:
+Add to the rules array in the domain's `reflexes.ts`:
 
 ```typescript
 { name: "fuel_emergency", priority: "critical",
-  condition: (s, sit) => sit.flags.lowFuel && sit.type !== SituationType.Docked,
+  condition: (s, sit) => s.ship.fuel / s.ship.max_fuel < LOW_FUEL_THRESHOLD && sit.type !== SituationType.Docked,
   message: (s) => `Fuel critical (${s.ship.fuel}). Dock immediately.`,
   suppressWhenTaskIs: "refuel" }
 ```
 
-`createInterruptRegistry(rules)` builds an `InterruptRegistry` that handles rule walking, suppression, sorting, and partitioning into `criticals()` and `softAlerts()`. See the [LIMBIC.md](packages/core/src/brain/limbic/LIMBIC.md) amygdala section for details.
+For SpaceMolt this is deliberately a one-rule registry. Most conditions should be deterministic appraisers, not interrupt rules -- see LIMBIC.md.
+
+`createInterruptRegistry(rules)` builds an `InterruptRegistry` that handles rule walking, suppression, sorting, and partitioning. Only `criticals()` is wired to anything -- `softAlerts()` has zero production callers, so a non-critical rule is a log line in the `interrupt_eval` audit note. A condition that wants to steer the running session belongs in `EventProcessor.deterministicAppraisers` instead. See the [LIMBIC.md](packages/core/src/brain/limbic/LIMBIC.md) amygdala section for details.
 
 ## Console Output
 
@@ -330,10 +332,12 @@ All events are printed type-tagged with timestamp and character name:
 | `src/phases.ts` | Phase registry: startup, active (runActivation), social, reflection |
 | `src/index.ts` | Domain bundle assembly and stub skill registry |
 | `src/types.ts` | All domain types: game state, player, ship, system, POI, situation |
-| `src/game-socket-impl.ts` | WebSocket connection, login flow, event dispatching |
-| `src/event-processor.ts` | Maps WebSocket events to state operations |
-| `src/situation-classifier.ts` | Situation classification (combat, transit, docked, in-space) |
-| `src/interrupts.ts` | 10 interrupt rules across 4 priority levels |
+| `src/game-events.ts` | Frame vocabulary over `@spacemolt/lib`'s generated notification catalog, plus `schemaGapNote` |
+| `src/lib-state.ts` | Pure translator: the library's 8-section StateCache → the domain's `GameState` |
+| `src/account-socket.ts` | `Account` adapter -- connect, auth, subscribe, the three event sinks, close |
+| `src/event-processor.ts` | Maps push frames + `state_sync`/`connection_state` to state operations |
+| `src/situation-classifier.ts` | Situation classification (combat, docked, in-space) |
+| `src/reflexes.ts` | The two reflexes: combat onset (deterministic appraiser) and your own death (the one interrupt rule) |
 | `src/prompt-builder.ts` | Template-based prompt generation |
 
 ### CLI and orchestrator -- `apps/roci/` (roci)

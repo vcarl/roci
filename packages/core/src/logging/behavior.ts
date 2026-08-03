@@ -50,6 +50,11 @@ export type Behavior =
       /** True when at least one of this tick's reflexes degraded on a hindbrain
        *  endpoint failure (silently fell back to accumulate). */
       degraded?: boolean
+      /** One entry per deterministic appraiser that THREW this tick, as
+       *  `"<index>: <message>"`. Present only when at least one did — a
+       *  swallowed rule that is never reported is indistinguishable from a rule
+       *  whose condition is simply false. */
+      ruleErrors?: ReadonlyArray<string>
     }
   | { type: "orient"; headline: string }
   | { type: "decision"; disposition: "plan" | "wait" | "terminate" }

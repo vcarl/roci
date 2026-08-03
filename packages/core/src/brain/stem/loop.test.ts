@@ -3017,6 +3017,89 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     expect(appraisal?.reason).toBe("RULE: hull below 20%")
     expect(appraisal?.weight).toBe(3)
   }, 20_000)
+
+  // A rule that throws on EVERY tick was previously swallowed with ZERO
+  // telemetry — indistinguishable from a rule whose condition simply never
+  // holds. This pins the fix: the error is recorded and surfaced.
+  it("a THROWING deterministic appraiser is reported, not silently swallowed", async () => {
+    const behaviors: Array<Record<string, unknown>> = []
+    const capturingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            const e = event as unknown as { kind?: string; behavior?: Record<string, unknown> }
+            if (e.kind === "behavior" && e.behavior) behaviors.push(e.behavior)
+          }),
+      }),
+    )
+    const ruleDomain = Layer.mergeAll(
+      Layer.succeed(
+        EventProcessorTag,
+        EventProcessorTag.of({
+          processEvent: () => ({}),
+          deterministicAppraisers: [
+            () => {
+              throw new Error("rule exploded")
+            },
+          ],
+        }),
+      ),
+      Layer.succeed(
+        SituationClassifierTag,
+        SituationClassifierTag.of({
+          summarize: () => ({ situation: {} as never, headline: "h", sections: [], metrics: {} }),
+        }),
+      ),
+      Layer.succeed(
+        InterruptRegistryTag,
+        InterruptRegistryTag.of({
+          rules: [],
+          evaluate: () => [],
+          softAlerts: () => [],
+          criticals: () => [],
+          explain: () => [],
+        }),
+      ),
+      Layer.succeed(
+        StateRendererTag,
+        StateRendererTag.of({ richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
+      ),
+      Layer.succeed(PromptBuilderTag, PromptBuilderTag.of({ systemPrompt: () => "x" })),
+    )
+    const client = limbicClient({
+      observe: () => DISCARD,
+      decide: () => '{"decision":"terminate","reasoning":"stop"}',
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({
+      result: { output: "x", timedOut: false, durationMs: 1 },
+      sessionId: "s",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>() // deliberately never offered
+      return yield* runActivation({
+        char: { name: "ada", root: "/work/players/ada" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(client, ctLayer, ruleDomain, fakeFs, capturingLog, fakeRuntimeDeps, noopModelService),
+        ),
+      )
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // A rule that throws on every tick produces no appraisals at all, so the
+    // appraisal behavior event never fires — which is exactly why the error
+    // gets its own note channel.
+    const notes = behaviors.filter((b) => b.type === "note" && b.label === "deterministic_appraiser_error")
+    expect(notes.length).toBeGreaterThan(0)
+    expect(JSON.stringify(notes[0]!.data)).toContain("rule exploded")
+  }, 20_000)
 })
 
 describe("identity/context assembly (single seam, honest empty blocks)", () => {

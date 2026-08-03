@@ -4,11 +4,11 @@
 
 Mine at asteroid belt POIs. Must be undocked at an asteroid belt.
 
-```
-mine()  # no parameters — auto-targets highest richness ore
+```bash
+spacemolt mine  # no parameters — auto-targets highest richness ore
 ```
 
-**Known behavior**: `mine()` has no resource targeting parameter. It auto-selects the highest-richness ore at the current belt. This means you cannot choose to mine copper over iron if iron has higher richness, even if copper sells for more.
+**Known behavior**: `mine` has no resource targeting parameter. It auto-selects the highest-richness ore at the current belt. This means you cannot choose to mine copper over iron if iron has higher richness, even if copper sells for more.
 
 Yield scales with mining skill level and ship/module bonuses.
 
@@ -46,15 +46,15 @@ Each ore at a POI has a **richness** percentage affecting mine yield probability
 
 Ships consume fuel when traveling between POIs and jumping between systems. Refuel at any base:
 
-```
-refuel()  # must be docked
+```bash
+spacemolt refuel  # must be docked
 ```
 
 Jump costs ~2 fuel per system. Running out of fuel strands you (self-destruct to respawn, or wait for rescue). Escape pods have infinite fuel.
 
 ## POI Types
 
-Systems contain various POI types visible via `get_system()`:
+Systems contain various POI types visible via `spacemolt get_system`:
 - **Asteroid belts**: mining locations with ore distributions
 - **Stations/bases**: docking, trading, refueling, crafting
 - **Jump gates**: connections to adjacent systems
@@ -63,4 +63,4 @@ Systems contain various POI types visible via `get_system()`:
 
 ## Galaxy Scale
 
-~500 systems, all charted from the start. Use `get_map()` to see full galaxy. Use `find_route(target_system="...")` for shortest path. Use `search_systems(query="...")` to find systems by name.
+~500 systems, all charted from the start. Use `spacemolt get_map` to see full galaxy. Use `spacemolt find_route <system_id>` for shortest path (get the id from `spacemolt search_systems <name>`).

@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import type { DomainState, DomainEvent, DomainSituation } from "../../../core/domain-types.js"
 import type { ObserveResult } from "../../../skills/types.js"
+import { appraiseDeterministic } from "#brain/stem/state.js"
 
 export interface DomainContext {
   readonly chatMessages?: ReadonlyArray<{
@@ -34,7 +35,20 @@ export type EventCategory =
  *
  * NOTE: this is a LEVEL condition evaluated against state, not an event handler.
  * A condition that stays true stays true, and re-fires every tick. A rule that
- * must fire once per episode has to carry its own edge detection.
+ * must fire once per episode has to carry its own edge detection — and it MUST,
+ * because a rule's synthetic event text does NOT pass through the loop's dedup
+ * window (`eventFingerprint`/`recentEventFps` only ever see DRAINED events).
+ * There is no net under a level-triggered rule: it will push an identical line
+ * into `accumulatedEvents` on every tick its condition holds. This is bounded,
+ * not unbounded growth — `accumulatedEvents` drains on every orient
+ * (`brain/stem/loop.ts`) and `shouldForceOrient` (`state.ts`) forces one once
+ * the buffer is non-empty and `orientInterval` ticks have passed — so the cost
+ * of a level-true rule with no edge detection is one orient window's worth of
+ * duplicate-line prompt bloat, repeating every window for as long as the
+ * condition holds, not an ever-growing array. That is still exactly the shape
+ * of bug that made the deleted `hull_critical` rule a death spiral: a
+ * degraded, repetitive prompt on every single orient. Edge-trigger, or do not
+ * write the rule.
  */
 export type DeterministicAppraiser = (
   state: DomainState,
@@ -73,34 +87,83 @@ export class EventProcessorTag extends Context.Tag("EventProcessor")<
 >() {}
 
 /**
- * Run a processor's deterministic appraisers against one tick's state+situation
- * and return the non-null results in registration order, each stamped
- * `source: "deterministic"`.
+ * The outcome of one tick's deterministic-appraiser pass.
  *
- * The stamp is applied HERE rather than trusted from the rule, so a domain
- * cannot — by accident or otherwise — mint an appraisal that `appraiseTick`'s
- * tie-break (`beatsDominant`, `brain/stem/state.ts`) treats as model output.
+ * `errors` is not decoration. Before it existed, a throwing rule was caught and
+ * skipped with ZERO telemetry — so a domain rule that threw on every tick was
+ * indistinguishable, from the outside, from one whose condition was simply
+ * false, forever. That was tolerable while the seam had no rules registered. It
+ * is not tolerable now that a silent rule means a reflex is not firing.
+ */
+export interface DeterministicAppraisalRun {
+  readonly results: ReadonlyArray<ObserveResult>
+  /** One `"<index>: <message>"` per rule that threw, in registration order. */
+  readonly errors: ReadonlyArray<string>
+}
+
+/**
+ * Stringify a rule's thrown value for `DeterministicAppraisalRun.errors`, in a
+ * way that itself cannot throw.
  *
- * A throwing rule is swallowed and skipped. The loop calls this inline on its own
- * fiber with no error channel of its own here, and a domain bug must never be
- * able to stop the tick. Pure apart from whatever the rules read; never throws.
+ * `err instanceof Error ? err.message : String(err)` looks total but is not: a
+ * null-prototype thrown object, a throwing `toString`, or a throwing `Error`
+ * subclass `message` GETTER all make that expression raise — which would
+ * escape this function's own `catch` and propagate out of
+ * `runDeterministicAppraisers`, a function whose docblock promises it never
+ * throws. That is precisely the failure this hazard exists to close,
+ * relocated one level down. Never let the reporting path itself become the
+ * next unreported throw.
+ */
+function describeThrown(index: number, err: unknown): string {
+  try {
+    return `${index}: ${err instanceof Error ? err.message : String(err)}`
+  } catch {
+    return `${index}: <unstringifiable throw>`
+  }
+}
+
+/**
+ * Run a processor's deterministic appraisers against one tick's state+situation.
+ *
+ * Returns the non-null results in registration order, each passed through
+ * `appraiseDeterministic` — the same mechanical clamp every model appraisal gets
+ * from `appraise()`, stamping `source: "deterministic"`. The stamp is applied
+ * HERE rather than trusted from the rule, so a domain cannot mint an appraisal
+ * that `appraiseTick`'s tie-break (`beatsDominant`) treats as model output; and
+ * the CLAMP is applied here so a rule returning `weight: 99` or a bogus
+ * disposition cannot reach the escalation ladder unchecked.
+ *
+ * A throwing rule is skipped and RECORDED. The loop calls this inline on its own
+ * fiber and a domain bug must never stop the tick — but it must also never be
+ * invisible.
+ *
+ * CALLED ONCE PER TICK, with one documented exception: on a tick where an
+ * amygdala critical fires, the loop returns `Interrupted` BEFORE reaching this
+ * call (`brain/stem/loop.ts`, the criticals block). That ordering is correct —
+ * a critical exits the loop to the phase machine and nothing downstream would
+ * consume the appraisal — but it means "every tick" is not literally true, and
+ * a rule must not be written assuming it observes every single tick.
+ *
+ * Pure apart from whatever the rules read; never throws.
  */
 export function runDeterministicAppraisers(
   processor: EventProcessor,
   state: DomainState,
   situation: DomainSituation,
-): ReadonlyArray<ObserveResult> {
+): DeterministicAppraisalRun {
   const rules = processor.deterministicAppraisers
-  if (!rules || rules.length === 0) return []
-  const out: ObserveResult[] = []
-  for (const rule of rules) {
+  if (!rules || rules.length === 0) return { results: [], errors: [] }
+  const results: ObserveResult[] = []
+  const errors: string[] = []
+  for (let i = 0; i < rules.length; i++) {
     let result: ObserveResult | null = null
     try {
-      result = rule(state, situation)
-    } catch {
+      result = rules[i]!(state, situation)
+    } catch (err) {
+      errors.push(describeThrown(i, err))
       continue
     }
-    if (result !== null && result !== undefined) out.push({ ...result, source: "deterministic" })
+    if (result !== null && result !== undefined) results.push(appraiseDeterministic(result))
   }
-  return out
+  return { results, errors }
 }

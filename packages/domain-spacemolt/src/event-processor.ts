@@ -9,7 +9,7 @@ import type { CargoItem, GameState, NearbyPlayer, PlayerState, ShipState } from 
 import type { GameEvent } from "./game-events.js"
 import { CONNECTION_STATE_FRAME, STATE_SYNC_FRAME } from "./game-events.js"
 import type { FullStateSnapshot } from "./lib-state.js"
-import { combatOnsetAppraiser, isSelfParticipant, nextCombatState } from "./reflexes.js"
+import { combatOnsetAppraiser, endsSelfCombat, isSelfParticipant, nextCombatState } from "./reflexes.js"
 
 /** A single delta entry from observation_update's nearby_changed / system_changed arrays. */
 type NearbyDelta = NonNullable<NotificationObservationUpdate["nearby_changed"]>[number]
@@ -208,7 +208,14 @@ function handleCombatFrame(type: string, payload: unknown): EventResult {
 }
 
 /**
- * A fight you were in has ended.
+ * A fight you were in is over — either it ended (`battle_ended`) or you left
+ * it (`battle_left`, which is what a successful FLEE looks like on the wire).
+ *
+ * Both frames are handled here because both have exactly one job: unlatch
+ * `inCombat`. `endsSelfCombat` (reflexes.ts) owns the "is this about me?"
+ * question and deliberately answers it more permissively than
+ * `isSelfParticipant` does for onset — see its doc for why a `battle_ended`
+ * with no `participants` list must still clear the latch.
  *
  * Clears `inCombat` AND resets `combat.lastEventTick` to `null` while
  * PRESERVING `onsetSeq` — that reset is the actual re-arm mechanism (not a
@@ -219,12 +226,12 @@ function handleCombatFrame(type: string, payload: unknown): EventResult {
  * (rather than zeroing it) keeps the appraiser's per-player latch monotonic
  * across fights within one session — see createCombatOnsetAppraiser's doc.
  */
-function handleBattleEnded(payload: unknown): EventResult {
+function handleCombatExitFrame(type: string, payload: unknown): EventResult {
   return {
     category: { _tag: "StateChange" },
     stateUpdate: (prev) => {
       const s = prev as GameState
-      if (!isSelfParticipant("battle_ended", payload, s.player?.id ?? "")) return s
+      if (!endsSelfCombat(type, payload, s.player?.id ?? "")) return s
       return {
         ...s,
         inCombat: false,
@@ -304,7 +311,8 @@ export const spaceMoltEventProcessor: EventProcessor = {
         return handleCombatFrame(smEvent.type, smEvent.payload)
 
       case "battle_ended":
-        return handleBattleEnded(smEvent.payload)
+      case "battle_left":
+        return handleCombatExitFrame(smEvent.type, smEvent.payload)
 
       case "player_died":
         return {

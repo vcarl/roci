@@ -11,6 +11,7 @@ import {
   detectCompletion,
   formatSteerDirective,
   appraise,
+  appraiseDeterministic,
   appraiseTick,
   beatsDominant,
   emptyEscalation,
@@ -1366,5 +1367,73 @@ describe("appraise — the C salience vector", () => {
     expect(withAxes.drive).toBe(without.drive)
     expect(withAxes.interrupt).toBe(without.interrupt)
     expect(withAxes.reason).toBe(without.reason)
+  })
+})
+
+describe("appraiseDeterministic — the clamp for hand-built appraisals", () => {
+  it("stamps deterministic, and a caller cannot claim to be the model", () => {
+    expect(appraiseDeterministic({}).source).toBe("deterministic")
+    expect(appraiseDeterministic({ source: "model" } as Record<string, unknown>).source).toBe("deterministic")
+  })
+
+  it("applies the same clamps appraise() applies to model output", () => {
+    const o = appraiseDeterministic({
+      disposition: "panic" as never,
+      emotionalWeight: "",
+      drive: "  SAFETY ",
+      weight: 99,
+      interrupt: "true",
+      reason: 42 as never,
+    })
+    expect(o.disposition).toBe("accumulate")
+    expect(o.emotionalWeight).toBe("😐")
+    expect(o.drive).toBe("safety")
+    expect(o.weight).toBe(5)
+    expect(o.interrupt).toBe(true)
+    expect(o.reason).toBe("")
+  })
+
+  it("collapses the \"null\"/\"none\"/empty drive spellings", () => {
+    for (const d of ["null", "none", "", "  "]) {
+      expect(appraiseDeterministic({ drive: d }).drive).toBeNull()
+    }
+  })
+
+  it("keeps a well-formed salience vector and drops a malformed one", () => {
+    expect(appraiseDeterministic({ salience: { safety: 0.9 } }).salience).toEqual({ safety: 0.9 })
+    expect(appraiseDeterministic({ salience: { safety: Number.NaN } }).salience).toBeUndefined()
+    expect(appraiseDeterministic({ salience: [1, 2] as never }).salience).toBeUndefined()
+    expect(appraiseDeterministic({}).salience).toBeUndefined()
+  })
+
+  it("preserves an interrupt:true escalation intact — the reflex path must survive the clamp", () => {
+    const o = appraiseDeterministic({
+      disposition: "escalate", emotionalWeight: "😱", drive: "safety",
+      weight: 5, interrupt: true, reason: "combat started — you are in a fight",
+    })
+    expect(o).toEqual({
+      disposition: "escalate", emotionalWeight: "😱", drive: "safety",
+      weight: 5, interrupt: true, reason: "combat started — you are in a fight",
+      source: "deterministic",
+    })
+  })
+})
+
+describe("COMBAT_EVENT_TYPES — settled against the generated catalog", () => {
+  it("battle_joined and battle_ended are combat evidence", () => {
+    // Without them a genuine safety escalation on either falls through to the
+    // payload scan and gets downgraded as an unsupported threat.
+    expect(hasCombatEvidence('type: battle_joined\n{"player_id":"me","side_id":0}')).toBe(true)
+    expect(hasCombatEvidence('type: battle_ended\n{"battle_id":"b","winning_side":1}')).toBe(true)
+  })
+
+  it("`combat` is NOT combat evidence — no wire frame has ever produced it", () => {
+    expect(hasCombatEvidence('type: combat\n{"nothing":"here"}')).toBe(false)
+  })
+
+  it("the real frames still count", () => {
+    for (const t of ["battle_update", "battle_damage", "battle_alert", "battle_started", "base_raid_update", "player_died", "scan_detected"]) {
+      expect(hasCombatEvidence(`type: ${t}\n{}`)).toBe(true)
+    }
   })
 })

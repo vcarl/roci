@@ -59,17 +59,6 @@ export const spaceMoltWsUrl = (): string => {
   return `${scheme}//${u.host}/ws/v2`
 }
 
-/**
- * Origin (scheme + host) for the client-v2 library's `baseUrl` option.
- * `createSocket`/`createSession` want the API origin (e.g.
- * `https://game.spacemolt.com`) and append their own paths, so strip the
- * `/api/v2` segment from `spaceMoltUrl()`.
- */
-export const spaceMoltSocketBaseUrl = (): string => {
-  const u = new URL(spaceMoltUrl())
-  return `${u.protocol}//${u.host}`
-}
-
 /** Host path to a player's session file. */
 export const sessionFilePath = (projectRoot: string, playerName: string): string =>
   path.resolve(projectRoot, "players", playerName, PLAYER_SUBDIR, SESSION_FILE_NAME)

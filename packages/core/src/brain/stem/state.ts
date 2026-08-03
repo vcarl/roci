@@ -153,6 +153,57 @@ export function appraise(
   }
 }
 
+/**
+ * Validate + clamp a DETERMINISTICALLY constructed appraisal (design 2026-08-02
+ * spec A §5b). Pure; never throws.
+ *
+ * The same mechanical clamp `appraise` applies to a model's structured output —
+ * `weight` to 0–5, `disposition` to the closed set, `emotionalWeight` defaulted,
+ * `interrupt` coerced to a strict boolean — with two differences.
+ *
+ * It stamps `"deterministic"` rather than `"model"`, and it does NOT take a
+ * `knownDrives` vocabulary: a rule is written against the domain it ships with,
+ * and there is no character-specific drive list at the collector's call site to
+ * validate against. `drive` is still normalized (trimmed, lowercased, the
+ * "null"/"none"/"" spellings collapsed to null) so it cannot arrive as the
+ * string `"null"` and be treated as a real drive downstream.
+ *
+ * WHY THIS EXISTS: every model appraisal funnels through `appraise()` before it
+ * can drive control flow, but a domain rule's `ObserveResult` went straight into
+ * `appraiseTick`'s reduce. That was harmless while the seam had zero rules. With
+ * rules registered, an out-of-range `weight` or an unrecognised `disposition`
+ * from a domain would reach the escalation ladder unchecked. Rules are ours, not
+ * a model's — but "ours" is not the same as "already validated".
+ */
+export function appraiseDeterministic(
+  raw: Partial<ObserveResult> | Record<string, unknown>,
+): ObserveResult {
+  const r = raw as Record<string, unknown>
+  const disposition = DISPOSITIONS.has(r.disposition as Disposition)
+    ? (r.disposition as Disposition)
+    : "accumulate"
+  const emotionalWeight =
+    typeof r.emotionalWeight === "string" && r.emotionalWeight.length > 0 ? r.emotionalWeight : "😐"
+  return {
+    disposition,
+    emotionalWeight,
+    drive: normalizeDrive(r.drive),
+    weight: clampWeight(r.weight),
+    interrupt: r.interrupt === true || r.interrupt === "true",
+    reason: typeof r.reason === "string" ? r.reason : "",
+    source: "deterministic" as const,
+    ...(isPlainSalience(r.salience) ? { salience: r.salience } : {}),
+  }
+}
+
+/** A salience vector that is a plain object of finite numbers, or nothing. */
+function isPlainSalience(v: unknown): v is Record<string, number> {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false
+  return Object.values(v as Record<string, unknown>).every(
+    (n) => typeof n === "number" && Number.isFinite(n),
+  )
+}
+
 // ── Mechanical appraisal guards (Task 1 — post-model clamps) ─────────────────
 //
 // The 2B hindbrain cannot be reliably prompt-guarded against fabricating a
@@ -245,31 +296,35 @@ export function clampControlPlaneAppraisal(
 }
 
 /**
- * Event types that are inherently combat/threat frames — their mere arrival is
- * threat evidence, so `hasCombatEvidence` short-circuits on membership and
- * `downgradeUnsupportedThreat` leaves a safety escalation on one of them alone.
+ * Frame types whose mere arrival is evidence of real combat, for the
+ * unsupported-threat downgrade guard (`hasCombatEvidence`).
  *
- * `battle_alert`, `battle_started` and `base_raid_update` were missing (spec A
- * §7c). They are real combat-family frames whose payloads carry no numeric harm
- * signal — a targeting warning has no hull delta — so a genuine safety
- * escalation on one of them fell through the payload scan and was knocked back
- * to a plain accumulate at weight 2. They are not in client-v2's `ServerEvent`
- * union today, so the domain's switch no-ops on them, but the RAW frame text
- * still reaches the hindbrain and its appraisal still runs the guards.
- *
- * `combat` is retained deliberately even though no wire frame produces it:
- * dropping it couples to `observe.md`'s rubric table and to the one synthetic
- * `combat` fixture in the appraisal-eval corpus, both of which belong to spec
- * A's second half. `battle_joined` / `battle_ended` are likewise deferred there,
- * where this set can be keyed off the library's generated notification catalog
- * instead of hand-maintained.
+ * Keyed off `@spacemolt/lib`'s generated notification catalog. A1 added
+ * `battle_alert`/`battle_started`/`base_raid_update` and deliberately deferred
+ * the rest to A2, where the generated catalog landed and the whole family could
+ * be settled at once:
+ *   - `"combat"` is REMOVED. No wire frame has ever produced it — it was a
+ *     fiction shared with `observe.md`'s rubric table and one synthetic eval
+ *     fixture, neither of which is touched here; both are to be corrected in
+ *     the observe-rubric and eval work (out of this task's scope). Until then
+ *     the mismatch is LIVE, not hypothetical: the rubric still instructs the
+ *     model to escalate on `type: combat`, but this set no longer counts it,
+ *     so `downgradeUnsupportedThreat` would knock such an appraisal back down.
+ *     It is inert today only because no wire frame ever emits `combat` — the
+ *     model has nothing to escalate on. The next task touching the rubric
+ *     needs to know this discrepancy exists.
+ *   - `battle_joined` and `battle_ended` are ADDED. Both are real, typed frames
+ *     addressed to participants; without them a genuine safety escalation on
+ *     one of them falls through to the payload scan and, absent a numeric harm
+ *     signal, gets DOWNGRADED as an unsupported threat.
  */
 const COMBAT_EVENT_TYPES: ReadonlySet<string> = new Set([
-  "combat",
   "battle_update",
   "battle_damage",
   "battle_alert",
   "battle_started",
+  "battle_joined",
+  "battle_ended",
   "base_raid_update",
   "player_died",
   "scan_detected",

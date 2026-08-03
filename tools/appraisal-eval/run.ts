@@ -107,7 +107,11 @@ const KNOWN_DRIVES = parseDriveNames(DRIVES)
 // buildAxisSpecs the runtime uses (loop.ts derives the specs once per run and
 // tiers-limbic.ts renders them). Derived from the same two artifacts already
 // read above, so the eval scores the prompt the runtime actually sends.
-const AXES = renderAxisBlock(buildAxisSpecs(DRIVES, PALETTE))
+/** The same specs `AXES` was rendered from — `appraise` validates against these,
+ *  not against the rendered block. Keeping both from one `buildAxisSpecs` call
+ *  is what stops the prompt and the validator from drifting apart. */
+const AXIS_SPECS = buildAxisSpecs(DRIVES, PALETTE)
+const AXES = renderAxisBlock(AXIS_SPECS)
 
 // ── digest assembly (mirrors loop.ts submit seam) ────────────────────────────
 // A minimal healthy base GameState. Snapshot fixtures (full_state / logged_in)
@@ -383,7 +387,12 @@ function scoreSample(fx: Fixture, raw: RawCall): SampleResult {
   } catch {
     schemaValid = false
   }
-  const appraised = appraise(parseOr(raw.text, PARSE_FALLBACK), KNOWN_DRIVES)
+  // THREE arguments, matching the runtime (`tiers-limbic.ts:59-69`). With two,
+  // the harness rendered the axis block into the prompt (run.ts:224), asked the
+  // model for a `salience` vector, and then threw it away unvalidated — so the
+  // 100%-bar gate was structurally blind to the one field observe.md spends its
+  // last section demanding.
+  const appraised = appraise(parseOr(raw.text, PARSE_FALLBACK), KNOWN_DRIVES, AXIS_SPECS)
   const g = guardAppraisal(fx.event, appraised)
   return {
     raw,

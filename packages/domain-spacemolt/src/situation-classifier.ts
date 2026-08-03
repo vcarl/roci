@@ -2,9 +2,19 @@ import { SituationType } from "./types.js";
 import type { GameState, Situation, SituationFlags } from "./types.js";
 
 const MINEABLE_POI_TYPES = new Set(["asteroid_belt", "ice_field", "gas_cloud"]);
-/** Fuel ratio below which the `lowFuel` flag fires. Also the digest's fuel LOW band. */
+/**
+ * Fuel ratio below which `event-digest.ts` stamps the status line's fuel LOW
+ * band. The `lowFuel` situation flag this constant used to gate was deleted
+ * with the severity system; this threshold survived because the digest is a
+ * real consumer.
+ */
 export const LOW_FUEL_THRESHOLD = 0.25;
-/** Hull ratio below which the `lowHull` flag fires. Also the digest's hull LOW band. */
+/**
+ * Hull ratio below which `event-digest.ts` stamps the status line's hull LOW
+ * band. The `lowHull` situation flag this constant used to gate was deleted
+ * with the severity system; this threshold survived because the digest is a
+ * real consumer.
+ */
 export const LOW_HULL_THRESHOLD = 0.5;
 /**
  * Hull ratio below which hull is CRITICAL — the band below which the digest

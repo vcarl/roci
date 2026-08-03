@@ -36,10 +36,14 @@
  * departure sweep (`event-processor.ts:232-245`) for `ObservationCache`'s
  * drop-unkeyed-at-ingest behavior. The observation feed owns `nearby`.
  *
- * Also not translated: `missions` and `queue`. Neither has a home in the
- * domain's `FullStateSnapshot` (missions/activeMissions live on `GameState`
- * directly, populated by a different codepath); this task's scope is the
- * player+ship+location fold only.
+ * Also not translated: `missions` and `queue`. Neither has a home ANYWHERE in
+ * the domain any more — `GameState` (`types.ts`) has no `missions` /
+ * `activeMissions` field at all, `briefing.ts` renders no mission content, and
+ * `initialGameState()` populates neither. Mission data is invisible to this
+ * read path BY CONSTRUCTION, not merely absent from this translator; carrying
+ * it is a task of its own (see the poll-suppression note in
+ * `account-socket.ts`, which states the same thing). This translator's scope
+ * is the player+ship+location fold only.
  */
 
 import type { GameState as LibGameState } from "@spacemolt/lib";

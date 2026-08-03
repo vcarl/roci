@@ -40,42 +40,64 @@ exit and prints `teardown ok — port clear`.
 
 ## Regenerating the fixture set
 
+> ⚠ **`curate.py` is STALE — do not run it.** It still selects the 2026-07-13
+> `full_state`/`logged_in` exchanges by timestamp, i.e. exactly the frame types
+> the 2026-08-02 recapture deleted because they no longer exist on the wire.
+> Running it would overwrite `fixtures.jsonl` with the dead corpus. It is kept
+> only as the record of how the original 30 were selected. `fixtures.jsonl` is
+> now the source of truth; edit it directly.
+
 ```fish
-python3 tools/appraisal-eval/curate.py   # rewrites fixtures.jsonl from the log
+python3 tools/appraisal-eval/curate.py   # STALE — see the warning above
 ```
 
 `curate.py` reads `players/vcarl/logs/events.jsonl`, pulls the `{{event}}` and
-`{{waitState}}` slots verbatim out of real observe exchanges in the 2026-07-13
-window, and tags each with expected bounds. One fixture is **synthetic** (a
-combat frame — the window has no real hostile payload) and clearly marked
-`synthetic:true`.
+`{{waitState}}` slots verbatim out of real observe exchanges, and tags each with
+expected bounds.
+
+The 2026-08-02 recapture (spec A §8c) rebuilt the corpus after the read path
+moved to `@spacemolt/lib`: the 14 `full_state` and 5 `logged_in` fixtures were
+payloads of frame types that no longer exist — `full_state` was minted locally
+by a poll that is gone, and `logged_in` is now consumed inside the library and
+never reaches the queue. They were replaced by `state_sync` fixtures captured
+read-only from the production server through the real adapter, rendered with the
+real `composeDigestedEventText` + `formatEventDigest`. The 10
+`observation_update` fixtures carried over verbatim — that notification's wire
+shape is unchanged.
+
+Six fixtures are **synthetic** and marked `synthetic:true`: `battle_damage`,
+`player_died`, `scan_detected`, `chat_message`, `market_update` and
+`mining_yield`. Every one of them requires a MUTATION to produce (or pure luck),
+which read-only capture cannot do — so their payloads are hand-authored from the
+library's generated types, which are generated from the server's own OpenAPI
+spec. They replace a single older synthetic fixture whose `type` was `combat`, a
+frame that never existed on the wire at all.
 
 ### Fixture schema (`fixtures.jsonl`, one JSON object per line)
 
 ```jsonc
 {
-  "id": "hull-halluc-loggedin-0904",
-  "category": "hull-hallucination",
-  "source_ts": "2026-07-13T09:04:47.639Z",   // null for synthetic
-  "event": "type: logged_in\n{...}",          // EXACTLY as the runtime rendered it
+  "id": "state-sync-00",
+  "category": "state-sync-routine",
+  "source_ts": "2026-08-03T14:11:43.255Z",   // null for synthetic
+  "event": "type: state_sync\n{...}",          // EXACTLY as the runtime rendered it
   "waitState": "None — not currently waiting.",
   "expected": {
     "disposition_one_of": ["discard", "accumulate"],
     "weight_range": [0, 2],
-    "drive_one_of": [null, "sustenance"],
+    "drive_one_of": [null],
     "must_not_contain_in_reason": ["damage", "attack", ...],
     "escalate_allowed": false
   },
   "dedup_eligible": false,      // present on dedup fixtures
-  "synthetic": false,           // present on the combat probe
-  "old_2b_response": "{...}"     // what the OLD prompt's 2B produced (reference)
+  "synthetic": false,           // absent/false except on the six hand-authored fixtures
+  "old_2b_response": "{...}"     // what the OLD prompt's 2B produced (reference), present on some
 }
 ```
 
-Categories: `hull-hallucination`, `ship-arrival-as-nearby`,
-`status-message-flavor`, `faction-arrival`, `fuel-full`, `fuel-low-genuine`,
-`navigation-arrival`, `dedup-eligible`, `dedup-chain`, `notable-chat`,
-`weight-spread`, `genuine-threat`.
+Categories: `dedup-chain`, `faction-arrival`, `genuine-threat`, `market`,
+`mining`, `notable-chat`, `scan-detected`, `ship-arrival-as-nearby`,
+`state-sync-routine`, `status-message-flavor`, `weight-spread`.
 
 ## Metrics
 
@@ -134,7 +156,7 @@ reimplementation) directly from `packages/core/src`, run under `bun`:
 | `config.drives` ← `readDrives`, falls back to `TEMPLATE_DRIVES` (vcarl has no `DRIVES.md`) | imports `TEMPLATE_DRIVES` |
 | `parseDriveNames(drives)` | same import |
 | `callTier(... "hindbrain" ...)` → `client.complete` body | `POST /v1/chat/completions` with `{ model, messages:[{role:"user",content:prompt}], temperature, max_tokens, stream:false, ...extraBody }`, params read from `DEFAULT_CORTEX_MODELS.hindbrain` (temp 0.05, max_tokens 1024, `chat_template_kwargs:{enable_thinking:false}`) |
-| `appraise(parseOr(text, fallback), knownDrives)` | same `parseOr` + `appraise` imports, same fallback object |
+| `appraise(parseOr(text, fallback), knownDrives, axisSpecs)` | same `parseOr` + `appraise` imports, same fallback object, same axis specs the prompt block was rendered from — so the `salience` vector the prompt demands is actually validated |
 | `guardAppraisal(event, raw)` | same import (reported as a diagnostic, not applied to the scored appraisal) |
 
 ### Known divergences (documented)
@@ -166,10 +188,11 @@ reimplementation) directly from `packages/core/src`, run under `bun`:
    the loop's *accumulated* `GameState`. The harness reconstructs each fixture's
    state by folding ONLY that fixture's event onto a healthy base state (via the
    real `spaceMoltEventProcessor`), so:
-   - `full_state` / `logged_in` fixtures carry the ship+location wholesale → their
-     digest fuel/hull/dock/location is exact (this is the fuel-low path).
+   - `state_sync` fixtures carry the ship+location wholesale (via the same
+     `applyFullState` merge the runtime uses) → their digest fuel/hull/dock/location
+     is exact (this is the fuel-low path).
    - `observation_update` fixtures carry no ship fields → their digest fuel/hull
      fall back to the healthy base (100%). Live, those numbers come from the prior
-     accumulated `full_state`; the digest's *nearby* clause and location ARE from
+     accumulated `state_sync`; the digest's *nearby* clause and location ARE from
      the fixture. The fingerprint is unaffected either way: the loop composes the
      digest AFTER fingerprinting `ev.text`, so the digest never perturbs dedup.

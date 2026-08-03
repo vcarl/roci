@@ -193,12 +193,11 @@ export function shouldEmitStateSync(
  * and cost a Critical regression to provide it. Reverted to hashing ONLY
  * `translated` — missions/queue changes are invisible to this read path BY
  * CONSTRUCTION, full stop, until a later task carries them into `GameState`
- * for real (see the design-gap note in this task's report: `briefing.ts`
- * already renders `GameState.missions`/`activeMissions` with actionable
- * "Use complete_mission…" text, but the new `Account`-based
- * `initialGameState()` never populates either field — the real fix is
- * bigger than a dedupe hash and belongs in its own task, not bolted onto a
- * poll-suppression guard).
+ * for real: `GameState` (`types.ts`) has no `missions`/`activeMissions` field
+ * at all, `briefing.ts` renders no mission content, and the new `Account`-based
+ * `initialGameState()` never populates either — the real fix is bigger than a
+ * dedupe hash and belongs in its own task, not bolted onto a poll-suppression
+ * guard).
  *
  * A plain string comparison rather than a semantic deep-equal: cheap, and
  * sound here because `libStateToSnapshot` always builds the object the same
@@ -549,9 +548,17 @@ export const makeGameSocketLive = () =>
           lastSnapshotFingerprint = snapshotFingerprint(snapshot)
           const initialState = initialGameState(snapshot, initialTick)
 
-          if (initialState.player?.username === undefined) {
+          // Assert on `id`, not `username`: `player.id` is the SOLE key the
+          // combat reflex runs on — `isSelfParticipant` matches it against
+          // every combat frame's participant ids, and `createCombatOnsetAppraiser`
+          // keys its per-player latch on it. A cache seeded with a username but
+          // no id would pass a username check and silently disable the reflex
+          // for the whole session (every frame reads as somebody else's fight).
+          // `username` is display-only here, so a truthiness check on `id` is
+          // the load-bearing precondition.
+          if (!initialState.player?.id) {
             return yield* Effect.fail(
-              new GameSocketError("Authenticated but the state cache never seeded a player"),
+              new GameSocketError("Authenticated but the state cache never seeded a player id"),
             )
           }
 

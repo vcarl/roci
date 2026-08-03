@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   COMBAT_REARM_QUIET_TICKS,
   createCombatOnsetAppraiser,
+  endsSelfCombat,
   isSelfParticipant,
   nextCombatState,
   playerDeathRule,
@@ -61,6 +62,44 @@ describe("isSelfParticipant", () => {
     expect(isSelfParticipant("battle_started", { participants: [null] }, ME)).toBe(false)
     expect(isSelfParticipant("battle_joined", { player_id: ME }, "")).toBe(false)
     expect(isSelfParticipant("chat_message", { player_id: ME }, ME)).toBe(false)
+  })
+})
+
+describe("endsSelfCombat", () => {
+  it("battle_left: only YOUR departure ends YOUR fight", () => {
+    // The flee frame. NotificationBattleLeft is {player_id, reason, username},
+    // all required, one frame per departing pilot.
+    expect(endsSelfCombat("battle_left", { player_id: ME, reason: "fled", username: "Pilot" }, ME)).toBe(true)
+    expect(endsSelfCombat("battle_left", { player_id: "someone-else", reason: "fled", username: "X" }, ME)).toBe(false)
+  })
+
+  it("battle_ended: an ABSENT participants list still ends the fight", () => {
+    // `participants` is optional on the generated NotificationBattleEnded. When
+    // the server omits it, no field names you — so a membership test can only
+    // answer "no", and "no" is the answer that latches inCombat true forever.
+    const noList = { battle_id: "b", duration: 12, reason: "all_destroyed", winning_side: 0 }
+    expect(endsSelfCombat("battle_ended", noList, ME)).toBe(true)
+  })
+
+  it("battle_ended: a PRESENT participants list is honored either way", () => {
+    expect(endsSelfCombat("battle_ended", { battle_id: "b", participants: [{ player_id: ME }] }, ME)).toBe(true)
+    expect(endsSelfCombat("battle_ended", { battle_id: "b", participants: [{ player_id: "other" }] }, ME)).toBe(false)
+  })
+
+  it("is not an onset predicate — participation frames never end a fight", () => {
+    expect(endsSelfCombat("battle_damage", { attacker_id: "foe", target_id: ME }, ME)).toBe(false)
+    expect(endsSelfCombat("battle_started", { participants: [{ player_id: ME }] }, ME)).toBe(false)
+    expect(endsSelfCombat("chat_message", { player_id: ME }, ME)).toBe(false)
+  })
+
+  it("never throws on a malformed or empty payload", () => {
+    expect(endsSelfCombat("battle_left", undefined, ME)).toBe(false)
+    expect(endsSelfCombat("battle_left", { player_id: ME }, "")).toBe(false)
+    // A malformed `participants` is not an array, so it reads as absent — which
+    // clears, deliberately: erring toward "the fight is over" is the recoverable
+    // direction (see endsSelfCombat's doc).
+    expect(endsSelfCombat("battle_ended", { participants: "nope" }, ME)).toBe(true)
+    expect(endsSelfCombat("battle_ended", undefined, ME)).toBe(true)
   })
 })
 

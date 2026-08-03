@@ -353,10 +353,10 @@ Each domain runs in its own Docker container named `roci-<domain>`. Characters w
 | `EventProcessor` | `packages/domain-spacemolt/src/event-processor.ts` |
 | `SituationClassifier` | `packages/domain-spacemolt/src/situation.ts` |
 | `StateRenderer` | `packages/domain-spacemolt/src/renderer.ts` |
-| `InterruptRegistry` | `packages/domain-spacemolt/src/interrupts.ts` |
+| `InterruptRegistry` | `packages/domain-spacemolt/src/reflexes.ts` (one rule) |
 | `PromptBuilder` | `packages/domain-spacemolt/src/prompt-builder.ts` |
 | `PhaseRegistry` | `packages/domain-spacemolt/src/phases.ts` |
-| Event source | `packages/domain-spacemolt/src/game-socket-impl.ts` (WebSocket) |
+| Event source | `packages/domain-spacemolt/src/account-socket.ts` (`@spacemolt/lib` `Account`) |
 
 ### GitHub
 

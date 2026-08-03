@@ -54,8 +54,13 @@ export const spaceMoltSituationClassifier: SituationClassifier = {
         ...(gameState.player.docked_at_base != null
           ? { dockedAt: gameState.player.docked_at_base }
           : {}),
-        // Liveness instrumentation: the current game tick plus whether the socket
-        // is up, so a frozen state bar is diagnosable in logs without a stopwatch.
+        // Display only — NOT a liveness signal, and it must not be read as one.
+        // `tick` only advances when an INBOUND FRAME CARRIES a `tick` field, and
+        // the frames that do are the state deltas: a character sitting in space
+        // with nothing changing receives none, so a FROZEN `t:` is the normal
+        // quiet-in-space state, not a dead feed. `connected` below is the actual
+        // liveness signal (`connection_state`, folded in event-processor.ts) and
+        // is the one an operator should read.
         tick: gameState.tick,
         connected: !offline,
       },

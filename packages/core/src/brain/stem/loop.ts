@@ -167,6 +167,18 @@ export const duplicateAppraisal = (nTimes: number): ObserveResult => ({
  * (Neither guard runs in the loop's reduce anyway — `guardAppraisal`'s only
  * production caller is `runHindbrain` — so this is documentation of intent, not a
  * mechanism.)
+ *
+ * NOT DEDUPED. The loop's dedup window (`eventFingerprint` / `recentEventFps`)
+ * only ever sees events DRAINED from the domain queue; a rule's synthetic text
+ * is minted after that pass and never enters the window. So a level-triggered
+ * rule pushes an identical line into `accumulatedEvents` on every tick its
+ * condition holds, with nothing to habituate it. Bounded, not unbounded: the
+ * buffer drains on every orient and `shouldForceOrient` forces one once it is
+ * non-empty and `orientInterval` ticks have passed, so the cost is one
+ * degraded, repetitive orient prompt per window rather than an ever-growing
+ * array — still a real, recurring cost, just not a runaway one. Edge-triggering
+ * in the rule is the fix — not a filter here — because a rule knows what "the
+ * same episode" means and a fingerprint does not.
  */
 const deterministicAppraisalEvent = (o: ObserveResult): string =>
   `type: appraiser\n${JSON.stringify({ reason: o.reason, drive: o.drive, weight: o.weight })}`
@@ -845,19 +857,35 @@ export const runActivation = (config: ActivationConfig) =>
       const anyDegraded = landed.some((l) => l.degraded === true)
       appraisals.push(...landed.map(({ event, observe }) => ({ event, observe })))
       // Deterministic appraisers (spec A §5b): the domain's own rules, expressed
-      // as hand-built ObserveResults on the same ladder. Evaluated once per tick
-      // against the CURRENT state and the situation classified above — they are
-      // LEVEL conditions, not per-event ones, so they run even on a tick that
-      // drained no events. Pushed LAST, but push order no longer decides the
-      // dominant appraisal: every result is stamped `source:"deterministic"` by
-      // the collector, and `beatsDominant` (state.ts) prefers a model appraisal at
-      // equal weight. `runDeterministicAppraisers` swallows a throwing rule, so a
-      // domain bug cannot stop the tick. Domains registering no rules → [].
-      for (const observe of runDeterministicAppraisers(eventProcessor, state, summary.situation)) {
+      // as hand-built ObserveResults on the same ladder. Evaluated against the
+      // CURRENT state and the situation classified above — they are LEVEL
+      // conditions, not per-event ones, so they run even on a tick that drained
+      // no events. (Not on a tick where an amygdala critical fired: that path
+      // returns above, deliberately.) Pushed LAST, but push order no longer
+      // decides the dominant appraisal: every result is clamped and stamped
+      // `source:"deterministic"` by the collector, and `beatsDominant` (state.ts)
+      // prefers a model appraisal at equal weight. A throwing rule is swallowed
+      // so a domain bug cannot stop the tick — and RECORDED, so a rule that is
+      // silently broken is not mistaken for a rule that simply is not firing.
+      // Domains registering no rules → empty on both channels.
+      const ruleRun = runDeterministicAppraisers(eventProcessor, state, summary.situation)
+      for (const observe of ruleRun.results) {
         appraisals.push({ event: deterministicAppraisalEvent(observe), observe })
       }
       const esc =
         appraisals.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
+      // A rule that throws on EVERY tick produces no appraisals at all, so the
+      // behavior event below would never fire and the failure would stay
+      // invisible — the precise hazard `errors` exists to close. Report it on
+      // its own channel when there is nothing else to attach it to.
+      if (ruleRun.errors.length > 0 && appraisals.length === 0) {
+        yield* logBehavior(config.char.name, "cortex", "hindbrain", {
+          type: "note",
+          label: "deterministic_appraiser_error",
+          severity: "warn",
+          data: { tick, errors: ruleRun.errors },
+        })
+      }
       // Advance the emotional-state EMA — EVERY tick, regardless of disposition,
       // and outside the `appraisals.length > 0` block below on purpose. A discard
       // tick and a tick with no events at all both pull the mood toward neutral;
@@ -892,6 +920,7 @@ export const runActivation = (config: ActivationConfig) =>
           reason: esc.dominant?.reason ?? "",
           summary: summarizeEventText(esc.dominantEvent),
           ...(anyDegraded ? { degraded: true } : {}),
+          ...(ruleRun.errors.length > 0 ? { ruleErrors: ruleRun.errors } : {}),
         })
         // Tick mood = the dominant (highest-weight) event's mood (§4.4).
         if (esc.dominant) cortex.emotionalWeight = esc.dominant.emotionalWeight
