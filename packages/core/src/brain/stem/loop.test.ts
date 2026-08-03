@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest"
 import { Effect, Layer, Queue, Fiber, Option, Deferred } from "effect"
 import { CommandExecutor } from "@effect/platform"
-import { runActivation, DEFAULT_STEER_CADENCE_TICKS } from "./loop.js"
+import { runActivation, DEFAULT_STEER_CADENCE_TICKS, INERT_APPRAISAL, duplicateAppraisal } from "./loop.js"
 import { ModelClient, type CompletionResult } from "../../model/client.js"
 import { ModelError } from "../../model/errors.js"
 import type { ModelHandle } from "../../model/handles.js"
@@ -220,7 +220,6 @@ const fakeFs = Layer.succeed(
     writeDiary: () => Effect.void,
     readSecrets: () => Effect.succeed(""),
     writeSecrets: () => Effect.void,
-    readCredentials: () => Effect.succeed({ username: "", password: "" }),
     readBackground: () => Effect.succeed(""),
     readValues: () => Effect.succeed(""),
     readPalette: () => Effect.succeed(""),
@@ -249,7 +248,6 @@ const realSkillFs = Layer.succeed(
     writeDiary: () => Effect.void,
     readSecrets: () => Effect.succeed(""),
     writeSecrets: () => Effect.void,
-    readCredentials: () => Effect.succeed({ username: "", password: "" }),
     readBackground: () => Effect.succeed(""),
     readValues: () => Effect.succeed(""),
     readPalette: () => Effect.succeed(""),
@@ -552,7 +550,6 @@ describe("runActivation (conscious-session executor)", () => {
           }),
         readSecrets: () => Effect.succeed(""),
         writeSecrets: () => Effect.void,
-        readCredentials: () => Effect.succeed({ username: "", password: "" }),
         readBackground: () => Effect.succeed(""),
         readValues: () => Effect.succeed(""),
         readPalette: () => Effect.succeed(""),
@@ -787,7 +784,6 @@ describe("runActivation (conscious-session executor)", () => {
         writeDiary: () => Effect.void,
         readSecrets: () => Effect.succeed(""),
         writeSecrets: () => Effect.void,
-        readCredentials: () => Effect.succeed({ username: "", password: "" }),
         readBackground: () => Effect.fail(new CharacterFsError("background read boom")),
         readValues: () => Effect.fail(new CharacterFsError("values read boom")),
         readPalette: () => Effect.succeed(""),
@@ -1701,7 +1697,6 @@ describe("runActivation (conscious-session executor)", () => {
         writeDiary: () => Effect.void,
         readSecrets: () => Effect.succeed(""),
         writeSecrets: () => Effect.void,
-        readCredentials: () => Effect.succeed({ username: "", password: "" }),
         readBackground: () => Effect.succeed(""),
         readValues: () => Effect.succeed(""),
         readPalette: () => Effect.succeed(""),
@@ -2932,6 +2927,96 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     // The hold is respected: decide ran exactly once — the quiet world did not re-deliberate.
     expect(count).toBe(1)
   }, 20_000)
+
+  // ── The deterministic-appraiser seam (spec A §5b) ──────────────────────────
+  // A domain rule is a hand-built ObserveResult on the SAME ladder. This pins the
+  // wiring end to end: a rule registered on the EventProcessor reaches the tick's
+  // appraiseTick reduce and becomes the dominant appraisal, on a tick that drained
+  // NO events at all — rules are level conditions on state, not event handlers.
+  it("a domain-registered deterministic appraiser reaches the tick reduce with no events at all", async () => {
+    const behaviors: Array<Record<string, unknown>> = []
+    const capturingLog = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_char, event) =>
+          Effect.sync(() => {
+            const e = event as unknown as { kind?: string; behavior?: Record<string, unknown> }
+            if (e.kind === "behavior" && e.behavior) behaviors.push(e.behavior)
+          }),
+      }),
+    )
+    const ruleDomain = Layer.mergeAll(
+      Layer.succeed(
+        EventProcessorTag,
+        EventProcessorTag.of({
+          processEvent: () => ({}),
+          deterministicAppraisers: [
+            () => ({
+              disposition: "accumulate" as const,
+              emotionalWeight: "😨",
+              drive: "safety",
+              weight: 3,
+              interrupt: false,
+              reason: "RULE: hull below 20%",
+            }),
+          ],
+        }),
+      ),
+      Layer.succeed(
+        SituationClassifierTag,
+        SituationClassifierTag.of({
+          summarize: () => ({ situation: {} as never, headline: "h", sections: [], metrics: {} }),
+        }),
+      ),
+      Layer.succeed(
+        InterruptRegistryTag,
+        InterruptRegistryTag.of({
+          rules: [],
+          evaluate: () => [],
+          softAlerts: () => [],
+          criticals: () => [],
+          explain: () => [],
+        }),
+      ),
+      Layer.succeed(
+        StateRendererTag,
+        StateRendererTag.of({ richSnapshot: () => ({}), stateDiff: () => "", formatStateBar: () => "" }),
+      ),
+      Layer.succeed(PromptBuilderTag, PromptBuilderTag.of({ systemPrompt: () => "x" })),
+    )
+    const client = limbicClient({
+      observe: () => DISCARD,
+      decide: () => '{"decision":"terminate","reasoning":"stop"}',
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({
+      result: { output: "x", timedOut: false, durationMs: 1 },
+      sessionId: "s",
+    }))
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>() // deliberately never offered
+      return yield* runActivation({
+        char: { name: "ada", root: "/work/players/ada" },
+        containerId: "c1",
+        events,
+        initialState: {},
+        cadence: "real-time",
+        orientInterval: 1,
+        tickIntervalMs: 1,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(client, ctLayer, ruleDomain, fakeFs, capturingLog, fakeRuntimeDeps, noopModelService),
+        ),
+      )
+    })
+    const result = await Effect.runPromise(program)
+    expect(result._tag).toBe("Completed")
+    // The tick's appraisal behavior event reports `esc.dominant.reason` — the rule
+    // was the only appraisal in the reduce, so it is the dominant one.
+    const appraisal = behaviors.find((b) => b.type === "appraisal")
+    expect(appraisal).toBeDefined()
+    expect(appraisal?.reason).toBe("RULE: hull below 20%")
+    expect(appraisal?.weight).toBe(3)
+  }, 20_000)
 })
 
 describe("identity/context assembly (single seam, honest empty blocks)", () => {
@@ -3069,7 +3154,6 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
         writeDiary: () => Effect.void,
         readSecrets: () => Effect.succeed(""),
         writeSecrets: () => Effect.void,
-        readCredentials: () => Effect.succeed({ username: "", password: "" }),
         readBackground: () => Effect.succeed("BACKGROUND_MARKER born on Ceres"),
         readValues: () => Effect.succeed("VALUES_MARKER honesty"),
         readPalette: () => Effect.succeed(""),
@@ -3240,5 +3324,28 @@ describe("runActivation — Phase 0 characterization (decomposition-invariant co
     // guards the constant's VALUE and its export location so the rename/relocation
     // phases keep the named knob stable rather than silently re-tuning the window.
     expect(DEFAULT_STEER_CADENCE_TICKS).toBe(3)
+  })
+})
+
+// ── Deterministic-appraisal provenance (spec A §5d) ──────────────────────────
+// The two hand-built appraisals the loop constructs without a model call. They
+// are exported ONLY so their provenance stamp is directly pinnable: it is what
+// keeps them from shadowing a real appraisal in `appraiseTick`'s tie-break
+// (state.ts `beatsDominant`), and nothing else in the suite would notice if a
+// future edit dropped the stamp.
+describe("deterministic appraisal provenance", () => {
+  it("INERT_APPRAISAL is stamped source:'deterministic' and stays a weight-0 discard", () => {
+    expect(INERT_APPRAISAL.source).toBe("deterministic")
+    expect(INERT_APPRAISAL.disposition).toBe("discard")
+    expect(INERT_APPRAISAL.weight).toBe(0)
+    expect(INERT_APPRAISAL.interrupt).toBe(false)
+  })
+
+  it("duplicateAppraisal is stamped source:'deterministic' and reports the occurrence count", () => {
+    const d = duplicateAppraisal(3)
+    expect(d.source).toBe("deterministic")
+    expect(d.disposition).toBe("discard")
+    expect(d.weight).toBe(0)
+    expect(d.reason).toBe("duplicate of recent event (3x)")
   })
 })

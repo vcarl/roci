@@ -20,7 +20,6 @@ function fsLayer(opts: { palette?: string; drives?: string; salience?: string; f
       writeDiary: () => Effect.void,
       readSecrets: () => Effect.succeed(""),
       writeSecrets: () => Effect.void,
-      readCredentials: () => Effect.succeed({ username: "", password: "" }),
       readBackground: () => Effect.succeed(""),
       readValues: () => Effect.succeed(""),
       readPalette: () => read(opts.palette) as never,

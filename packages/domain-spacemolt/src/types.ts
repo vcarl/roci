@@ -124,17 +124,6 @@ export interface SystemState {
 	position?: { x: number; y: number };
 }
 
-export interface MapSystem {
-	id: string;
-	name: string;
-	empire?: string;
-	connections: string[];
-	visited: boolean;
-	poiCount: number;
-}
-
-export type GalaxyMap = Map<string, MapSystem>;
-
 export interface NearbyPlayer {
 	player_id: string;
 	username: string;

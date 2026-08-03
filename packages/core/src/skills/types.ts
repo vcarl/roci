@@ -6,6 +6,27 @@ import type { PlanStep } from "../core/types.js"
 export type Disposition = "discard" | "accumulate" | "escalate"
 
 /**
+ * Where an appraisal came from (design 2026-08-02 spec A §5d).
+ *
+ * `"model"` — a hindbrain tier produced it and it passed through `appraise()`'s
+ * validator/clamp. `"deterministic"` — the harness or a domain rule hand-built it
+ * from ground truth, skipping the model entirely: the loop's inert fast-path, its
+ * duplicate fast-path, a reflex-error degrade, or a domain `DeterministicAppraiser`.
+ *
+ * ABSENT means "not stamped", and every consumer treats absent as `"model"`. That
+ * default is deliberate and is the safe direction: an un-migrated construction
+ * site can never be silently demoted below a deterministic placeholder in the
+ * `appraiseTick` tie-break, only the reverse.
+ *
+ * This is provenance, NOT trust: nothing downstream branches on it to skip a
+ * guard. `guardAppraisal` already runs only inside `runHindbrain`, so loop-side
+ * deterministic appraisals bypass it structurally rather than by permission. What
+ * the field buys is legibility — a QA reader looking at why a session was killed
+ * can tell whether a model said so or a number did.
+ */
+export type AppraisalSource = "model" | "deterministic"
+
+/**
  * Result of the observe skill — the per-event appraisal of ONE incoming event
  * (Subteam A / limbic drives). The hindbrain is invoked once per state-changing
  * event and returns a single object tagging that event against the character's
@@ -48,6 +69,9 @@ export interface ObserveResult {
    *  amygdala / a future stronger tier can drive an in-loop interrupt, and so a
    *  genuine physical-attack appraisal (redundant with the amygdala) is honored. */
   readonly interrupt?: boolean
+  /** Provenance: model-produced or deterministically constructed. Absent reads as
+   *  `"model"` everywhere. Additive — nothing about escalation semantics changes. */
+  readonly source?: AppraisalSource
   /** Brief note on why this disposition was chosen. */
   readonly reason: string
 }

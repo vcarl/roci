@@ -51,13 +51,6 @@ describe("spaceMoltEventProcessor — battle_update", () => {
     },
   }
 
-  it("returns an alert summarizing the standing battle", () => {
-    const result = spaceMoltEventProcessor.processEvent(combatEvent, {})
-    expect(result.alert).toBeDefined()
-    expect(result.alert).toContain("1 hostile")
-    expect(result.alert).toContain("aggressive")
-  })
-
   it("stateUpdate sets inCombat true and refreshes tick", () => {
     const result = spaceMoltEventProcessor.processEvent(combatEvent, {})
     const next = result.stateUpdate!(makeState({ inCombat: false, tick: 1 })) as GameState
@@ -86,13 +79,6 @@ describe("spaceMoltEventProcessor — battle_damage", () => {
     },
   }
 
-  it("returns an alert naming the attacker and total damage", () => {
-    const result = spaceMoltEventProcessor.processEvent(damageEvent, {})
-    expect(result.alert).toBeDefined()
-    expect(result.alert).toContain("EvilPirate")
-    expect(result.alert).toContain("50")
-  })
-
   it("stateUpdate sets inCombat true and refreshes tick", () => {
     const result = spaceMoltEventProcessor.processEvent(damageEvent, {})
     const next = result.stateUpdate!(makeState({ inCombat: false, tick: 1 })) as GameState
@@ -102,9 +88,9 @@ describe("spaceMoltEventProcessor — battle_damage", () => {
 })
 
 describe("spaceMoltEventProcessor — non-handled events", () => {
-  it("does not return an alert for an unknown 'tick' frame", () => {
+  it("returns {} for an unknown 'tick' frame", () => {
     const result = spaceMoltEventProcessor.processEvent({ type: "tick", payload: { tick: 1 } }, {})
-    expect(result.alert).toBeUndefined()
+    expect(result).toEqual({})
   })
 
   it("returns {} for an unknown/raw future frame without throwing", () => {
@@ -349,7 +335,9 @@ describe("spaceMoltEventProcessor — logged_in", () => {
 })
 
 describe("spaceMoltEventProcessor — scan_detected", () => {
-  it("returns an alert naming the scanner", () => {
+  it("is a no-op for the host: the raw frame reaches the hindbrain on its own", () => {
+    // Spec A §6c: being scanned is exactly the event whose importance depends on
+    // who you are, so it goes through appraisal rather than a host-side alert.
     const result = spaceMoltEventProcessor.processEvent(
       {
         type: "scan_detected",
@@ -357,7 +345,7 @@ describe("spaceMoltEventProcessor — scan_detected", () => {
       },
       {},
     )
-    expect(result.alert).toContain("Spy")
+    expect(result).toEqual({})
   })
 })
 

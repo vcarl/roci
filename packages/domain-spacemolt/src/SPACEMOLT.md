@@ -9,7 +9,6 @@ The SpaceMolt domain runs on the `brain/stem` tick engine (`runActivation` from 
 The loop receives:
 - An **initial task** with the game state briefing, character identity, and play instructions
 - **Tick events** every 30 seconds with state diffs, situation summaries, and soft alerts
-- **Alert events** immediately when combat or critical conditions are detected
 
 The agent has access to the `spacemolt` CLI tool inside the Docker container, which calls the game's v2 REST API for all in-game actions.
 
@@ -19,7 +18,7 @@ The agent has access to the `spacemolt` CLI tool inside the Docker container, wh
 startup --> active (brain/stem) --> social (wind-down) --> reflection (consolidate + cull) --> active
 ```
 
-- **startup** -- Reads `credentials.txt` from the character's `me/` directory. Connects to the game server via WebSocket (`GameSocket.connect`). Runs the per-cycle reflection pass (consolidate + cull). Transitions to `active`.
+- **startup** -- Reads `.spacemolt-session.json` from the character's `me/` directory (`session.ts:145`; the legacy `credentials.txt` is gone). Connects to the game server via WebSocket (`GameSocket.connect`). Runs the per-cycle reflection pass (consolidate + cull). Transitions to `active`.
 
 - **active** -- Runs `runActivation` with the domain bundle. When the loop completes naturally or the timeout expires, transitions to `social`. On critical interrupt, restarts `active`.
 
@@ -38,12 +37,10 @@ Translates `@spacemolt/client-v2` `GameEvent`s into state operations:
 | `logged_in` | Initial full state on login/reconnect: player, ship, system, poi, cargo (via the shared `applyFullState` merge) |
 | `full_state` (synthetic) | Host-injected `get_state` snapshot — periodic (~45s) and on `reconnected`. Reconciles full ship/cargo/dock/credits drift through the same `applyFullState` merge; never a wire frame |
 | `observation_update` | Per-tick delta: advances tick, applies nearby-player upserts/departures, and folds `poi_id`/`system_id` into the player so location stays fresh |
-| `combat_update` | Sets `inCombat` flag, advances tick, emits a combat alert |
 | `mining_yield` | Adds the yielded resource to ship cargo |
 | `player_died` | `LifecycleReset` -- triggers plan abort and state reset |
 | `chat_message` | Accumulated as context for the next prompt |
-| `scan_detected` | Emits a "you were scanned" alert |
-| acks / informational frames (`welcome`, `ok`, `market_update`, etc.) | No-op -- still reach the hindbrain via the raw event stream |
+| acks / informational frames (`welcome`, `ok`, `market_update`, `scan_detected`, etc.) | No-op -- still reach the hindbrain via the raw event stream |
 
 ### SituationClassifier
 
@@ -105,4 +102,3 @@ Ten interrupt rules across four priority levels:
 | `situation-classifier.ts` | Game situation classification |
 | `interrupts.ts` | Interrupt rules |
 | `prompt-builder.ts` | Prompt generation |
-| `session-system-prompt.md` | System prompt for the persistent session |

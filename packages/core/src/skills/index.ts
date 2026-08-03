@@ -2,6 +2,7 @@ export { loadSkillSync } from "./loader.js"
 export type { LoadedSkill } from "./loader.js"
 
 export type {
+  AppraisalSource,
   Disposition,
   ObserveResult,
   OrientResult,

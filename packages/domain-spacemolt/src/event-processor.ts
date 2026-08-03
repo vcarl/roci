@@ -9,7 +9,6 @@ import type {
   NotificationBattleDamage,
   NotificationMiningYield,
   NotificationObservationUpdate,
-  NotificationScanDetected,
   V2GameState,
 } from "./ws-types.js"
 import { FULL_STATE_FRAME } from "./ws-types.js"
@@ -270,11 +269,10 @@ function handleBattleUpdate(payload: NotificationBattleUpdate): EventResult {
   // client-v2 1.6.0 split combat into a periodic `battle_update` snapshot (this
   // handler: standing-fight summary, no per-hit fields) plus separate per-hit
   // `battle_damage` push frames (see handleBattleDamage). We drive `inCombat`/
-  // `tick` from the snapshot and summarize the standing fight.
-  const hostiles = payload.participants.filter((p) => p.side_id !== payload.your_side_id).length
+  // `tick` from the snapshot. The raw frame reaches the hindbrain through the
+  // event queue regardless, so nothing here needs to narrate it.
   return {
     category: { _tag: "StateChange" },
-    alert: `Battle in progress (stance: ${payload.your_stance}) — ${hostiles} hostile${hostiles === 1 ? "" : "s"} engaged in ${payload.your_zone}.`,
     stateUpdate: (prev) => {
       const s = prev as GameState
       return { ...s, inCombat: true, tick: payload.tick, timestamp: Date.now() }
@@ -283,11 +281,8 @@ function handleBattleUpdate(payload: NotificationBattleUpdate): EventResult {
 }
 
 function handleBattleDamage(payload: NotificationBattleDamage): EventResult {
-  const attacker = payload.attacker_name ?? payload.attacker_id
-  // faithful to the pre-1.6.0 per-hit combat alert style
   return {
     category: { _tag: "StateChange" },
-    alert: `Taking fire! ${attacker} hit you for ${payload.total_damage} ${payload.damage_type} damage (shield: ${payload.shield_hit}, hull: ${payload.hull_hit}).`,
     stateUpdate: (prev) => {
       const s = prev as GameState
       return { ...s, inCombat: true, tick: payload.tick, timestamp: Date.now() }
@@ -334,7 +329,7 @@ function handleChatMessage(payload: NotificationChatMessage): EventResult {
  * Maps the `@spacemolt/client-v2` `ServerEvent` union (re-exported as `GameEvent`)
  * onto the domain's `EventResult`. The cortex loop consumes primarily `stateUpdate`
  * (feeding the situation-classifier, state renderer, and interrupts) and `log`;
- * `category`/`alert`/`context` are set for interface correctness.
+ * `category`/`context` are set for interface correctness.
  */
 export const spaceMoltEventProcessor: EventProcessor = {
   processEvent(event, _currentState) {
@@ -372,11 +367,6 @@ export const spaceMoltEventProcessor: EventProcessor = {
       case "mining_yield":
         return handleMiningYield(smEvent.payload)
 
-      case "scan_detected": {
-        const payload = smEvent.payload as NotificationScanDetected
-        return { alert: `You were scanned by ${payload.scanner_username}.` }
-      }
-
       // Logging handled externally; preserve a no-op log fn (matches old behavior).
       case "error":
       case "action_error":
@@ -391,6 +381,7 @@ export const spaceMoltEventProcessor: EventProcessor = {
       case "action_result":
       case "reconnected":
       case "pilotless_ship":
+      case "scan_detected":
       case "market_update":
       case "skill_level_up":
       case "trade_offer_received":

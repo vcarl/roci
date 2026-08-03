@@ -84,6 +84,11 @@ function ordinal(n: number): string {
   }
 }
 
+// A degrade, not a verdict: the hindbrain endpoint failed and no model ever saw
+// this event, so the appraisal is ours, not the model's — `source:"deterministic"`
+// (spec A §5d). It stays weight-0 accumulate, so the stamp changes no behavior
+// beyond the equal-weight tie-break, where a real appraisal should win over a
+// failure placeholder.
 const REFLEX_ERROR_APPRAISAL: ObserveResult = {
   disposition: "accumulate",
   emotionalWeight: "😐",
@@ -91,6 +96,7 @@ const REFLEX_ERROR_APPRAISAL: ObserveResult = {
   weight: 0,
   interrupt: false,
   reason: "reflex model error — degraded to accumulate (off-hot-path)",
+  source: "deterministic",
 }
 
 /**

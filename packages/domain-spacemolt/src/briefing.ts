@@ -6,23 +6,18 @@ import type {
 	PlayerOrder,
 	StorageItem,
 	SystemState,
-	GalaxyMap,
 } from "./types.js";
 
 /**
  * Generates a concise natural language briefing from game state.
  * Every word earns its place — this is what the agent sees instead of JSON walls.
  */
-export function generateBriefing(
-	state: GameState,
-	situation: Situation,
-	galaxyMap?: GalaxyMap,
-): string {
+export function generateBriefing(state: GameState, situation: Situation): string {
 	switch (situation.type) {
 		case SituationType.Docked:
-			return generateDockedBriefing(state, galaxyMap);
+			return generateDockedBriefing(state);
 		case SituationType.InSpace:
-			return generateInSpaceBriefing(state, situation, galaxyMap);
+			return generateInSpaceBriefing(state, situation);
 		case SituationType.InTransit:
 			return generateInTransitBriefing(state);
 		case SituationType.InCombat:
@@ -30,7 +25,7 @@ export function generateBriefing(
 	}
 }
 
-function generateDockedBriefing(state: GameState, galaxyMap?: GalaxyMap): string {
+function generateDockedBriefing(state: GameState): string {
 	const { player, ship, poi, system, market, activeMissions, missions } = state;
 	const lines: string[] = [];
 
@@ -149,17 +144,13 @@ function generateDockedBriefing(state: GameState, galaxyMap?: GalaxyMap): string
 
 	if (system) {
 		lines.push("");
-		lines.push(systemPoiSection(system, galaxyMap));
+		lines.push(systemPoiSection(system));
 	}
 
 	return lines.join("\n");
 }
 
-function generateInSpaceBriefing(
-	state: GameState,
-	situation: Situation,
-	galaxyMap?: GalaxyMap,
-): string {
+function generateInSpaceBriefing(state: GameState, situation: Situation): string {
 	const { player, ship, poi, system, nearby } = state;
 	const lines: string[] = [];
 
@@ -203,7 +194,7 @@ function generateInSpaceBriefing(
 
 	if (system) {
 		lines.push("");
-		lines.push(systemPoiSection(system, galaxyMap));
+		lines.push(systemPoiSection(system));
 	}
 
 	return lines.join("\n");
@@ -281,7 +272,7 @@ function formatCargoItem(item: CargoItem): string {
 	return `${name} [${item.item_id}] x${item.quantity}`;
 }
 
-function systemPoiSection(system: SystemState, galaxyMap?: GalaxyMap): string {
+function systemPoiSection(system: SystemState): string {
 	// Defensive: SystemState declares pois/connections as non-optional arrays,
 	// but the in-SPACE get_state snapshot can leave them unpopulated while
 	// `system` itself is still truthy. Never assume they're iterable.
@@ -303,8 +294,7 @@ function systemPoiSection(system: SystemState, galaxyMap?: GalaxyMap): string {
 		lines.push(detail);
 	}
 	const connections = conns.map((conn) => {
-		const mapEntry = galaxyMap?.get(conn.system_id);
-		const label = mapEntry?.name ?? conn.name ?? conn.system_id;
+		const label = conn.name ?? conn.system_id;
 		const dist = conn.distance ? ` (${conn.distance} GU)` : "";
 		return `${label} [${conn.system_id}]${dist}`;
 	});

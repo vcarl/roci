@@ -56,6 +56,7 @@ export type {
 export { loadSkillSync } from "./skills/index.js"
 export type { LoadedSkill } from "./skills/index.js"
 export type {
+	AppraisalSource,
 	Disposition,
 	ObserveResult,
 	OrientResult,

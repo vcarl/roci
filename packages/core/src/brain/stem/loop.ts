@@ -6,7 +6,7 @@ import { ModelService } from "../../services/ModelService.js"
 import { SpawnError, ReadinessError } from "../../services/model-backend.js"
 import { CharacterLog, logToConsole, logError, logBehavior } from "../../logging/log-writer.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
-import { EventProcessorTag } from "#brain/limbic/thalamus/event-processor.js"
+import { EventProcessorTag, runDeterministicAppraisers } from "#brain/limbic/thalamus/event-processor.js"
 import { SituationClassifierTag } from "#brain/limbic/thalamus/situation-classifier.js"
 import { InterruptRegistryTag } from "#brain/limbic/amygdala/interrupt.js"
 import { StateRendererTag } from "../../core/state-renderer.js"
@@ -114,14 +114,21 @@ export { DEFAULT_STEER_CADENCE_TICKS } from "#brain/cortex/conscious/conscious-s
  * `stateUpdate` (§3.2a fast-path). Tagged `discard`/weight-0 WITHOUT a model
  * call (habituation to non-salient stimuli), so noise costs nothing and never
  * escalates. Only state-changing events reach the 2B per-event observe.
+ *
+ * EXPORTED for its provenance pin (loop.test.ts). `source: "deterministic"` is
+ * load-bearing, not decorative: the loop pushes inert appraisals FIRST into the
+ * tick's `appraisals` array, so without the stamp this placeholder wins
+ * `appraiseTick`'s equal-weight tie-break against a genuine weight-0 appraisal
+ * and its neutral emoji becomes the tick's mood (spec A §5e).
  */
-const INERT_APPRAISAL: ObserveResult = {
+export const INERT_APPRAISAL: ObserveResult = {
   disposition: "discard",
   emotionalWeight: "😐",
   drive: null,
   weight: 0,
   interrupt: false,
   reason: "inert event — no state change (fast-path discard)",
+  source: "deterministic",
 }
 
 /**
@@ -133,15 +140,36 @@ const INERT_APPRAISAL: ObserveResult = {
  * never accumulates; still flows through the tick's `appraiseTick` reduce so the
  * normal appraisal behavior event still fires (observability). `nTimes` is the
  * running occurrence count within the window, surfaced in the reason.
+ *
+ * EXPORTED for its provenance pin (loop.test.ts); `source: "deterministic"` is
+ * load-bearing for the same reason as INERT_APPRAISAL's.
  */
-const duplicateAppraisal = (nTimes: number): ObserveResult => ({
+export const duplicateAppraisal = (nTimes: number): ObserveResult => ({
   disposition: "discard",
   emotionalWeight: "😐",
   drive: null,
   weight: 0,
   interrupt: false,
   reason: `duplicate of recent event (${nTimes}x)`,
+  source: "deterministic",
 })
+
+/**
+ * The synthetic event text a deterministic appraiser's result rides on (spec A
+ * §5b). `appraiseTick` reduces `{event, observe}` PAIRS and `esc.accumulated`
+ * feeds `cortex.accumulatedEvents`, which the forebrain reads as prose — so a
+ * rule needs a legible line in the loop's own `type: <t>\n<json>` shape rather
+ * than an opaque placeholder.
+ *
+ * The type is `appraiser`, deliberately absent from both `CONTROL_PLANE_EVENT_TYPES`
+ * and `COMBAT_EVENT_TYPES`: a rule reads ground truth off state, so neither the
+ * control-plane cap nor the unsupported-threat downgrade has anything to correct.
+ * (Neither guard runs in the loop's reduce anyway — `guardAppraisal`'s only
+ * production caller is `runHindbrain` — so this is documentation of intent, not a
+ * mechanism.)
+ */
+const deterministicAppraisalEvent = (o: ObserveResult): string =>
+  `type: appraiser\n${JSON.stringify({ reason: o.reason, drive: o.drive, weight: o.weight })}`
 
 const AVAILABLE_ACTIONS =
   "Each plan step is executed by the conscious agent (local LLM in an OpenCode session with full tool access). Plan concrete steps; each step.task names the action and step.goal describes the outcome."
@@ -816,6 +844,18 @@ export const runActivation = (config: ActivationConfig) =>
       // tick's appraisal behavior event so the silent accumulate fallback is visible.
       const anyDegraded = landed.some((l) => l.degraded === true)
       appraisals.push(...landed.map(({ event, observe }) => ({ event, observe })))
+      // Deterministic appraisers (spec A §5b): the domain's own rules, expressed
+      // as hand-built ObserveResults on the same ladder. Evaluated once per tick
+      // against the CURRENT state and the situation classified above — they are
+      // LEVEL conditions, not per-event ones, so they run even on a tick that
+      // drained no events. Pushed LAST, but push order no longer decides the
+      // dominant appraisal: every result is stamped `source:"deterministic"` by
+      // the collector, and `beatsDominant` (state.ts) prefers a model appraisal at
+      // equal weight. `runDeterministicAppraisers` swallows a throwing rule, so a
+      // domain bug cannot stop the tick. Domains registering no rules → [].
+      for (const observe of runDeterministicAppraisers(eventProcessor, state, summary.situation)) {
+        appraisals.push({ event: deterministicAppraisalEvent(observe), observe })
+      }
       const esc =
         appraisals.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
       // Advance the emotional-state EMA — EVERY tick, regardless of disposition,

@@ -17,11 +17,6 @@ import {
 /** The bounded memory-index doc macro rewrites and orient injects (spec §4 macro). */
 export const SYNTHESIS_FILE = "SYNTHESIS.md"
 
-export interface Credentials {
-  username: string
-  password: string
-}
-
 /**
  * Why a CharacterFs write failed. `"validation"` is a deterministic rejection —
  * the input violated a cap/shape rule (writeSkill's validateSkillWrite) and will
@@ -61,7 +56,6 @@ export class CharacterFs extends Context.Tag("CharacterFs")<
     readonly writeDiary: (char: CharacterConfig, content: string) => Effect.Effect<void, CharacterFsError>
     readonly readSecrets: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly writeSecrets: (char: CharacterConfig, content: string) => Effect.Effect<void, CharacterFsError>
-    readonly readCredentials: (char: CharacterConfig) => Effect.Effect<Credentials, CharacterFsError>
     readonly readBackground: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly readValues: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
     readonly readPalette: (char: CharacterConfig) => Effect.Effect<string, CharacterFsError>
@@ -76,21 +70,6 @@ export class CharacterFs extends Context.Tag("CharacterFs")<
     readonly deleteSkill: (char: CharacterConfig, name: string) => Effect.Effect<void, CharacterFsError>
   }
 >() {}
-
-function parseCredentialsFile(content: string): Credentials | null {
-  let username = ""
-  let password = ""
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith("#") || !trimmed) continue
-    const uMatch = trimmed.match(/^Username:\s*(.+)/)
-    if (uMatch) username = uMatch[1].trim()
-    const pMatch = trimmed.match(/^Password:\s*(.+)/)
-    if (pMatch) password = pMatch[1].trim()
-  }
-  if (username && password) return { username, password }
-  return null
-}
 
 export const CharacterFsLive = Layer.effect(
   CharacterFs,
@@ -119,20 +98,6 @@ export const CharacterFsLive = Layer.effect(
         fs.writeFileString(path.join(meDir(char), "SECRETS.md"), content).pipe(
           Effect.mapError((e) => new CharacterFsError("Failed to write secrets", e)),
         ),
-
-      readCredentials: (char) =>
-        Effect.gen(function* () {
-          const content = yield* fs.readFileString(path.join(meDir(char), "credentials.txt")).pipe(
-            Effect.mapError((e) => new CharacterFsError("Failed to read credentials", e)),
-          )
-          const creds = parseCredentialsFile(content)
-          if (!creds) {
-            return yield* Effect.fail(
-              new CharacterFsError(`Invalid credentials file for ${char.name}`),
-            )
-          }
-          return creds
-        }),
 
       readBackground: (char) =>
         readFileOr(path.join(meDir(char), "background.md"), ""),

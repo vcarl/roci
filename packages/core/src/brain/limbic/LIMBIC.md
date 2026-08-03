@@ -110,7 +110,6 @@ interface EventResult {
   stateUpdate?: (prev: DomainState) => DomainState
   context?: DomainContext
   log?: () => void
-  alert?: string              // immediate alert text for channel push
 }
 
 type EventCategory =
@@ -123,10 +122,14 @@ The `EventCategory` discriminated union drives the loop's dispatch. `Heartbeat` 
 timeout checks. `StateChange` triggers full state classification and interrupt evaluation.
 `LifecycleReset` clears the current plan and in-flight turn.
 
-The `alert` field carries immediate alert text the loop can surface to the active
-conscious turn.
-
 **Tag:** `EventProcessorTag`. Domains provide a `Layer` implementing `EventProcessor`.
+
+`EventProcessor` also exposes an optional `deterministicAppraisers?: ReadonlyArray<(state: DomainState, situation: DomainSituation) => ObserveResult | null>`
+seam (design 2026-08-02 spec A §5b). Each rule runs synchronously, once per tick, against
+the current state and situation; a non-null result flows through the same `appraiseTick`
+reduce as a model appraisal, but the collector -- not the rule -- stamps it
+`source: "deterministic"`, so a domain can't mint a result the dominant tie-break would
+mistake for model output. Absent means no rules; most domains never set it.
 
 ### SituationClassifier
 
@@ -366,7 +369,9 @@ tier / a genuine redundant physical-attack appraisal.
 
 `appraiseTick(results, thresholds)` (`state.ts`) reduces the tick's per-event appraisals
 into one `HindbrainEscalation` (`state.ts`): the tick `rung` is the **MAX** rung across
-events; `maxWeight` and `dominant` come from the highest-weight event (ties → first);
+events; `maxWeight` and `dominant` come from the highest-weight event (ties broken by
+`beatsDominant`, `state.ts`: a model -- or unstamped -- `source` beats a `"deterministic"`
+one, then a non-`discard` disposition beats a `discard`, then the incumbent holds);
 `accumulated` is the raw text of every non-discard event; `escalate` is true at `steer` or
 above. The loop calls `appraiseTick` each tick and consumes the returned
 `HindbrainEscalation` directly -- the seam between the limbic appraisal and the loop is

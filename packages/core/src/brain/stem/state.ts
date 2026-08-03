@@ -140,6 +140,11 @@ export function appraise(
     weight: clampWeight(r.weight),
     interrupt,
     reason: typeof r.reason === "string" ? r.reason : "",
+    // Provenance (spec A §5d): this function IS the model path — every caller
+    // feeds it a tier's structured output (or that tier's parse-miss fallback).
+    // Stamped unconditionally, AFTER nothing else reads `r`, so a model that
+    // emits its own `"source"` cannot promote itself to ground truth.
+    source: "model" as const,
     // The C vector, through the same mechanical clamp `drive` and `weight` go
     // through: unknown axes dropped, non-finite dropped, unipolar floored at 0,
     // bipolar sign preserved. A model's structured output never reaches storage
@@ -239,11 +244,33 @@ export function clampControlPlaneAppraisal(
   }
 }
 
-/** Event types that are inherently combat/threat frames — their mere arrival is threat evidence. */
+/**
+ * Event types that are inherently combat/threat frames — their mere arrival is
+ * threat evidence, so `hasCombatEvidence` short-circuits on membership and
+ * `downgradeUnsupportedThreat` leaves a safety escalation on one of them alone.
+ *
+ * `battle_alert`, `battle_started` and `base_raid_update` were missing (spec A
+ * §7c). They are real combat-family frames whose payloads carry no numeric harm
+ * signal — a targeting warning has no hull delta — so a genuine safety
+ * escalation on one of them fell through the payload scan and was knocked back
+ * to a plain accumulate at weight 2. They are not in client-v2's `ServerEvent`
+ * union today, so the domain's switch no-ops on them, but the RAW frame text
+ * still reaches the hindbrain and its appraisal still runs the guards.
+ *
+ * `combat` is retained deliberately even though no wire frame produces it:
+ * dropping it couples to `observe.md`'s rubric table and to the one synthetic
+ * `combat` fixture in the appraisal-eval corpus, both of which belong to spec
+ * A's second half. `battle_joined` / `battle_ended` are likewise deferred there,
+ * where this set can be keyed off the library's generated notification catalog
+ * instead of hand-maintained.
+ */
 const COMBAT_EVENT_TYPES: ReadonlySet<string> = new Set([
   "combat",
   "battle_update",
   "battle_damage",
+  "battle_alert",
+  "battle_started",
+  "base_raid_update",
   "player_died",
   "scan_detected",
 ])
@@ -389,10 +416,51 @@ function eventRung(o: ObserveResult, thresholds: AppraisalThresholds): Escalatio
 }
 
 /**
+ * Should `challenger` displace `incumbent` as the tick's DOMINANT appraisal?
+ * (spec A §5e). Pure; total; never throws.
+ *
+ * `dominant` is not a cosmetic label: it supplies `cortex.emotionalWeight` and
+ * the mood EMA's `observed` reading, and its `reason` is what the tick's
+ * appraisal behavior event reports. The previous rule was `w > maxWeight`, which
+ * meant "the first entry in the array wins every tie" — and the loop builds that
+ * array in a fixed order (inert first, duplicates second, landed model
+ * appraisals last), so every equal-weight tie went to a placeholder that skipped
+ * the model. On a quiet tick the character's mood advanced from a fast-path
+ * discard's neutral emoji.
+ *
+ * The resolution order, most significant first:
+ *   1. Higher clamped weight wins. Unchanged, and still the primary signal.
+ *   2. On a weight tie, a MODEL appraisal beats a DETERMINISTIC one. An unstamped
+ *      appraisal counts as model (see `AppraisalSource`), so this can only ever
+ *      promote a real appraisal over an explicit placeholder.
+ *   3. On a weight AND provenance tie, a non-`discard` disposition beats a
+ *      `discard`. Something the appraiser chose to keep says more about the tick
+ *      than something it threw away.
+ *   4. Otherwise the INCUMBENT holds — first-in-array wins. Deliberate and
+ *      tested, rather than a consequence of push order.
+ */
+export function beatsDominant(
+  incumbent: ObserveResult,
+  incumbentWeight: number,
+  challenger: ObserveResult,
+  challengerWeight: number,
+): boolean {
+  if (challengerWeight !== incumbentWeight) return challengerWeight > incumbentWeight
+  const incumbentIsDeterministic = incumbent.source === "deterministic"
+  const challengerIsDeterministic = challenger.source === "deterministic"
+  if (incumbentIsDeterministic !== challengerIsDeterministic) return incumbentIsDeterministic
+  const incumbentDiscards = incumbent.disposition === "discard"
+  const challengerDiscards = challenger.disposition === "discard"
+  if (incumbentDiscards !== challengerDiscards) return incumbentDiscards
+  return false
+}
+
+/**
  * Reduce the tick's per-event appraisals into one `HindbrainEscalation` (§4.4).
  * Pure. The tick rung is the MAX rung across events; `dominant` is the
- * highest-weight event (ties → first); `accumulated` is the raw text of every
- * non-discard event.
+ * highest-weight event, ties resolved by `beatsDominant` (model over
+ * deterministic, then non-discard over discard, then first-in-array);
+ * `accumulated` is the raw text of every non-discard event.
  */
 export function appraiseTick(
   results: ReadonlyArray<{ event: string; observe: ObserveResult }>,
@@ -410,7 +478,7 @@ export function appraiseTick(
     const w = clampWeight(observe.weight)
     const r = eventRung(observe, thresholds)
     if (RUNG_RANK[r] > RUNG_RANK[rung]) rung = r
-    if (dominant === null || w > maxWeight) {
+    if (dominant === null || beatsDominant(dominant, maxWeight, observe, w)) {
       maxWeight = w
       dominant = observe
       dominantEvent = event

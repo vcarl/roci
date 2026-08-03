@@ -32,7 +32,6 @@ function fsLayer(skills: Array<{ slug: string; name: string; description: string
     CharacterFs.of({
       readDiary: () => Effect.succeed(""), writeDiary: () => Effect.void,
       readSecrets: () => Effect.succeed(""), writeSecrets: () => Effect.void,
-      readCredentials: () => Effect.succeed({ username: "", password: "" }),
       readBackground: () => Effect.succeed(""), readValues: () => Effect.succeed(""),
       readPalette: () => Effect.succeed(""), readDrives: () => Effect.succeed(""),
       readSalience: () => Effect.succeed(""),

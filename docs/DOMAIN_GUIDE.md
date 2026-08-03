@@ -102,9 +102,10 @@ interface EventResult {
   stateUpdate?: (prev) => next
   context?: DomainContext       // e.g. chatMessages
   log?: () => void
-  alert?: string                // immediate push to channel session
 }
 ```
+
+`EventProcessor` also carries an optional `deterministicAppraisers` seam: `ReadonlyArray<(state: DomainState, situation: DomainSituation) => ObserveResult | null>`. These are hand-built, synchronous rules run once per tick against the current state and the classifier's just-derived situation; a rule returns an `ObserveResult` when its condition holds and `null` otherwise, and a throwing rule is swallowed rather than allowed to stop the tick. Leaving the field absent -- the default for every domain that has no rules -- means the loop runs none. Results are not trusted as-is: the collector stamps each one `source: "deterministic"` itself, so a domain can never mint an appraisal that the tie-break in `appraiseTick` mistakes for model output.
 
 ### 3. `SituationClassifier` -- `summarize()`
 

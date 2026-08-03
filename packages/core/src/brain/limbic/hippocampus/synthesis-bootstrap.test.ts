@@ -34,7 +34,6 @@ function fsLayer(state: {
     readDiary: () => Effect.succeed(state.diary),
     writeDiary: () => Effect.void,
     readSecrets: () => Effect.succeed(""), writeSecrets: () => Effect.void,
-    readCredentials: () => Effect.succeed({ username: "", password: "" }),
     readBackground: () => Effect.succeed(state.background),
     readValues: () => Effect.succeed(state.values),
     readPalette: () => Effect.succeed(""), readDrives: () => Effect.succeed(""),

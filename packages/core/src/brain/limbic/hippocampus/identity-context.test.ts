@@ -20,7 +20,6 @@ const fsWith = (vals: { background?: string; values?: string; diary?: string; sy
       writeDiary: () => Effect.void,
       readSecrets: () => Effect.succeed(""),
       writeSecrets: () => Effect.void,
-      readCredentials: () => Effect.succeed({ username: "", password: "" }),
       readBackground: () => Effect.succeed(vals.background ?? ""),
       readValues: () => Effect.succeed(vals.values ?? ""),
       readPalette: () => Effect.succeed(""),

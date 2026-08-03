@@ -56,7 +56,6 @@ function makeFs(initial: { diary: string; secrets: string; background?: string }
 					state.secrets = content
 					secretsWrites.push(content)
 				}),
-			readCredentials: () => Effect.succeed({ username: "", password: "" }),
 			readBackground: () => Effect.succeed(state.background),
 			readValues: () => Effect.succeed("VALUES"),
 			readPalette: () => Effect.succeed(""),

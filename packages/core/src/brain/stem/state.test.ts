@@ -12,6 +12,7 @@ import {
   formatSteerDirective,
   appraise,
   appraiseTick,
+  beatsDominant,
   emptyEscalation,
   DEFAULT_APPRAISAL_THRESHOLDS,
   sanitizeDecideSkill,
@@ -61,7 +62,7 @@ describe("freshActivationState", () => {
 
 // Unit 1 — appraise(): validate/clamp a single per-event ObserveResult.
 describe("appraise — single per-event validation/clamping", () => {
-  it("passes a well-formed result through unchanged", () => {
+  it("passes a well-formed result through unchanged (plus the model provenance stamp)", () => {
     const r = appraise(
       { disposition: "escalate", emotionalWeight: "😰", drive: "safety", weight: 4, interrupt: false, reason: "ok" },
       ["safety", "sustenance", "agency"],
@@ -73,6 +74,7 @@ describe("appraise — single per-event validation/clamping", () => {
       weight: 4,
       interrupt: false,
       reason: "ok",
+      source: "model",
     })
   })
 
@@ -111,6 +113,20 @@ describe("appraise — single per-event validation/clamping", () => {
     expect(appraise({ interrupt: true }).interrupt).toBe(true)
     expect(appraise({ interrupt: "true" as unknown as boolean }).interrupt).toBe(true)
     expect(appraise({ interrupt: 1 as unknown as boolean }).interrupt).toBe(false)
+  })
+
+  it("stamps source:'model' on EVERY appraisal it validates, including a junk one", () => {
+    // `appraise` is the one gate every model-produced appraisal passes through,
+    // so it is the one honest place to stamp provenance. A parse-miss fallback
+    // is still the model's turn — it gets the same stamp.
+    expect(appraise({}).source).toBe("model")
+    expect(appraise({ disposition: "bogus" as unknown as ObserveResult["disposition"] }).source).toBe("model")
+    expect(appraise({ weight: 9, drive: "safety", reason: "x" }, ["safety"]).source).toBe("model")
+  })
+
+  it("a caller-supplied source is IGNORED — provenance is decided by the producer, not the payload", () => {
+    // A model cannot promote itself to ground truth by emitting `"source"`.
+    expect(appraise({ source: "deterministic" } as Record<string, unknown>).source).toBe("model")
   })
 })
 
@@ -212,6 +228,121 @@ describe("appraiseTick — per-tick escalation aggregation", () => {
     const esc = appraiseTick([{ event: "x", observe: obs({ disposition: "accumulate", weight: 99 }) }], T)
     expect(esc.maxWeight).toBe(5)
     expect(esc.rung).toBe("reorient")
+  })
+
+  // ── Tie-break (spec A §5e) ────────────────────────────────────────────────
+  // `loop.ts` pushes inert appraisals FIRST, duplicates second, landed model
+  // appraisals LAST. Under a strictly-greater comparison every equal-weight tie
+  // therefore went to a placeholder, and `dominant` is what feeds
+  // `cortex.emotionalWeight` and the mood EMA's reading.
+
+  it("at equal weight, a MODEL appraisal beats a deterministic placeholder pushed first", () => {
+    const inert = obs({
+      disposition: "discard",
+      weight: 0,
+      emotionalWeight: "😐",
+      reason: "inert event — no state change (fast-path discard)",
+      source: "deterministic",
+    })
+    const model = obs({
+      disposition: "accumulate",
+      weight: 0,
+      emotionalWeight: "😨",
+      reason: "a quiet but real observation",
+    })
+    const esc = appraiseTick(
+      [
+        { event: "inert", observe: inert },
+        { event: "real", observe: model },
+      ],
+      T,
+    )
+    expect(esc.dominant?.reason).toBe("a quiet but real observation")
+    expect(esc.dominantEvent).toBe("real")
+    // The mood reading comes off `dominant` — this is the behavioral consequence.
+    expect(esc.dominant?.emotionalWeight).toBe("😨")
+  })
+
+  it("at equal weight and equal provenance, a non-discard beats a discard pushed first", () => {
+    const dropped = obs({
+      disposition: "discard",
+      weight: 0,
+      reason: "duplicate of recent event (3x)",
+      source: "deterministic",
+    })
+    const kept = obs({
+      disposition: "accumulate",
+      weight: 0,
+      reason: "RULE: fuel 8%",
+      source: "deterministic",
+    })
+    const esc = appraiseTick(
+      [
+        { event: "dup", observe: dropped },
+        { event: "rule", observe: kept },
+      ],
+      T,
+    )
+    expect(esc.dominant?.reason).toBe("RULE: fuel 8%")
+    expect(esc.dominantEvent).toBe("rule")
+  })
+
+  it("keeps first-wins stability when two MODEL appraisals tie on weight and disposition", () => {
+    // Ordering among equally-ranked model appraisals is unchanged: still the
+    // first entry. The fix is targeted, not a general reshuffle.
+    const a = obs({ disposition: "accumulate", weight: 3, reason: "first" })
+    const b = obs({ disposition: "accumulate", weight: 3, reason: "second" })
+    const esc = appraiseTick(
+      [
+        { event: "a", observe: a },
+        { event: "b", observe: b },
+      ],
+      T,
+    )
+    expect(esc.dominant?.reason).toBe("first")
+  })
+
+  it("weight still wins outright — a heavier DETERMINISTIC appraisal beats a lighter model one", () => {
+    const rule = obs({ disposition: "escalate", weight: 4, reason: "RULE: hull 12%", source: "deterministic" })
+    const model = obs({ disposition: "accumulate", weight: 2, reason: "chatter" })
+    const esc = appraiseTick(
+      [
+        { event: "chat", observe: model },
+        { event: "rule", observe: rule },
+      ],
+      T,
+    )
+    expect(esc.dominant?.reason).toBe("RULE: hull 12%")
+    expect(esc.maxWeight).toBe(4)
+  })
+})
+
+// Unit — the dominant-selection predicate itself (spec A §5e).
+describe("beatsDominant — dominant-appraisal resolution order", () => {
+  const model = (o: Partial<ObserveResult>) => obs({ disposition: "accumulate", weight: 1, ...o })
+  const rule = (o: Partial<ObserveResult>) =>
+    obs({ disposition: "accumulate", weight: 1, source: "deterministic", ...o })
+
+  it("higher weight always wins, in both directions and regardless of provenance", () => {
+    expect(beatsDominant(model({}), 1, rule({}), 4)).toBe(true)
+    expect(beatsDominant(rule({}), 4, model({}), 1)).toBe(false)
+  })
+
+  it("an UNSTAMPED appraisal counts as model and is never displaced by a deterministic one at equal weight", () => {
+    const unstamped = obs({ disposition: "accumulate", weight: 1, reason: "legacy" })
+    expect(beatsDominant(unstamped, 1, rule({}), 1)).toBe(false)
+    expect(beatsDominant(rule({}), 1, unstamped, 1)).toBe(true)
+  })
+
+  it("two deterministic appraisals at equal weight resolve on disposition, then hold", () => {
+    expect(beatsDominant(rule({ disposition: "discard" }), 1, rule({ disposition: "accumulate" }), 1)).toBe(true)
+    expect(beatsDominant(rule({ disposition: "accumulate" }), 1, rule({ disposition: "discard" }), 1)).toBe(false)
+    expect(beatsDominant(rule({ disposition: "accumulate" }), 1, rule({ disposition: "escalate" }), 1)).toBe(false)
+  })
+
+  it("a fully tied challenger never displaces the incumbent", () => {
+    expect(beatsDominant(model({}), 1, model({}), 1)).toBe(false)
+    expect(beatsDominant(rule({}), 0, rule({}), 0)).toBe(false)
   })
 })
 
@@ -1012,6 +1143,19 @@ describe("hasCombatEvidence (Task 1)", () => {
     expect(hasCombatEvidence('type: logged_in\n{"ship":{"hull":100,"max_hull":100}}')).toBe(false)
     expect(hasCombatEvidence('type: full_state\n{"ship":{"hull":100,"shield":50}}')).toBe(false)
   })
+
+  it("treats battle_alert / battle_started / base_raid_update as combat frames on TYPE alone", () => {
+    // Spec A §7c: these are real combat-family frames the set omitted, so a
+    // genuine safety escalation on one of them fell through to the payload scan
+    // and — with no numeric harm signal — was downgraded as an unsupported threat.
+    expect(hasCombatEvidence('type: battle_alert\n{"payload":{"message":"hostiles inbound"}}')).toBe(true)
+    expect(hasCombatEvidence('type: battle_started\n{"payload":{"battle_id":"b1"}}')).toBe(true)
+    expect(hasCombatEvidence('type: base_raid_update\n{"payload":{"base_id":"x"}}')).toBe(true)
+  })
+
+  it("still requires payload evidence for a genuinely non-combat frame type", () => {
+    expect(hasCombatEvidence('type: market_update\n{"payload":{"item":"ore","price":12}}')).toBe(false)
+  })
 })
 
 describe("downgradeUnsupportedThreat (Task 1)", () => {
@@ -1056,6 +1200,27 @@ describe("downgradeUnsupportedThreat (Task 1)", () => {
       baseObserve({ drive: "sustenance", weight: 4, disposition: "escalate", reason: "Quota exhausted — pressing resource block." }),
     )
     expect(downgraded).toBe(false)
+  })
+
+  it("does NOT downgrade a safety escalation riding a battle_alert with no numeric harm signal", () => {
+    // The behavioral consequence of the COMBAT_EVENT_TYPES gap: a real warning
+    // frame carries no hull delta and no damage figure, so the guard had nothing
+    // to key on and knocked a w=4 safety escalation back to a w=2 accumulate.
+    const event = 'type: battle_alert\n{"payload":{"message":"You are being targeted"}}'
+    const observe: ObserveResult = {
+      disposition: "escalate",
+      emotionalWeight: "😰",
+      drive: "safety",
+      weight: 4,
+      interrupt: false,
+      reason: "under fire — hostiles have weapons locked",
+      source: "model",
+    }
+    const out = downgradeUnsupportedThreat(event, observe)
+    expect(out.downgraded).toBe(false)
+    expect(out.observe.weight).toBe(4)
+    expect(out.observe.disposition).toBe("escalate")
+    expect(out.observe.drive).toBe("safety")
   })
 })
 

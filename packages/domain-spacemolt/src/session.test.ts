@@ -9,7 +9,6 @@ import {
   spaceMoltSocketBaseUrl,
   spaceMoltUserAgent,
   sessionFilePath,
-  containerSessionPath,
   validateSessionFile,
   readPlayerCredentials,
   SessionFileError,
@@ -23,10 +22,6 @@ describe("session paths", () => {
     expect(sessionFilePath("/proj", "Dust")).toBe(
       path.resolve("/proj", "players", "Dust", "me", SESSION_FILE_NAME),
     )
-  })
-
-  it("maps to the container players mount", () => {
-    expect(containerSessionPath("Dust")).toBe(`/work/players/Dust/me/${SESSION_FILE_NAME}`)
   })
 })
 

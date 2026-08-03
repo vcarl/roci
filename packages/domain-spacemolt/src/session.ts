@@ -1,6 +1,5 @@
 import * as path from "node:path"
 import { readFileSync, existsSync } from "node:fs"
-import { containerPlayerRoot } from "@roci/core/services/character-paths.js"
 
 /**
  * SpaceMolt session-file foundation (Phase 0).
@@ -65,10 +64,6 @@ export const spaceMoltUserAgent = (): string => process.env.SPACEMOLT_USER_AGENT
 /** Host path to a player's session file. */
 export const sessionFilePath = (projectRoot: string, playerName: string): string =>
   path.resolve(projectRoot, "players", playerName, PLAYER_SUBDIR, SESSION_FILE_NAME)
-
-/** Container path to a player's session file (for `SPACEMOLT_SESSION`). */
-export const containerSessionPath = (playerName: string): string =>
-  `${containerPlayerRoot(playerName)}/${PLAYER_SUBDIR}/${SESSION_FILE_NAME}`
 
 /** Credentials the host library needs for `createSocket({ auth })`. */
 export interface PlayerCredentials {

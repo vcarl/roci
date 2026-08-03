@@ -335,7 +335,6 @@ All events are printed type-tagged with timestamp and character name:
 | `src/situation-classifier.ts` | Situation classification (combat, transit, docked, in-space) |
 | `src/interrupts.ts` | 10 interrupt rules across 4 priority levels |
 | `src/prompt-builder.ts` | Template-based prompt generation |
-| `src/session-system-prompt.md` | Domain system prompt template |
 
 ### CLI and orchestrator -- `apps/roci/` (roci)
 

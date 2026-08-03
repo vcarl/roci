@@ -100,7 +100,6 @@ function makeFs(initial: {
           state.secrets = content
           secretsWrites.push(content)
         }),
-      readCredentials: () => Effect.succeed({ username: "", password: "" }),
       readBackground: () => Effect.succeed("BACKGROUND"),
       readValues: () => Effect.succeed("VALUES"),
       readPalette: () => Effect.succeed(state.palette),
