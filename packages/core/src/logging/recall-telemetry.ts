@@ -65,12 +65,11 @@
  * brain modules (see episodes.ts's `wmDeltas: unknown[]`), so callers in
  * limbic/hippocampus import DOWN into this module and hand it plain objects.
  */
-import * as fsp from "node:fs/promises"
-import * as path from "node:path"
 import { Effect } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { logsDir } from "../services/character-paths.js"
 import { captureEpisodeAttribution } from "./episodes.js"
+import { appendRotatingLine } from "./log-rotation.js"
 
 export const RECALL_TELEMETRY_FILE = "recall-telemetry.jsonl"
 
@@ -118,6 +117,34 @@ export interface RecallCoverage {
   readonly knownSites: number
 }
 
+/**
+ * The composite this candidate WOULD have scored with each term neutralised.
+ *
+ * Structural mirror of `ScoreCounterfactuals`
+ * (brain/limbic/hippocampus/memory/memory-rank.ts) — this module imports nothing
+ * from brain/, so the shape is restated rather than imported. Key names are the
+ * scorer's own, verbatim, because they are what a study greps for.
+ *
+ * NONE of these was ever sorted on. `score.composite` is the real number; these
+ * are observation. Their point is the one thing the real score cannot show: how
+ * much each term is actually doing. Read them against the record-level
+ * `counterfactuals` block, which says whether the difference changed the
+ * returned SET — a term that shifts every score but never reorders the top-k is
+ * inert no matter how large its delta looks.
+ */
+export interface RecallScoreCounterfactuals {
+  /** Recency forced to its no-decay value: the score if memories never decayed. */
+  readonly composite_no_decay: number
+  /** Recency re-derived at the neutral salience: dims stop modulating the half-life. */
+  readonly composite_no_salience: number
+  /** The situational (mood) factor forced to its no-mood value. */
+  readonly composite_no_situational: number
+  /** Reputation forced to 1: provenance stops being a trust weight. */
+  readonly composite_no_reputation: number
+  /** Every term but relevance neutralised — the container's KNN score, alone. */
+  readonly composite_relevance_only: number
+}
+
 /** The five multiplicative factors of one composite score, as computed. */
 export interface RecallScoreComponents {
   /** Relevance: the container's `1/(1+distance)`, or 0 when non-finite. */
@@ -134,6 +161,50 @@ export interface RecallScoreComponents {
   readonly ageMs: number | null
   /** `rel × rep × rec × sit` — exactly what the ranker sorted on. */
   readonly composite: number
+  /** The same score with each term neutralised in turn. Never sorted on. */
+  readonly counterfactual: RecallScoreCounterfactuals
+}
+
+/**
+ * What ONE neutralisation did to the outcome of ONE recall.
+ *
+ * Structural mirror of `CounterfactualEffect` (memory-rank.ts).
+ *
+ * **This is the block an analyst actually wants.** The per-candidate
+ * counterfactual scores say how much a term moved the numbers; these fields say
+ * whether that mattered. `changedReturnedSet: false` on every record for a term
+ * is a measurement that the term is inert in production — not an inference from
+ * the fact that its value looks constant.
+ *
+ * Computed against the PRE-injection ranker ordering. Randomised injection
+ * changes what reaches the prompt for reasons unrelated to any scoring term, and
+ * folding it in would attribute a coin flip to a term.
+ */
+export interface RecallCounterfactualEffect {
+  /** Did the SET of memories reaching the prompt change? The headline. */
+  readonly changedReturnedSet: boolean
+  /** How many of the real top-k survive in the counterfactual top-k. */
+  readonly returnedOverlap: number
+  /** Did the top-k come back as a different SEQUENCE (set change or reshuffle)? */
+  readonly changedReturnedOrder: boolean
+  /** Did the ordering of the WHOLE pool change, winners or not? */
+  readonly changedPoolOrder: boolean
+  /** Spearman rank correlation over the whole pool; 1 = identical. Null below n=2. */
+  readonly spearman: number | null
+  /** Ids that WOULD have reached the prompt without this term. */
+  readonly entered: ReadonlyArray<number>
+  /** Ids that would have lost their place. */
+  readonly displaced: ReadonlyArray<number>
+}
+
+/** Per-term ordering effects for this recall, keyed by the scorer's term names. */
+export interface RecallCounterfactuals {
+  /** What the comparison was run against. Not the post-injection prompt. */
+  readonly basis: "pre-injection-ranker-ordering"
+  /** Top-k the comparison used (`min(k, poolSize)`). */
+  readonly k: number
+  readonly poolSize: number
+  readonly terms: Readonly<Record<string, RecallCounterfactualEffect>>
 }
 
 /**
@@ -432,6 +503,8 @@ export interface RecallTelemetryRecord {
   readonly scoringContext: RecallScoringContext
   /** What randomised injection actually did on this recall. */
   readonly injection: RecallInjectionRecord
+  /** Did neutralising each term change what came back? See `RecallCounterfactuals`. */
+  readonly counterfactuals: RecallCounterfactuals
   readonly candidates: ReadonlyArray<RecallCandidateRecord>
 }
 
@@ -499,6 +572,13 @@ export interface RecallTelemetryInput {
     readonly injectedIndex: number | null
     readonly displacedIndex: number | null
   }
+  /**
+   * Per-term ordering effects, computed by `counterfactualEffects` over the
+   * PRE-injection ranker output. Passed in rather than derived here: this module
+   * has no access to the sort, and re-implementing it would be a second copy of
+   * the ranking rule free to drift from the real one.
+   */
+  readonly counterfactuals: Readonly<Record<string, RecallCounterfactualEffect>>
   /** In RANK order (the ranker's order), winners first. */
   readonly candidates: ReadonlyArray<RecallCandidateInput>
 }
@@ -663,6 +743,12 @@ export function buildRecallRecord(
         input.injection.injectedIndex === null ? null : input.injection.injectedIndex + 1,
       displacedId: atIndex(input.candidates, input.injection.displacedIndex),
     },
+    counterfactuals: {
+      basis: "pre-injection-ranker-ordering",
+      k: Math.min(input.k, input.candidates.length),
+      poolSize: input.candidates.length,
+      terms: input.counterfactuals,
+    },
     candidates: input.candidates.map((c, i) => ({
       id: c.id,
       rank: i + 1,
@@ -685,6 +771,11 @@ export function buildRecallRecord(
  * derivation, serialization and IO all sit inside the swallowed promise, so a
  * character with an unusable root degrades to a console.error rather than
  * breaking a recall.
+ *
+ * Rotation (logging/log-rotation.ts) is size-based and DELETES NOTHING — the
+ * active file is renamed to the next segment number and a fresh one started,
+ * with marker lines on both sides of the seam. See that module's header before
+ * concatenating segments.
  */
 export const appendRecallTelemetry = (
   char: CharacterConfig,
@@ -694,8 +785,7 @@ export const appendRecallTelemetry = (
     try: async () => {
       const dir = logsDir(char)
       const line = `${JSON.stringify(buildRecallRecord(char, input))}\n`
-      await fsp.mkdir(dir, { recursive: true })
-      await fsp.appendFile(path.join(dir, RECALL_TELEMETRY_FILE), line, "utf8")
+      await appendRotatingLine(dir, RECALL_TELEMETRY_FILE, line)
     },
     catch: (e) => e,
   }).pipe(

@@ -16,6 +16,10 @@ import {
   HALF_LIFE_MIN,
   HALF_LIFE_MAX,
   NEUTRAL_SALIENCE,
+  NEUTRAL_RECENCY,
+  NEUTRAL_REPUTATION,
+  COUNTERFACTUAL_TERMS,
+  counterfactualEffects,
 } from "./memory-rank.js"
 
 const NOW = Date.parse("2026-07-22T00:00:00Z")
@@ -267,6 +271,111 @@ describe("scoreBreakdown / rerankScored (instrumentation — must not move the m
     // Sorted descending, losers included.
     for (let i = 1; i < scored.length; i++) {
       expect(scored[i - 1].score.composite).toBeGreaterThanOrEqual(scored[i].score.composite)
+    }
+  })
+})
+
+/**
+ * Per-term counterfactuals. The design claim under test is not "the arithmetic
+ * is right" but "this is observation only" — the real composite must be
+ * bit-identical to what it was before these fields existed, and a term that is
+ * constant across a pool must be reported as changing NOTHING.
+ */
+describe("counterfactual scores (observation only — must not move the real one)", () => {
+  const salience = { safety: 1.0 }
+  const mood = { safety: 1.0 }
+
+  it("the REAL composite is still exactly rel × rep × rec × sit, bit for bit", () => {
+    const cases: MemoryHit[] = [
+      hit({ id: 1, provenance: "grounded", score: 0.6, dims: { safety: 1.0 } }),
+      hit({ id: 2, provenance: "asserted", score: 0.9, dims: { safety: -0.8 } }),
+      hit({ id: 3, provenance: "episodic", score: 0.5, ts: new Date(NOW - 3 * 86_400_000).toISOString() }),
+      hit({ id: 4, provenance: "inferred", score: Number.NaN }),
+      hit({ id: 5, provenance: "grounded", score: 0.4, ts: "not-a-date" }),
+    ]
+    for (const h of cases) {
+      const b = scoreBreakdown(h, NOW, salience, mood)
+      expect(b.rel * b.rep * b.rec * b.sit).toBe(b.composite)
+      expect(compositeScore(h, NOW, salience, mood)).toBe(b.composite)
+      // Relevance alone really is relevance alone — every other factor gone.
+      expect(b.counterfactual.composite_relevance_only).toBe(b.rel)
+      // Neutralising reputation divides exactly the reputation weight out.
+      expect(b.counterfactual.composite_no_reputation).toBe(b.rel * 1 * b.rec * b.sit)
+    }
+  })
+
+  it("neutral values come from the real functions, so a knob retune moves both", () => {
+    // Not literals: these ARE what recency/situational return in the neutral world.
+    expect(NEUTRAL_RECENCY).toBe(recency(0, NEUTRAL_SALIENCE))
+    expect(NEUTRAL_REPUTATION).toBe(1)
+    const aged = hit({ id: 1, provenance: "grounded", score: 0.5, dims: { safety: 1 },
+      ts: new Date(NOW - 5 * 86_400_000).toISOString() })
+    const b = scoreBreakdown(aged, NOW, salience, mood)
+    // no_salience re-derives rec at NEUTRAL_SALIENCE rather than dropping it:
+    // salience is an INPUT to rec, not a factor of the product.
+    expect(b.counterfactual.composite_no_salience)
+      .toBe(b.rel * b.rep * recency(b.ageMs, NEUTRAL_SALIENCE) * b.sit)
+    // …and that is a REAL difference here: this memory is maximally salient.
+    expect(b.counterfactual.composite_no_salience).toBeLessThan(b.composite)
+    // no_situational is `situational` under an empty mood, not a hardcoded 1.
+    expect(b.counterfactual.composite_no_situational).toBe(b.rel * b.rep * b.rec * situational(aged, {}))
+  })
+
+  it("a term that is CONSTANT across the pool changes no ordering at all", () => {
+    // The live production shape: no mood (sit ≡ 1), no dims (salience ≡ neutral),
+    // and every row the same age (rec identical). Only rel and rep vary.
+    const ts = new Date(NOW - 11 * 86_400_000).toISOString()
+    const pool: MemoryHit[] = [
+      hit({ id: 819, provenance: "grounded", score: 0.64, ts }),
+      hit({ id: 825, provenance: "inferred", score: 0.82, ts }),
+      hit({ id: 824, provenance: "inferred", score: 0.79, ts }),
+      hit({ id: 823, provenance: "inferred", score: 0.76, ts }),
+    ]
+    const scored = rerankScored(pool, 3, NOW, {}, {})
+    const eff = counterfactualEffects(scored, 3)
+    for (const term of ["composite_no_decay", "composite_no_salience", "composite_no_situational"] as const) {
+      expect(eff[term].changedReturnedSet).toBe(false)
+      expect(eff[term].changedPoolOrder).toBe(false)
+      expect(eff[term].spearman).toBe(1)
+      expect(eff[term].entered).toEqual([])
+    }
+  })
+
+  it("a term that is DOING work changes the returned set, and the record says which ids", () => {
+    // Same pool. Reputation is the one term that varies, and it is what makes
+    // the weaker-relevance grounded row win — so neutralising it must reorder.
+    const ts = new Date(NOW - 11 * 86_400_000).toISOString()
+    const pool: MemoryHit[] = [
+      hit({ id: 819, provenance: "grounded", score: 0.64, ts }),
+      hit({ id: 825, provenance: "inferred", score: 0.82, ts }),
+      hit({ id: 824, provenance: "inferred", score: 0.79, ts }),
+      hit({ id: 823, provenance: "inferred", score: 0.76, ts }),
+    ]
+    const scored = rerankScored(pool, 2, NOW, {}, {})
+    expect(scored.map((c) => c.hit.id)).toEqual([819, 825, 824, 823]) // rep put 819 on top
+    const eff = counterfactualEffects(scored, 2)
+    // Without reputation the pool is pure relevance order: 825, 824, 823, 819.
+    expect(eff.composite_no_reputation.changedReturnedSet).toBe(true)
+    expect(eff.composite_no_reputation.returnedOverlap).toBe(1)
+    expect(eff.composite_no_reputation.entered).toEqual([824])
+    expect(eff.composite_no_reputation.displaced).toEqual([819])
+    expect(eff.composite_no_reputation.spearman).toBeLessThan(1)
+    // Relevance alone is the same world here — every other term is inert.
+    expect(eff.composite_relevance_only.entered).toEqual([824])
+    // And the real ordering is untouched by any of it.
+    expect(rerank(pool, 2, NOW, {}, {}).map((h) => h.id)).toEqual([819, 825])
+  })
+
+  it("ties break on the input index, exactly as the real stable sort does", () => {
+    // Four identical scores: the real order is input order, and every
+    // counterfactual must report NO change rather than a re-sort artefact.
+    const pool: MemoryHit[] = [1, 2, 3, 4].map((id) => hit({ id, provenance: "grounded", score: 0.5 }))
+    const scored = rerankScored(pool, 2, NOW, {}, {})
+    expect(scored.map((c) => c.hit.id)).toEqual([1, 2, 3, 4])
+    const eff = counterfactualEffects(scored, 2)
+    for (const term of COUNTERFACTUAL_TERMS) {
+      expect(eff[term].changedPoolOrder).toBe(false)
+      expect(eff[term].changedReturnedOrder).toBe(false)
     }
   })
 })

@@ -69,10 +69,14 @@ Prior findings: memory `salience-measurement-findings`, `recall-instrumentation`
       `mood.nonZeroAxes`. On vcarl the file doesn't exist → `sit` is exactly `1` on every
       candidate. `norm` stuck at 0 across many ticks = the EMA never received a non-empty
       vector. **This is a plumbing failure that looks exactly like a null result.**
-- [ ] **WATCH — does `rec` have spread?** On the existing corpus recency saturated to `≈3e-6`
-      across the whole pool — a constant multiplier. Fresh memories are minutes old so it should
-      vary. If it doesn't, **decay has no effect on ranking** and the half-life range
-      (`[1h, 30d]`, itself an unvalidated first guess) needs re-anchoring.
+- [ ] **STOP — is decay drowning relevance?** Corrected 2026-08-03 by per-term counterfactuals:
+      decay is **not** inert — it **dominates**. Neutralising it changed the returned set on all
+      three measured recalls (overlap 0/5, 1/5, 1/2; Spearman **−0.49 / −0.25 / −0.05**,
+      anti-correlated). Live ranking is `rel × rec`, not `rel × rep`.
+      Cause is tuning: `halfLife(0.4) ≈ 13.9 h` against a weeks-old corpus collapses the composite
+      to **"newest first"**. On a fresh character all memories are young, so watch whether `rec`
+      spans orders of magnitude within a single pool. **`HALF_LIFE_MIN/MAX` (`[1h, 30d]`, an
+      unvalidated first guess) want retuning before any ranking study means anything.**
 
 ---
 
@@ -87,10 +91,13 @@ Prior findings: memory `salience-measurement-findings`, `recall-instrumentation`
 - [ ] **WATCH — is injection firing at the configured rate?** Count `injection.fired` against
       record count. Configured, seeded and recorded per-recall specifically so this is checkable.
       A configured-but-not-firing control arm is worse than none — the analysis assumes it exists.
-- [ ] **WATCH — does `composite` separate candidates at all?** With salience constant, mood
-      constant and recency saturated, `rel × rep` was the *entire* ranking function. Check spread,
-      and whether ordering ever differs from ordering by `rel` alone. If not, **the ranker is a
-      relevance sort wearing four terms.**
+- [ ] **WATCH — read the per-term counterfactuals; don't re-derive them.** Every candidate now
+      carries `counterfactual.composite_no_{decay,salience,situational,reputation}` and
+      `composite_relevance_only`, plus a per-recall `changedReturnedSet` / `spearman` rollup.
+      Measured on vcarl: **salience and situational Spearman exactly 1.0000 (inert), reputation
+      never changed a returned set, decay changed all three.** On a fresh character salience and
+      mood should stop being inert once `dims` and `mood.json` exist — if they stay at Spearman
+      1.0000, the terms are still not reaching the ranker.
 
 ---
 

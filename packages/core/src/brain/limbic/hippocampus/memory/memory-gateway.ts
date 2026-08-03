@@ -3,7 +3,7 @@ import { CharacterFs, type CharacterConfig } from "../../../../services/Characte
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
 import { RECALL_WIRE_VERSION } from "@roci/player-tools/memory-format"
 import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
-import { rerankScored, RERANK_OVERFETCH } from "./memory-rank.js"
+import { rerankScored, counterfactualEffects, RERANK_OVERFETCH } from "./memory-rank.js"
 import { readMood } from "../../mood/mood-store.js"
 import { parseSalience, TEMPLATE_SALIENCE } from "../../../../core/salience.js"
 import { appendRecallTelemetry } from "../../../../logging/recall-telemetry.js"
@@ -384,6 +384,12 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
             injectedIndex: decision.injectedIndex,
             displacedIndex: decision.displacedIndex,
           },
+          // Per-term counterfactual ORDERING effects, over `scored` — the
+          // ranker's own output, BEFORE injection. Injection is a coin flip
+          // that changes the prompt for reasons unrelated to any scoring term,
+          // so measuring the terms against the post-injection pool would
+          // attribute the flip to whichever term happened to be neutralised.
+          counterfactuals: counterfactualEffects(scored, opts.k),
           candidates: finalPool.map((c, i) => ({
             id: c.hit.id,
             source: c.hit.source,
@@ -413,6 +419,10 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
               salience: c.score.salience,
               ageMs: Number.isFinite(c.score.ageMs) ? c.score.ageMs : null,
               composite: c.score.composite,
+              // Free to compute (same inputs, a few extra multiplications) and
+              // therefore recorded for EVERY candidate on EVERY recall — no
+              // cohort, no sampling, 100% coverage. See memory-rank.ts.
+              counterfactual: c.score.counterfactual,
             },
           })),
         })

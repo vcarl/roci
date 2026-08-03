@@ -53,12 +53,11 @@
  * every failure is swallowed after a console.error. Types stay STRUCTURAL — this
  * module imports nothing from `brain/`.
  */
-import * as fsp from "node:fs/promises"
-import * as path from "node:path"
 import { Effect } from "effect"
 import type { CharacterConfig } from "../services/CharacterFs.js"
 import { logsDir } from "../services/character-paths.js"
 import { captureEpisodeAttribution } from "./episodes.js"
+import { appendRotatingLine } from "./log-rotation.js"
 
 export const RECALL_USAGE_FILE = "recall-usage.jsonl"
 
@@ -447,8 +446,8 @@ export const recordRecallUsage = (
       if (recall.candidates.length === 0) return
       const dir = logsDir(char)
       const line = `${JSON.stringify(buildUsageRecord(char.name, recall, input))}\n`
-      await fsp.mkdir(dir, { recursive: true })
-      await fsp.appendFile(path.join(dir, RECALL_USAGE_FILE), line, "utf8")
+      // Size-based segment rotation, deleting nothing — see logging/log-rotation.ts.
+      await appendRotatingLine(dir, RECALL_USAGE_FILE, line)
     },
     catch: (e) => e,
   }).pipe(

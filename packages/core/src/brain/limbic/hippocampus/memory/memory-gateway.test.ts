@@ -833,3 +833,66 @@ describe("recall telemetry", () => {
     rmSync(tmpRoot, { recursive: true, force: true })
   })
 })
+
+/**
+ * Per-term counterfactuals, end to end. The point of the block is that a term's
+ * marginal contribution to ORDERING becomes a measurement rather than an
+ * inference — so the test builds the exact production shape (no mood, no dims,
+ * one age) and asserts that three terms are recorded as inert while reputation
+ * is recorded as decisive.
+ */
+describe("recall telemetry — per-term counterfactuals", () => {
+  const AGED = new Date(Date.now() - 11 * 86_400_000).toISOString()
+  const realCorpusPool: MemoryHit[] = [
+    { id: 819, ts: AGED, source: "observe", provenance: "grounded", tags: [], text: "m819", score: 0.64 },
+    { id: 825, ts: AGED, source: "evaluate", provenance: "inferred", tags: [], text: "m825", score: 0.82 },
+    { id: 824, ts: AGED, source: "evaluate", provenance: "inferred", tags: [], text: "m824", score: 0.79 },
+    { id: 823, ts: AGED, source: "orient", provenance: "inferred", tags: [], text: "m823", score: 0.76 },
+  ]
+
+  it("records every candidate's counterfactuals AND whether each term changed the returned set", async () => {
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-cf-"))
+    const c = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    const block = await run(
+      fakeStore({ hits: realCorpusPool }),
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", c, "the jump to Horizon failed", { k: 2, label: "Relevant memories", site: "decide" }),
+      ),
+    )
+    const rec = JSON.parse(
+      readFileSync(path.join(c.root, "logs", RECALL_TELEMETRY_FILE), "utf8").trim(),
+    ) as RecallTelemetryRecord
+
+    // The REAL score is untouched: still exactly the product of the four factors.
+    for (const cand of rec.candidates) {
+      const s = cand.score
+      expect(s.rel * s.rep * s.rec * s.sit).toBe(s.composite)
+      // Every candidate carries all five, on every recall — no cohort, no sampling.
+      expect(Object.keys(s.counterfactual).sort()).toEqual([
+        "composite_no_decay",
+        "composite_no_reputation",
+        "composite_no_salience",
+        "composite_no_situational",
+        "composite_relevance_only",
+      ])
+      expect(s.counterfactual.composite_relevance_only).toBe(s.rel)
+    }
+    // The real ordering is what it always was: reputation carried 819 past 825.
+    expect(rec.candidates.map((x) => x.id)).toEqual([819, 825, 824, 823])
+    expect(block).toContain("m819")
+
+    const t = rec.counterfactuals.terms
+    expect(rec.counterfactuals).toMatchObject({ basis: "pre-injection-ranker-ordering", k: 2, poolSize: 4 })
+    // Three terms are inert here — and the record SAYS so, per recall.
+    for (const inert of ["composite_no_decay", "composite_no_salience", "composite_no_situational"]) {
+      expect(t[inert].changedReturnedSet).toBe(false)
+      expect(t[inert].changedPoolOrder).toBe(false)
+      expect(t[inert].spearman).toBe(1)
+    }
+    // Reputation is not. Without it the pool is pure relevance order.
+    expect(t.composite_no_reputation.changedReturnedSet).toBe(true)
+    expect(t.composite_no_reputation.entered).toEqual([824])
+    expect(t.composite_no_reputation.displaced).toEqual([819])
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+})
