@@ -165,10 +165,10 @@ const BASE_STATE: GameState = {
   system: null,
   cargo: [],
   nearby: [],
-  notifications: [],
-  travelProgress: null,
   inCombat: false,
   connected: true,
+  combat: { lastEventTick: null, onsetSeq: 0 },
+  deathPending: false,
   tick: 0,
   timestamp: 0,
 }

@@ -27,10 +27,10 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
 		system: null,
 		cargo: [],
 		nearby: [],
-		notifications: [],
-		travelProgress: null,
 		inCombat: false,
 		connected: true,
+		combat: { lastEventTick: null, onsetSeq: 0 },
+		deathPending: false,
 		tick: 512,
 		timestamp: Date.now(),
 		...overrides,
@@ -41,14 +41,6 @@ const inSpaceSituation: Situation = {
 	type: SituationType.InSpace,
 	flags: {
 		atMineablePoi: false,
-		atDockablePoi: false,
-		lowFuel: false,
-		cargoNearlyFull: false,
-		cargoFull: false,
-		lowHull: false,
-		hasPendingTrades: false,
-		hasUnreadChat: false,
-		hasCompletableMission: false,
 	},
 }
 

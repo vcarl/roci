@@ -316,10 +316,10 @@ export function initialGameState(snapshot: FullStateSnapshot, tick: number): Gam
     poi: snapshot.poi ?? null,
     cargo: snapshot.cargo ?? [],
     nearby: [],
-    notifications: [],
-    travelProgress: null,
     inCombat: false,
     connected: true,
+    combat: { lastEventTick: null, onsetSeq: 0 },
+    deathPending: false,
     tick,
     timestamp: Date.now(),
   }

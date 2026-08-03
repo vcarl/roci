@@ -182,7 +182,13 @@ const activePhase = {
       }).pipe(Effect.provide(context.domainBundle!))
 
       if (result._tag === "Interrupted") {
-        return { _tag: "Continue", next: "active", connection: { ...conn, initialState: result.finalState } } as PhaseResult
+        // Clear `deathPending` here: consuming the phase exit IS the
+        // acknowledgement of the death that caused it. Without this the
+        // amygdala rule's level condition would still hold on the restarted
+        // `active` phase and fire again immediately, ping-ponging the character
+        // through the phase machine forever.
+        const finalState = { ...(result.finalState as GameState), deathPending: false }
+        return { _tag: "Continue", next: "active", connection: { ...conn, initialState: finalState } } as PhaseResult
       }
       return { _tag: "Continue", next: "social", connection: { ...conn, initialState: result.finalState } } as PhaseResult
     }),

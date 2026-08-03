@@ -21,7 +21,6 @@ export function snapshot(state: GameState): Record<string, unknown> {
     location: `${poiLabel} in ${systemLabel}`,
     docked: state.player.docked_at_base != null,
     inCombat: state.inCombat,
-    traveling: state.travelProgress !== null,
   }
 }
 
@@ -44,7 +43,7 @@ export function stateDiff(
   const lines: string[] = []
 
   // Compare scalar fields
-  const scalarKeys = ["cargo", "fuel", "hull", "credits", "location", "docked", "inCombat", "traveling"] as const
+  const scalarKeys = ["cargo", "fuel", "hull", "credits", "location", "docked", "inCombat"] as const
   for (const key of scalarKeys) {
     const b = before[key]
     const a = after[key]

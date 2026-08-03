@@ -1,8 +1,6 @@
 import { Layer } from "effect"
 import { EventProcessorTag, type EventProcessor, type EventResult } from "@roci/core/brain/limbic/thalamus/event-processor.js"
 import type {
-  NotificationBattleDamage,
-  NotificationBattleUpdate,
   NotificationChatMessage,
   NotificationMiningYield,
   NotificationObservationUpdate,
@@ -11,6 +9,7 @@ import type { CargoItem, GameState, NearbyPlayer, PlayerState, ShipState } from 
 import type { GameEvent } from "./game-events.js"
 import { CONNECTION_STATE_FRAME, STATE_SYNC_FRAME } from "./game-events.js"
 import type { FullStateSnapshot } from "./lib-state.js"
+import { combatOnsetAppraiser, isSelfParticipant, nextCombatState } from "./reflexes.js"
 
 /** A single delta entry from observation_update's nearby_changed / system_changed arrays. */
 type NearbyDelta = NonNullable<NotificationObservationUpdate["nearby_changed"]>[number]
@@ -175,27 +174,63 @@ function handleObservationUpdate(payload: NotificationObservationUpdate): EventR
   }
 }
 
-function handleBattleUpdate(payload: NotificationBattleUpdate): EventResult {
-  // client-v2 1.6.0 split combat into a periodic `battle_update` snapshot (this
-  // handler: standing-fight summary, no per-hit fields) plus separate per-hit
-  // `battle_damage` push frames (see handleBattleDamage). We drive `inCombat`/
-  // `tick` from the snapshot. The raw frame reaches the hindbrain through the
-  // event queue regardless, so nothing here needs to narrate it.
+/**
+ * Fold a combat-family frame.
+ *
+ * Sets `inCombat` and advances `combat` ONLY when this player is actually a
+ * participant. Most of these frames also reach bystanders at the POI —
+ * `battle_alert` fired unprompted during the 2026-08-02 probe on a character
+ * doing nothing — so treating arrival as participation would put the character
+ * into other people's fights and fire the onset reflex for them.
+ *
+ * A non-participant frame is still a `StateChange` with no update: the raw
+ * frame reaches the hindbrain through the queue and gets appraised on its
+ * merits, which is exactly where "a fight is happening near you" belongs.
+ */
+function handleCombatFrame(type: string, payload: unknown): EventResult {
+  const tick = (payload as { tick?: number } | undefined)?.tick
   return {
     category: { _tag: "StateChange" },
     stateUpdate: (prev) => {
       const s = prev as GameState
-      return { ...s, inCombat: true, tick: payload.tick, timestamp: Date.now() }
+      if (!isSelfParticipant(type, payload, s.player?.id ?? "")) return s
+      return {
+        ...s,
+        inCombat: true,
+        // `s.inCombat` (BEFORE this update) is the fresh-onset signal —
+        // see nextCombatState's doc for why tick nullability can't be.
+        combat: nextCombatState(s.combat, tick, s.inCombat),
+        ...(typeof tick === "number" ? { tick } : {}),
+        timestamp: Date.now(),
+      }
     },
   }
 }
 
-function handleBattleDamage(payload: NotificationBattleDamage): EventResult {
+/**
+ * A fight you were in has ended.
+ *
+ * Clears `inCombat` AND resets `combat.lastEventTick` to `null` while
+ * PRESERVING `onsetSeq` — that reset is the actual re-arm mechanism (not a
+ * side effect nobody reads): `nextCombatState`'s fresh-onset test is
+ * `!prevInCombat`, so the next participation frame, whenever it arrives and
+ * whatever tick fields it does or doesn't carry, reads `inCombat: false` and
+ * fires the onset reflex again for the next fight. Preserving `onsetSeq`
+ * (rather than zeroing it) keeps the appraiser's per-player latch monotonic
+ * across fights within one session — see createCombatOnsetAppraiser's doc.
+ */
+function handleBattleEnded(payload: unknown): EventResult {
   return {
     category: { _tag: "StateChange" },
     stateUpdate: (prev) => {
       const s = prev as GameState
-      return { ...s, inCombat: true, tick: payload.tick, timestamp: Date.now() }
+      if (!isSelfParticipant("battle_ended", payload, s.player?.id ?? "")) return s
+      return {
+        ...s,
+        inCombat: false,
+        combat: { lastEventTick: null, onsetSeq: s.combat.onsetSeq },
+        timestamp: Date.now(),
+      }
     },
   }
 }
@@ -261,18 +296,37 @@ export const spaceMoltEventProcessor: EventProcessor = {
       case "observation_update":
         return handleObservationUpdate(smEvent.payload as NotificationObservationUpdate)
 
+      case "battle_started":
+      case "battle_joined":
       case "battle_update":
-        return handleBattleUpdate(smEvent.payload as NotificationBattleUpdate)
-
       case "battle_damage":
-        return handleBattleDamage(smEvent.payload as NotificationBattleDamage)
+      case "battle_alert":
+        return handleCombatFrame(smEvent.type, smEvent.payload)
+
+      case "battle_ended":
+        return handleBattleEnded(smEvent.payload)
 
       case "player_died":
         return {
           category: { _tag: "LifecycleReset", reason: "player_died" },
           stateUpdate: (prev) => {
             const s = prev as GameState
-            return { ...s, inCombat: false, timestamp: Date.now() }
+            // `deathPending` is the amygdala rule's whole condition. It is
+            // cleared by phases.ts when it consumes the resulting Interrupted
+            // exit — consuming the exit IS the acknowledgement.
+            //
+            // `combat` resets the same way handleBattleEnded does: dying ends
+            // whatever fight was in progress, and a respawn walking straight
+            // back into danger within COMBAT_REARM_QUIET_TICKS must still be
+            // treated as a fresh onset, not a continuation of the fight that
+            // killed you.
+            return {
+              ...s,
+              inCombat: false,
+              combat: { lastEventTick: null, onsetSeq: s.combat.onsetSeq },
+              deathPending: true,
+              timestamp: Date.now(),
+            }
           },
         }
 
@@ -295,6 +349,14 @@ export const spaceMoltEventProcessor: EventProcessor = {
         return {}
     }
   },
+
+  /**
+   * The domain's deterministic appraisers (spec A §5b), landing into the seam
+   * A1 built with zero rules. Exactly one: combat onset, edge-triggered. Death
+   * is NOT here — it is the amygdala rule in reflexes.ts, because it is the one
+   * condition that genuinely wants the full phase exit.
+   */
+  deterministicAppraisers: [combatOnsetAppraiser],
 }
 
 /** Layer providing the SpaceMolt event processor as the EventProcessor service. */

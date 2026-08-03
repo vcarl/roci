@@ -1,16 +1,4 @@
 // =====================================================
-// API Layer Types
-// =====================================================
-
-export interface GameNotification {
-	id?: string;
-	type: string;
-	msg_type?: string;
-	data?: Record<string, unknown>;
-	timestamp?: string;
-}
-
-// =====================================================
 // Game State Types (from API queries)
 // =====================================================
 
@@ -138,70 +126,22 @@ export interface NearbyPlayer {
 	in_combat: boolean;
 }
 
-export interface TravelProgress {
-	travel_progress: number;
-	travel_destination: string;
-	travel_type: "travel" | "jump";
-	travel_arrival_tick: number;
-}
-
-export interface MarketItem {
-	item_id: string;
-	item_name: string;
-	best_buy: number;
-	best_sell: number;
-	buy_quantity: number;
-	sell_quantity: number;
-}
-
-export interface PlayerOrder {
-	order_id: string;
-	item_id: string;
-	item_name: string;
-	type: "buy" | "sell";
-	quantity: number;
-	filled: number;
-	price_each: number;
-	created_at?: string;
-}
-
-export interface StorageItem {
-	item_id: string;
-	item_name: string;
-	quantity: number;
-}
-
-export interface MissionInfo {
-	id: string;
-	title: string;
-	description: string;
-	reward_credits: number;
-	reward_xp?: number;
-	requirements: string;
-}
-
-export interface ActiveMission {
-	id: string;
-	title: string;
-	status: string;
-	progress: string;
-	reward_credits: number;
-}
-
 /**
- * An incoming player-to-player trade offer awaiting the recipient's review.
- * Sourced from the `logged_in` handshake's `pending_trades[]` array (whose
- * entries the client-v2 lib types only as `unknown[]`; shape mirrors
- * `NotificationTradeOfferReceived`). Only `trade_id` is relied upon; the rest is
- * carried for possible future rendering. Presence drives the `pending_trades`
- * interrupt via the `hasPendingTrades` situation flag.
+ * Combat participation bookkeeping, owned by the event processor and read by
+ * the combat-onset reflex (`reflexes.ts`).
+ *
+ * `onsetSeq` is the whole design. The reflex MUST fire once per fight and must
+ * NOT re-fire for its duration — that is the exact failure of the deleted
+ * `hull_critical` rule, a level condition that persisted for many ticks and
+ * destroyed, every tick, the plan that would have ended it. A monotonic counter
+ * incremented once per fresh onset gives the reflex an exact edge to compare
+ * against, instead of a level it has to guess about.
  */
-export interface PendingTrade {
-	trade_id: string;
-	offerer_id?: string;
-	offerer_name?: string;
-	offer_credits?: number;
-	request_credits?: number;
+export interface CombatState {
+	/** Game tick of the most recent combat frame you were a participant in. */
+	readonly lastEventTick: number | null;
+	/** Incremented once per fresh ONSET (a transition into being a participant). */
+	readonly onsetSeq: number;
 }
 
 export interface GameState {
@@ -211,9 +151,18 @@ export interface GameState {
 	system: SystemState | null;
 	cargo: CargoItem[];
 	nearby: NearbyPlayer[];
-	notifications: GameNotification[];
-	travelProgress: TravelProgress | null;
 	inCombat: boolean;
+	/** Combat participation bookkeeping — see CombatState. */
+	combat: CombatState;
+	/**
+	 * You died and the phase machine has not yet acted on it.
+	 *
+	 * Set by `player_died`, and cleared by `phases.ts`'s `Interrupted` branch —
+	 * consuming the phase exit IS the acknowledgement. Without that clear the
+	 * critical would re-fire the instant the `active` phase restarted, and the
+	 * character would ping-pong through the phase machine forever.
+	 */
+	deathPending: boolean;
 	/**
 	 * Whether the live feed is up, from the adapter's `connection_state` frames
 	 * (`onDisconnected` / `onReconnecting` / `onReconnected`).
@@ -227,20 +176,6 @@ export interface GameState {
 	connected: boolean;
 	tick: number;
 	timestamp: number;
-	market?: MarketItem[];
-	missions?: MissionInfo[];
-	activeMissions?: ActiveMission[];
-	/**
-	 * Incoming trade offers awaiting review. Populated from the `logged_in`
-	 * handshake snapshot (and preserved across `get_state`/`full_state` refreshes,
-	 * which don't carry it). Drives the `hasPendingTrades` situation flag. See the
-	 * staleness note on `loggedInToSnapshot` in event-processor.ts: the domain has
-	 * no cheap signal for when these resolve, so this reflects the login snapshot.
-	 */
-	pendingTrades?: PendingTrade[];
-	orders?: PlayerOrder[];
-	storage?: StorageItem[];
-	storageCredits?: number;
 }
 
 // =====================================================
@@ -250,20 +185,28 @@ export interface GameState {
 export enum SituationType {
 	Docked = "docked",
 	InSpace = "in_space",
-	InTransit = "in_transit",
 	InCombat = "in_combat",
 }
 
+/**
+ * What is left of the situation flags after the severity system was deleted.
+ *
+ * There were nine. Eight had ZERO consumers once `interrupts.ts` went, and two
+ * of those — `hasUnreadChat` and `hasCompletableMission` — were structurally
+ * incapable of ever being true, because the `GameState` fields they read
+ * (`notifications`, `activeMissions`) had no writer anywhere in the domain.
+ *
+ * `atMineablePoi` survives on one real reader: `briefing.ts`, which lists the
+ * POI's mineable resources when it is set.
+ *
+ * NOTE the fuel/hull/cargo bands did NOT die with the flags — they moved, and
+ * were always the more useful form. `LOW_FUEL_THRESHOLD`, `LOW_HULL_THRESHOLD`
+ * and `HULL_CRITICAL_THRESHOLD` (`situation-classifier.ts`) are imported
+ * directly by `event-digest.ts` and are the STATUS line's bands, which is what
+ * the appraiser actually reads.
+ */
 export interface SituationFlags {
 	atMineablePoi: boolean;
-	atDockablePoi: boolean;
-	lowFuel: boolean;
-	cargoNearlyFull: boolean;
-	cargoFull: boolean;
-	lowHull: boolean;
-	hasPendingTrades: boolean;
-	hasUnreadChat: boolean;
-	hasCompletableMission: boolean;
 }
 
 export interface Situation {

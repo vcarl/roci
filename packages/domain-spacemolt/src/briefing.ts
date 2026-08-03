@@ -1,12 +1,5 @@
 import { SituationType } from "./types.js";
-import type {
-	GameState,
-	Situation,
-	CargoItem,
-	PlayerOrder,
-	StorageItem,
-	SystemState,
-} from "./types.js";
+import type { GameState, Situation, CargoItem, SystemState } from "./types.js";
 
 /**
  * Generates a concise natural language briefing from game state.
@@ -18,15 +11,13 @@ export function generateBriefing(state: GameState, situation: Situation): string
 			return generateDockedBriefing(state);
 		case SituationType.InSpace:
 			return generateInSpaceBriefing(state, situation);
-		case SituationType.InTransit:
-			return generateInTransitBriefing(state);
 		case SituationType.InCombat:
 			return generateInCombatBriefing(state);
 	}
 }
 
 function generateDockedBriefing(state: GameState): string {
-	const { player, ship, poi, system, market, activeMissions, missions } = state;
+	const { player, ship, poi, system } = state;
 	const lines: string[] = [];
 
 	lines.push(
@@ -35,62 +26,6 @@ function generateDockedBriefing(state: GameState): string {
 	lines.push(resourceLine(player, ship));
 	lines.push(shipLoadoutLine(ship));
 	lines.push(cargoLine(state.cargo, ship));
-
-	// Cargo at market prices
-	if (state.cargo.length > 0 && market && market.length > 0) {
-		lines.push("");
-		lines.push("Your cargo at market prices:");
-		for (const item of state.cargo) {
-			const name = item.item_id.replace(/_/g, " ");
-			const mkt = market.find((m) => m.item_id === item.item_id);
-			if (mkt && mkt.best_buy > 0) {
-				const total = mkt.best_buy * item.quantity;
-				const sellNote = mkt.best_sell > 0 ? ` (cheapest sell: ${mkt.best_sell} cr)` : "";
-				lines.push(
-					`- ${name} [${item.item_id}] x${item.quantity}: buy orders at ${mkt.best_buy} cr/unit -> ${total.toLocaleString()} cr${sellNote}`,
-				);
-			} else {
-				lines.push(
-					`- ${name} [${item.item_id}] x${item.quantity}: no buy orders (use create_sell_order to list)`,
-				);
-			}
-		}
-	}
-
-	// Station market overview
-	if (market && market.length > 0) {
-		const cargoIds = new Set(state.cargo.map((c) => c.item_id));
-		const buyable = market
-			.filter((m) => !cargoIds.has(m.item_id) && m.best_sell > 0 && m.sell_quantity > 0)
-			.sort((a, b) => b.sell_quantity - a.sell_quantity)
-			.slice(0, 10);
-		if (buyable.length > 0) {
-			lines.push("");
-			lines.push("Station market (available to buy):");
-			for (const m of buyable) {
-				const name = (m.item_name || m.item_id).replace(/_/g, " ");
-				const buyBack = m.best_buy > 0 ? ` / buy orders at ${m.best_buy} cr` : "";
-				lines.push(
-					`- ${name} [${m.item_id}]: ${m.best_sell} cr/unit (${m.sell_quantity} available)${buyBack}`,
-				);
-			}
-		}
-	}
-
-	// Active orders
-	if (state.orders && state.orders.length > 0) {
-		lines.push("");
-		lines.push(formatOrdersSummary(state.orders));
-	}
-
-	// Station storage
-	if (state.storage || state.storageCredits) {
-		const storageStr = formatStorageSummary(state.storage ?? [], state.storageCredits ?? 0);
-		if (storageStr) {
-			lines.push("");
-			lines.push(storageStr);
-		}
-	}
 
 	// Nearby ships
 	if (state.nearby.length > 0) {
@@ -104,42 +39,6 @@ function generateDockedBriefing(state: GameState): string {
 		const extra = state.nearby.length > 5 ? ` and ${state.nearby.length - 5} more` : "";
 		lines.push("");
 		lines.push(`Ships nearby: ${names}${extra}.`);
-	}
-
-	// Active missions
-	if (activeMissions && activeMissions.length > 0) {
-		lines.push("");
-		lines.push("Active missions:");
-		for (const m of activeMissions) {
-			const progress = m.progress ? ` (${m.progress})` : "";
-			const tag =
-				m.status === "completed" ? " *** READY TO COMPLETE ***" : ` [${m.status}]`;
-			lines.push(
-				`- ${m.title} [${m.id}]${progress} — reward: ${m.reward_credits.toLocaleString()} cr${tag}`,
-			);
-		}
-		const completable = activeMissions.filter((m) => m.status === "completed");
-		if (completable.length > 0) {
-			lines.push(
-				`Use complete_mission with mission_id to collect rewards (e.g. complete_mission mission_id="${completable[0].id}").`,
-			);
-		}
-	}
-
-	// Available missions
-	if (missions && missions.length > 0) {
-		lines.push("");
-		lines.push("Available missions:");
-		const sorted = [...missions].sort((a, b) => b.reward_credits - a.reward_credits);
-		for (const m of sorted.slice(0, 5)) {
-			const req = m.requirements ? `: ${m.requirements}` : "";
-			lines.push(
-				`- ${m.title} [${m.id}]${req} — reward: ${m.reward_credits.toLocaleString()} cr`,
-			);
-		}
-		if (sorted.length > 5) {
-			lines.push(`  (and ${sorted.length - 5} more)`);
-		}
 	}
 
 	if (system) {
@@ -179,41 +78,10 @@ function generateInSpaceBriefing(state: GameState, situation: Situation): string
 		lines.push(`Nearby: ${names}${extra}.`);
 	}
 
-	// Active missions
-	if (state.activeMissions && state.activeMissions.length > 0) {
-		lines.push("");
-		lines.push("Active missions:");
-		for (const m of state.activeMissions) {
-			const progress = m.progress ? ` (${m.progress})` : "";
-			const tag = m.status === "completed" ? " *** READY — dock to complete ***" : "";
-			lines.push(
-				`- ${m.title}${progress} — reward: ${m.reward_credits.toLocaleString()} cr${tag}`,
-			);
-		}
-	}
-
 	if (system) {
 		lines.push("");
 		lines.push(systemPoiSection(system));
 	}
-
-	return lines.join("\n");
-}
-
-function generateInTransitBriefing(state: GameState): string {
-	const { player, ship, travelProgress } = state;
-	const lines: string[] = [];
-
-	if (travelProgress) {
-		const pct = Math.round(travelProgress.travel_progress * 100);
-		const type = travelProgress.travel_type === "jump" ? "Jumping" : "Traveling";
-		lines.push(`${type} to ${travelProgress.travel_destination} (${pct}% complete).`);
-	} else {
-		lines.push("In transit.");
-	}
-
-	lines.push(resourceLine(player, ship));
-	lines.push("Nothing to do until arrival. Plan your next move.");
 
 	return lines.join("\n");
 }
@@ -304,26 +172,3 @@ function systemPoiSection(system: SystemState): string {
 	return lines.join("\n");
 }
 
-function formatOrdersSummary(orders: PlayerOrder[]): string {
-	const lines = ["Your active orders:"];
-	for (const o of orders) {
-		const name = (o.item_name || o.item_id).replace(/_/g, " ");
-		const fillPct = o.quantity > 0 ? Math.round((o.filled / o.quantity) * 100) : 0;
-		lines.push(
-			`- ${o.type.toUpperCase()} ${name} [${o.item_id}] x${o.quantity} @ ${o.price_each} cr/ea (${o.filled}/${o.quantity} filled, ${fillPct}%) [order: ${o.order_id}]`,
-		);
-	}
-	return lines.join("\n");
-}
-
-function formatStorageSummary(items: StorageItem[], credits: number): string | null {
-	if (items.length === 0 && credits === 0) return null;
-	const parts: string[] = [];
-	if (credits > 0) parts.push(`${credits.toLocaleString()} cr`);
-	for (const item of items.slice(0, 10)) {
-		const name = (item.item_name || item.item_id).replace(/_/g, " ");
-		parts.push(`${name} [${item.item_id}] x${item.quantity}`);
-	}
-	if (items.length > 10) parts.push(`and ${items.length - 10} more`);
-	return `Station storage: ${parts.join(", ")}`;
-}

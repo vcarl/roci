@@ -5,7 +5,7 @@ import type { GameState } from "./types.js"
 /** Minimal GameState fixture for stateUpdate tests. */
 function makeState(overrides: Partial<GameState> = {}): GameState {
   return {
-    player: { username: "Pilot", docked_at_base: null } as unknown as GameState["player"],
+    player: { id: "me", username: "Pilot", docked_at_base: null } as unknown as GameState["player"],
     ship: {
       hull: 100,
       max_hull: 100,
@@ -19,10 +19,10 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     system: null,
     cargo: [],
     nearby: [],
-    notifications: [],
-    travelProgress: null,
     inCombat: false,
     connected: true,
+    combat: { lastEventTick: null, onsetSeq: 0 },
+    deathPending: false,
     tick: 7,
     timestamp: 0,
     ...overrides,
@@ -354,5 +354,139 @@ describe("spaceMoltEventProcessor — error", () => {
     )
     expect(typeof result.log).toBe("function")
     expect(() => result.log!()).not.toThrow()
+  })
+})
+
+describe("spaceMoltEventProcessor — combat participation gating", () => {
+  const withId = () => makeState({ player: { id: "me", username: "Pilot", docked_at_base: null } as never })
+
+  /** Fold a sequence of raw events through the real processor, one tick at a time. */
+  const fold = (events: Array<{ type: string; payload: unknown }>, initial: GameState): GameState =>
+    events.reduce((state, event) => {
+      const result = spaceMoltEventProcessor.processEvent(event, state)
+      return result.stateUpdate ? (result.stateUpdate(state) as GameState) : state
+    }, initial)
+
+  it("a nearby fight you are NOT in leaves inCombat and the onset counter alone", () => {
+    const prev = withId()
+    const next = spaceMoltEventProcessor
+      .processEvent({ type: "battle_alert", payload: { battle_id: "b", participants: [{ player_id: "other" }] } }, prev)
+      .stateUpdate!(prev) as GameState
+    expect(next.inCombat).toBe(false)
+    expect(next.combat.onsetSeq).toBe(0)
+  })
+
+  it("a fight you ARE in bumps the onset counter exactly once", () => {
+    const prev = withId()
+    const s1 = spaceMoltEventProcessor
+      .processEvent({ type: "battle_damage", payload: { attacker_id: "foe", target_id: "me", tick: 200 } }, prev)
+      .stateUpdate!(prev) as GameState
+    expect(s1.inCombat).toBe(true)
+    expect(s1.combat.onsetSeq).toBe(1)
+    const s2 = spaceMoltEventProcessor
+      .processEvent({ type: "battle_damage", payload: { attacker_id: "foe", target_id: "me", tick: 201 } }, s1)
+      .stateUpdate!(s1) as GameState
+    expect(s2.combat.onsetSeq).toBe(1)
+  })
+
+  it("battle_ended clears inCombat for a participant", () => {
+    const prev = { ...withId(), inCombat: true } as GameState
+    const next = spaceMoltEventProcessor
+      .processEvent({ type: "battle_ended", payload: { battle_id: "b", participants: [{ player_id: "me" }] } }, prev)
+      .stateUpdate!(prev) as GameState
+    expect(next.inCombat).toBe(false)
+  })
+
+  it("player_died sets deathPending and clears inCombat", () => {
+    const prev = { ...withId(), inCombat: true } as GameState
+    const res = spaceMoltEventProcessor.processEvent({ type: "player_died", payload: { respawn_base: "b" } }, prev)
+    expect(res.category).toEqual({ _tag: "LifecycleReset", reason: "player_died" })
+    const next = res.stateUpdate!(prev) as GameState
+    expect(next.deathPending).toBe(true)
+    expect(next.inCombat).toBe(false)
+  })
+
+  it("REGRESSION: battle_started → battle_joined → 30×battle_damage bumps the onset counter exactly once", () => {
+    // The realistic fight-onset sequence measured in review to fire 3 times
+    // instead of 1: battle_started and battle_joined carry no tick, so a
+    // freshness rule keyed on tick-nullability read each of them as a new
+    // onset. Driven through the real processor end to end, not just the pure
+    // helper, because the bug was in how event-processor.ts threaded
+    // `inCombat` (or failed to) into `nextCombatState`.
+    const started = { type: "battle_started", payload: { battle_id: "b", participants: [{ player_id: "me" }] } }
+    const joined = { type: "battle_joined", payload: { player_id: "me", side_id: 0, username: "Pilot" } }
+    const damages = Array.from({ length: 30 }, (_, i) => ({
+      type: "battle_damage",
+      payload: { attacker_id: "foe", target_id: "me", tick: 300 + i },
+    }))
+    const final = fold([started, joined, ...damages], withId())
+    expect(final.inCombat).toBe(true)
+    expect(final.combat.onsetSeq).toBe(1)
+  })
+
+  it("back-to-back fights: battle_ended re-arms, the second fight bumps the counter again", () => {
+    const fight1 = [
+      { type: "battle_started", payload: { battle_id: "b1", participants: [{ player_id: "me" }] } },
+      { type: "battle_damage", payload: { attacker_id: "foe", target_id: "me", tick: 200 } },
+      { type: "battle_damage", payload: { attacker_id: "foe", target_id: "me", tick: 201 } },
+    ]
+    const ended = { type: "battle_ended", payload: { battle_id: "b1", participants: [{ player_id: "me" }] } }
+    const fight2 = [
+      { type: "battle_started", payload: { battle_id: "b2", participants: [{ player_id: "me" }] } },
+      { type: "battle_damage", payload: { attacker_id: "foe2", target_id: "me", tick: 207 } },
+    ]
+    const afterFight1 = fold(fight1, withId())
+    expect(afterFight1.combat.onsetSeq).toBe(1)
+    const afterEnded = fold([ended], afterFight1)
+    expect(afterEnded.inCombat).toBe(false)
+    const afterFight2 = fold(fight2, afterEnded)
+    expect(afterFight2.inCombat).toBe(true)
+    expect(afterFight2.combat.onsetSeq).toBe(2)
+  })
+
+  it("REGRESSION: after battle_ended, a TICKLESS participation frame (battle_joined) still re-arms the reflex", () => {
+    // battle_ended previously cleared inCombat but left `combat` untouched,
+    // and nothing read inCombat — so re-arming silently did not exist. Confirm
+    // the second fight's onset is detected even when its first frame carries
+    // no tick at all, which is the case that a tick-based re-arm would miss.
+    const afterFight1 = fold(
+      [{ type: "battle_started", payload: { battle_id: "b1", participants: [{ player_id: "me" }] } }],
+      withId(),
+    )
+    expect(afterFight1.combat.onsetSeq).toBe(1)
+    const afterEnded = fold(
+      [{ type: "battle_ended", payload: { battle_id: "b1", participants: [{ player_id: "me" }] } }],
+      afterFight1,
+    )
+    expect(afterEnded.inCombat).toBe(false)
+    const afterFight2 = fold(
+      [{ type: "battle_joined", payload: { player_id: "me", side_id: 0, username: "Pilot" } }],
+      afterEnded,
+    )
+    expect(afterFight2.combat.onsetSeq).toBe(2)
+  })
+
+  it("REGRESSION: a fight shortly after player_died is a fresh onset, not a continuation of the one that killed you", () => {
+    const s1 = fold(
+      [{ type: "battle_damage", payload: { attacker_id: "foe", target_id: "me", tick: 500 } }],
+      withId(),
+    )
+    expect(s1.combat.onsetSeq).toBe(1)
+    const died = spaceMoltEventProcessor.processEvent({ type: "player_died", payload: { respawn_base: "b" } }, s1)
+    const afterDeath = died.stateUpdate!(s1) as GameState
+    expect(afterDeath.deathPending).toBe(true)
+    expect(afterDeath.inCombat).toBe(false)
+    // Respawn and get hit again within the 12-tick quiet backstop window —
+    // player_died previously left `combat` untouched, so this would have read
+    // as a continuation of the fight that just killed the character.
+    const s2 = fold(
+      [{ type: "battle_damage", payload: { attacker_id: "foe2", target_id: "me", tick: 503 } }],
+      afterDeath,
+    )
+    expect(s2.combat.onsetSeq).toBe(2)
+  })
+
+  it("registers exactly one deterministic appraiser", () => {
+    expect(spaceMoltEventProcessor.deterministicAppraisers).toHaveLength(1)
   })
 })
