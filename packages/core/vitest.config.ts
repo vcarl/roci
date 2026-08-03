@@ -29,6 +29,14 @@ export default defineConfig({
 				find: /^@roci\/player-tools\/(wm-.*)$/,
 				replacement: fileURLToPath(new URL("../player-tools/src/wm/$1.ts", import.meta.url)),
 			},
+			// The salience axis vocabulary + scorer live under src/salience/**; they
+			// match none of the memory-*/command-codec/wm-* patterns above.
+			{
+				find: /^@roci\/player-tools\/(axis-.*)$/,
+				replacement: fileURLToPath(
+					new URL("../player-tools/src/salience/$1.ts", import.meta.url),
+				),
+			},
 		],
 	},
 	test: {

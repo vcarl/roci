@@ -23,6 +23,8 @@ import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, autoAcceptReview } from "@roci/core/core/character-scaffold.js"
+import { AxisCollisionError, UnknownAxisError } from "@roci/core/core/salience.js"
+import { MalformedAxisError } from "@roci/core/core/palette.js"
 import { runGuidedSetup } from "./setup/guided-setup.js"
 import { validateAndStart } from "./setup/validate-and-start.js"
 import { OAuthTokenLive } from "@roci/core/services/OAuthToken.js"
@@ -518,16 +520,37 @@ const setupCommand = Command.make(
 
       // Scaffold generic identity files (background.md, VALUES.md, DIARY.md, SECRETS.md)
       // Generates identity locally via the conscious cortex tier (no container).
-      const { summary } = yield* scaffoldCharacter({
+      //
+      // A malformed PALETTE.md / a colliding axis / an off-vocabulary SALIENCE.md
+      // is a per-CHARACTER generation defect. It must stay LOUD, but it must not
+      // take the other characters down with it: config.json is written once after
+      // this loop, so an uncaught failure on the last character would silently
+      // unregister every character scaffolded before it. Same shape as the
+      // domain-setup error branch below — log, skip, keep going.
+      const scaffolded = yield* scaffoldCharacter({
         projectRoot: PROJECT_ROOT,
         characterName: charName,
         identityTemplate: domainConfig.identityTemplate,
         characterDescription: descResult.characterDescription,
         domainConfig,
         review: autoAcceptReview,
-      })
-      if (summary) {
-        yield* logToConsole("setup", "cli", summary)
+      }).pipe(
+        Effect.catchIf(
+          (e): e is AxisCollisionError | MalformedAxisError | UnknownAxisError =>
+            e instanceof AxisCollisionError ||
+            e instanceof MalformedAxisError ||
+            e instanceof UnknownAxisError,
+          (e) =>
+            logToConsole(
+              "setup",
+              "cli",
+              `Identity generation for ${charName} produced an inconsistent salience vocabulary — skipping this character (others are unaffected).\n  ${e.message}`,
+            ).pipe(Effect.as(null)),
+        ),
+      )
+      if (scaffolded === null) continue
+      if (scaffolded.summary) {
+        yield* logToConsole("setup", "cli", scaffolded.summary)
       }
 
       // Domain-specific setup

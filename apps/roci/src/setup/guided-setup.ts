@@ -6,6 +6,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { DOMAIN_REGISTRY, resolveConfigs } from "../domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, type ReviewDecision } from "@roci/core/core/character-scaffold.js"
+import { AxisCollisionError, UnknownAxisError } from "@roci/core/core/salience.js"
+import { MalformedAxisError } from "@roci/core/core/palette.js"
 import { makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { meDir } from "@roci/core/services/character-paths.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
@@ -162,16 +164,35 @@ export const runGuidedSetup = (projectRoot: string) =>
 
         // Scaffold generic identity files
         // Generates identity locally via the conscious cortex tier, reviewed per-step.
-        const { results: _scaffoldResults, summary } = yield* scaffoldCharacter({
+        //
+        // Same containment as the non-interactive path in cli.ts: a per-character
+        // vocabulary defect is loud but local. The operator is mid-loop adding
+        // characters; killing the whole session (and the config.json write) over
+        // one bad palette would discard their completed work.
+        const scaffolded = yield* scaffoldCharacter({
           projectRoot,
           characterName: name,
           identityTemplate: domainConfig.identityTemplate,
           characterDescription: charDescription.trim() || undefined,
           domainConfig,
           review: interactiveReview,
-        })
-        if (summary) {
-          yield* logToConsole("setup", "cli", summary)
+        }).pipe(
+          Effect.catchIf(
+            (e): e is AxisCollisionError | MalformedAxisError | UnknownAxisError =>
+              e instanceof AxisCollisionError ||
+              e instanceof MalformedAxisError ||
+              e instanceof UnknownAxisError,
+            (e) =>
+              logToConsole(
+                "setup",
+                "cli",
+                `Identity generation for ${name} produced an inconsistent salience vocabulary — skipping this character (others are unaffected).\n  ${e.message}`,
+              ).pipe(Effect.as(null)),
+          ),
+        )
+        if (scaffolded === null) continue
+        if (scaffolded.summary) {
+          yield* logToConsole("setup", "cli", scaffolded.summary)
         }
 
         // Domain-specific setup

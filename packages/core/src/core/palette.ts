@@ -1,17 +1,22 @@
 /**
- * The emotional palette — a character's nonverbal "voice." Each line is one
- * emotional axis expressed as a 5-emoji gradient from one pole through the
- * middle to the other; the hindbrain paints its gut reaction by picking a
- * position along the gradient (repeat an emoji for intensity) rather than with
- * words. Characters get a personalized palette generated at creation time
- * (identity-gen); this seed is the graceful-degradation default and the eval
- * reference.
+ * PALETTE.md — the character's emotional voice, and (design 2026-07-31 §1) the
+ * source of their character-tier salience axes.
+ *
+ * The DERIVATION now lives in `@roci/player-tools/axis-vocab` so the host and
+ * the in-container `memory` CLI share exactly one implementation (Phase 2 §3:
+ * the A stage runs inside the CLI, where the embedding is). This module keeps
+ * the host-only file wrapper and re-exports the rest, so every Phase 1 import
+ * site — `character-scaffold.ts`, `tiers-limbic.ts`, `salience.ts`, the tests —
+ * is untouched.
  */
-export const TEMPLATE_PALETTE = `🌊 💧 😶 🌤️ ☁️   # sinking → soaring
-😱 😟 😐 🙂 😌   # panic → calm
-🔥 😤 😐 🧘 🥶   # fury → numb
-🏙️ 🚶 😐 🛖 🌲   # stir → stillness
-👶 🤩 😐 😪 🧓   # wonder → weariness`
+
+export {
+  TEMPLATE_PALETTE,
+  MalformedAxisError,
+  parsePaletteAxes,
+  paletteAxisNames,
+  type PaletteAxis,
+} from "@roci/player-tools/axis-vocab"
 
 /** Wrap a palette body in the human-readable PALETTE.md file header. */
 export const paletteFile = (body: string): string =>

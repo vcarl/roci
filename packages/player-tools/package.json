@@ -10,6 +10,8 @@
     "./command-codec": { "import": "./dist/memory/command-codec.js", "types": "./dist/memory/command-codec.d.ts" },
     "./memory-provenance": { "import": "./dist/memory/memory-provenance.js", "types": "./dist/memory/memory-provenance.d.ts" },
     "./memory-embed": { "import": "./dist/memory/memory-embed.js", "types": "./dist/memory/memory-embed.d.ts" },
+    "./axis-vocab": { "import": "./dist/salience/axis-vocab.js", "types": "./dist/salience/axis-vocab.d.ts" },
+    "./axis-score": { "import": "./dist/salience/axis-score.js", "types": "./dist/salience/axis-score.d.ts" },
     "./wm-core": { "import": "./dist/wm/wm-core.js", "types": "./dist/wm/wm-core.d.ts" }
   },
   "scripts": {

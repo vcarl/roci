@@ -10,6 +10,17 @@ export interface IdentityContext {
   /** The merged core+domain drive block — the base the drives step personalizes
    *  (names stay stable, descriptions/voice may be tuned to the character). */
   baseDrives?: string
+  /** The approved PALETTE.md BODY (the 5-emoji gradient rows). Threaded to the
+   *  salience step as CONTEXT: a model weighting `grumbling-tender` writes a
+   *  better weight if it can see the gradient and the pole gloss the name came
+   *  from (design 2026-07-31 §1-§2). Position in the step order was never the
+   *  problem — access was. */
+  palette?: string
+  /** The character's full salience axis list, ALREADY DERIVED (core drives +
+   *  domain drives + PALETTE.md pole pairs) by `scaffoldCharacter`. The prompt
+   *  builder enumerates this verbatim; it does not derive, validate, or reorder
+   *  it. Derivation can fail, and a prompt builder must not be able to. */
+  salienceAxes?: ReadonlyArray<string>
   /** Operator feedback to steer a regeneration of the current step. */
   feedback?: string
 }
@@ -73,6 +84,10 @@ Output ONLY the drive lines, no commentary.`
 }
 
 export const buildSaliencePrompt = (ctx: IdentityContext): string => {
+  // Pure formatting. The axis list arrives already derived and already validated
+  // (scaffoldCharacter owns that); this function cannot fail.
+  const axes = ctx.salienceAxes ?? []
+  const axisList = axes.length > 0 ? axes.map((a) => `- ${a}`).join("\n") : "(none)"
   return `You are authoring the SALIENCE profile for an AI character named "${ctx.characterName}".
 
 Approved background:
@@ -83,13 +98,22 @@ ${ctx.values ?? "(none)"}
 
 Here are this character's drives — the reference frame every event is weighed against. The FIRST three (safety, sustenance, agency) are universal core drives; any below them are domain-specific:
 ${ctx.baseDrives ?? "(none)"}
+
+Here is this character's emotional palette. Each row is a 5-emoji gradient with a "poleA → poleB" gloss, and each row is ALSO a salience axis — named by joining its two poles with a hyphen:
+${ctx.palette ?? "(none)"}
 ${feedbackBlock(ctx)}
-Salience is HOW STRONGLY this character reacts to each kind of stimulus. For EVERY drive above (keep every drive NAME exactly — do not rename, add, or drop them), assign a weight reflecting THIS character's psyche from the background and values above. Then you MAY add up to 2 extra character-specific dimensions that capture something the drives miss (e.g. reputation, curiosity). Weights run from 0.0 (barely registers) to 1.0 (dominates their attention).
+Salience is HOW STRONGLY this character reacts to each kind of stimulus. Assign a weight to EVERY axis in this list — all of them, no more and no fewer, spelled EXACTLY as written (do not rename, add, or drop axes):
+${axisList}
 
-Use EXACTLY this line format, one dimension per line:
-- <dimension>: <0.0-1.0>  # <short gloss in the character's voice>
+Weights run from 0.0 (barely registers) to 1.0 (dominates their attention). Reason each one from THIS character's psyche in the background and values above.
 
-Output ONLY the salience lines, no commentary.`
+Use EXACTLY this line format, one axis per line:
+- <axis>: <0.0-1.0>  # <short gloss in the character's voice>
+
+Then add ONE more line giving this character's emotional VOLATILITY — how fast their mood moves. A jumpy, reactive character who snaps to every stimulus is high; a ponderous, even-tempered one is low. Reason it from the background and values the same way. This line, unlike every other line, has NO leading dash and no gloss — write it exactly like this:
+Volatility: <0.0-1.0>
+
+Output ONLY the axis lines and the Volatility line, no commentary.`
 }
 
 export const buildDiaryPrompt = (ctx: IdentityContext): string => {

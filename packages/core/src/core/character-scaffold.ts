@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import * as path from "node:path"
 import type { DomainConfig } from "./domain-bundle.js"
 import type { CortexModelConfig } from "../model/handles.js"
@@ -7,8 +7,16 @@ import type { ModelClient } from "../model/client.js"
 import type { ModelService } from "../services/ModelService.js"
 import type { ModelError } from "../model/errors.js"
 import type { SpawnError, ReadinessError } from "../services/model-backend.js"
-import { TEMPLATE_PALETTE, paletteFile } from "./palette.js"
-import { renderSalienceLines, salienceFile } from "./salience.js"
+import { TEMPLATE_PALETTE, paletteFile, MalformedAxisError } from "./palette.js"
+import {
+  renderSalienceLines,
+  salienceFile,
+  parseSalience,
+  buildAxisList,
+  unknownSalienceAxes,
+  AxisCollisionError,
+  UnknownAxisError,
+} from "./salience.js"
 import { renderDriveLines, drivesFile } from "#brain/limbic/hypothalamus/drives.js"
 import {
   promptForStep,
@@ -98,7 +106,13 @@ export const scaffoldCharacter = (opts: {
   review?: ReviewFn
 }): Effect.Effect<
   { results: string[]; summary?: string },
-  ModelError | SpawnError | ReadinessError | EmptyGenerationError,
+  | ModelError
+  | SpawnError
+  | ReadinessError
+  | EmptyGenerationError
+  | AxisCollisionError
+  | MalformedAxisError
+  | UnknownAxisError,
   ModelClient | ModelService
 > =>
   Effect.gen(function* () {
@@ -128,14 +142,18 @@ export const scaffoldCharacter = (opts: {
     let diaryContent = DIARY_TEMPLATE
     let summary: string | undefined
 
-    if (characterDescription) {
-      const ctx: IdentityContext = {
-        characterName,
-        characterDescription,
-        identityTemplate,
-        baseDrives: driveBody,
-      }
+    // `ctx` is hoisted above the split so both halves of the generation run share
+    // one context object. Its `characterDescription` is only ever READ inside the
+    // guarded blocks below, so the `?? ""` can never reach a prompt.
+    const ctx: IdentityContext = {
+      characterName,
+      characterDescription: characterDescription ?? "",
+      identityTemplate,
+      baseDrives: driveBody,
+    }
 
+    // Block 1 — the artifacts the axis vocabulary is DERIVED FROM.
+    if (characterDescription) {
       const bg = yield* runStep("background", ctx, opts.cortexModels, review)
       if (bg.kind === "content") {
         backgroundContent = bg.value.trim() + "\n"
@@ -153,10 +171,79 @@ export const scaffoldCharacter = (opts: {
 
       const drv = yield* runStep("drives", ctx, opts.cortexModels, review)
       if (drv.kind === "content") driveBody = drv.value.trim()
-      // Salience depends on the approved drives (the spine) + values + background;
-      // thread the approved drive block forward so the profile weights match it.
-      ctx.baseDrives = driveBody
+      // (`ctx.baseDrives` is re-threaded from the EFFECTIVE drive body below, so
+      // the salience step weights the drives that will actually be on disk.)
+    }
 
+    // ── THE ARTIFACTS THE VOCABULARY IS DERIVED FROM ──
+    // The invariant: the derived vocabulary must match the vocabulary of the
+    // artifacts that will ACTUALLY EXIST on disk when this returns.
+    //
+    // The write loop below never overwrites, so when PALETTE.md / DRIVES.md are
+    // already on disk the in-memory body generated moments ago is discarded and
+    // the on-disk one persists. Deriving from the in-memory body there would key
+    // a freshly written SALIENCE.md to a palette nobody will ever read — the two
+    // artifacts disagreeing about the vocabulary, silently, which is precisely
+    // the failure class this design exists to prevent. And it is not a corner
+    // case: "delete the one artifact and re-run" is the blessed way to regenerate
+    // a single file, which takes exactly this path.
+    // THROWS on an unreadable-but-present artifact. Every caller below sits
+    // inside an `Effect.try`, so an fs error becomes a TYPED failure the setup
+    // command can catch — not a defect that kills the fiber. `existsSync` says
+    // the file is there; a throw from `readFileSync` then means it is there and
+    // unreadable (EISDIR, EACCES, a mid-run delete), and deriving a vocabulary
+    // from the fallback in that case would key SALIENCE.md to an artifact nobody
+    // can read.
+    const bodyOnDisk = (name: string, inMemory: string): string => {
+      const p = path.resolve(charDir, name)
+      if (!existsSync(p)) return inMemory
+      try {
+        return readFileSync(p, "utf-8")
+      } catch (e) {
+        throw new MalformedAxisError(`${p} exists but could not be read: ${String(e)}`)
+      }
+    }
+
+    // ── THE SINGLE AXIS-DERIVATION SITE ──
+    // The flat axis namespace: core drives + domain drives (from the approved
+    // DRIVES.md body) then one axis per approved PALETTE.md row, named from its
+    // pole pair (design 2026-07-31 §1). Both failure modes are loud and TYPED: a
+    // malformed palette row (MalformedAxisError) and a duplicate axis name
+    // (AxisCollisionError). Membership is derived now, so neither is something to
+    // resolve silently. This runs on BOTH paths — generated and plain-template —
+    // and before any file is written.
+    // Both parsers read a whole artifact file as happily as a bare body:
+    // `parseDriveNames` anchors on `^- <name> —` and `parsePaletteAxes` skips the
+    // heading and the comment block, so no header stripping is needed here. The
+    // READS are inside this Effect.try too (R3): an unreadable artifact must
+    // reach the caller as a typed failure, exactly like a malformed one.
+    const derived = yield* Effect.try({
+      try: () => {
+        const effectiveDriveBody = bodyOnDisk("DRIVES.md", driveBody)
+        const effectivePaletteBody = bodyOnDisk("PALETTE.md", paletteBody)
+        return {
+          effectiveDriveBody,
+          effectivePaletteBody,
+          axes: buildAxisList(effectiveDriveBody, effectivePaletteBody),
+        }
+      },
+      catch: (e) =>
+        e instanceof AxisCollisionError || e instanceof MalformedAxisError
+          ? e
+          : new AxisCollisionError(String(e)),
+    })
+    const { effectiveDriveBody, effectivePaletteBody, axes } = derived
+    // The salience prompt enumerates `salienceAxes`; `palette` and `baseDrives`
+    // ride along as context so the model can see the gradient and the drive
+    // glosses each derived name came from. All three come from the SAME effective
+    // bodies the axes were derived from — the model is never shown one vocabulary
+    // and asked to weight another.
+    ctx.palette = effectivePaletteBody
+    ctx.baseDrives = effectiveDriveBody
+    ctx.salienceAxes = axes
+
+    // Block 2 — the artifact SCORED AGAINST that vocabulary, then the rest.
+    if (characterDescription) {
       const sal = yield* runStep("salience", ctx, opts.cortexModels, review)
       if (sal.kind === "content") salienceBody = sal.value.trim()
 
@@ -168,6 +255,27 @@ export const scaffoldCharacter = (opts: {
 
       results.push(`generated identity for ${characterName}`)
     }
+
+    // A profile key outside the derived axis list is a generation defect, not
+    // character-specific data (design 2026-07-31 §1-§2). This is also the guard
+    // that catches a `- Volatility: <n>` line written WITH a leading dash, which
+    // parseSalience would otherwise admit as a phantom axis. MISSING axes are not
+    // reported: the drive-only template fallback is legitimate (§8).
+    //
+    // Validate the body that will ACTUALLY BE ON DISK when this returns, exactly
+    // as the derivation inputs above do. The write loop never overwrites, so a
+    // pre-existing SALIENCE.md wins over the one generated moments ago — and a
+    // stale profile keyed to a retired vocabulary is precisely what this check
+    // exists to catch. Validating the in-memory body instead would pass a
+    // character whose on-disk profile disagrees with their on-disk palette:
+    // inert, clean, and unnoticed. (The mirror of the bug bodyOnDisk fixed for
+    // the derivation inputs — same file, same reasoning, other direction.)
+    const effectiveSalienceBody = yield* Effect.try({
+      try: () => bodyOnDisk("SALIENCE.md", salienceBody),
+      catch: (e) => (e instanceof MalformedAxisError ? e : new AxisCollisionError(String(e))),
+    })
+    const unknown = unknownSalienceAxes(parseSalience(effectiveSalienceBody), axes)
+    if (unknown.length > 0) return yield* Effect.fail(new UnknownAxisError(unknown, axes))
 
     const files: Array<{ name: string; content: string }> = [
       { name: "background.md", content: backgroundContent },
