@@ -1922,13 +1922,13 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     expect(prompts.some((p) => p.includes("(seen 2x recently)"))).toBe(true)
   }, 20_000)
 
-  // Fix 1: a genuinely-CHANGED full_state (its nested location.system_id shifted)
-  // must arrive UNANNOTATED. The old code keyed the "(seen Nx recently)" suffix on
-  // the TYPE-family count, so every post-jump full_state (full_state arrives ~every
+  // Fix 1: a genuinely-CHANGED state frame (its nested system shifted) must
+  // arrive UNANNOTATED. The old code keyed the "(seen Nx recently)" suffix on
+  // the TYPE-family count, so every post-jump state frame (they arrive ~every
   // tick) was mislabeled "(seen 2x recently)" and the rubric-obedient 2B discarded
   // a real location change as unchanged. The suffix now keys on the EXACT
   // fingerprint count, which is 0 for a changed frame → no suffix.
-  it("fix 1: a changed-location full_state (different nested system_id) reaches the 2B UNANNOTATED", async () => {
+  it("fix 1: a changed-location state_sync (different nested system) reaches the 2B UNANNOTATED", async () => {
     const prompts: string[] = []
     const bound = { n: 0 }
     const client = limbicClient({
@@ -1936,10 +1936,23 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
       decide: () => '{"decision":"terminate","reasoning":"stop"}',
     })
     const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
-    // full_state nests location under `location` (real payload shape). Two frames
-    // differing only by nested system_id → DIFFERENT fingerprints → exactCount 0.
-    const frameA = { type: "full_state", location: { system_id: "first_step" }, ship: { fuel: 50, max_fuel: 100 } }
-    const frameB = { type: "full_state", location: { system_id: "horizon" }, ship: { fuel: 50, max_fuel: 100 } }
+    // state_sync nests the translated state under `payload.snapshot` (real host
+    // frame shape: `{ sections, tick, snapshot }`, location folded onto the
+    // player). Two frames differing only by the nested system → DIFFERENT
+    // fingerprints → exactCount 0.
+    const syncFrame = (system: string) => ({
+      type: "state_sync",
+      payload: {
+        sections: ["location"],
+        tick: 1514396,
+        snapshot: {
+          player: { current_system: system, current_poi: "gate", docked_at_base: null },
+          ship: { fuel: 50, max_fuel: 100, hull: 100, max_hull: 100 },
+        },
+      },
+    })
+    const frameA = syncFrame("first_step")
+    const frameB = syncFrame("horizon")
     const program = Effect.gen(function* () {
       const events = yield* Queue.unbounded<unknown>()
       yield* Queue.offer(events, frameA)
@@ -1957,6 +1970,55 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
     const bJson = JSON.stringify(frameB).toLowerCase()
     expect(prompts.some((p) => p.includes(bJson))).toBe(true)
     expect(prompts.some((p) => p.includes(`${bJson} (seen`))).toBe(false)
+  }, 20_000)
+
+  // The 2026-08-03 dedup BLACKOUT, end to end. The deep salient allowlist was
+  // still keyed to the deleted `full_state` nesting, so every `state_sync`
+  // fingerprinted identically and everything after the first was routed to
+  // `duplicateAppraisal` — no model call — for the whole 40-tick window. A
+  // 100%→6% fuel + 100%→12% hull collapse must reach the 2B; a byte-identical
+  // repeat must still be swallowed (the dedup itself has to keep working).
+  it("a fuel/hull-collapse state_sync reaches the 2B, while an identical repeat is still deduped", async () => {
+    const prompts: string[] = []
+    const bound = { n: 0 }
+    const client = limbicClient({
+      observe: (p) => { prompts.push(p); return DISCARD },
+      decide: () => '{"decision":"terminate","reasoning":"stop"}',
+    })
+    const ctLayer = ConsciousThoughtTest((_c, _r) => ({ result: { output: "x", timedOut: false, durationMs: 1 }, sessionId: "s" }))
+    const syncFrame = (fuel: number, hull: number, tick: number) => ({
+      type: "state_sync",
+      payload: {
+        sections: ["ship"],
+        tick,
+        snapshot: {
+          player: { current_system: "first_step", current_poi: "gate", docked_at_base: null },
+          ship: { fuel, max_fuel: 100, hull, max_hull: 100 },
+        },
+      },
+    })
+    const healthy = syncFrame(100, 100, 1)
+    const stricken = syncFrame(6, 12, 2)
+    const repeat = syncFrame(6, 12, 3) // same state, later tick → a true duplicate
+    const program = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<unknown>()
+      yield* Queue.offer(events, healthy)
+      yield* Queue.offer(events, stricken)
+      yield* Queue.offer(events, repeat)
+      const domain = domainWith([], () => (++bound.n >= 6 ? [{ priority: "critical" as const, message: "bound" }] : []))
+      return yield* runActivation({
+        char: { name: "ada", root: "/work/players/ada" },
+        containerId: "c1", events, initialState: {}, cadence: "real-time", orientInterval: 1, tickIntervalMs: 1,
+      }).pipe(Effect.provide(Layer.mergeAll(client, ctLayer, domain, fakeIo, fakeRuntimeDeps, noopModelService)))
+    })
+    await Effect.runPromise(program)
+    // The collapse is NOT a duplicate of the healthy frame — it reached observe.
+    const strickenJson = JSON.stringify(stricken).toLowerCase()
+    expect(prompts.some((p) => p.includes(strickenJson))).toBe(true)
+    // The repeat carries the same salient state → discarded upstream of the 2B
+    // (its own JSON, which differs only by the volatile tick, never appears).
+    const repeatJson = JSON.stringify(repeat).toLowerCase()
+    expect(prompts.some((p) => p.includes(repeatJson))).toBe(false)
   }, 20_000)
 
   it("hard-interrupt rung: a physical-attack event with interrupt:true kills the in-flight conscious fiber and reorients (Unit 7/9)", async () => {

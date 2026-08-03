@@ -622,32 +622,55 @@ export interface EventFingerprint {
 }
 
 /**
- * DEEP salient-field allowlist (Task 1, iteration 5). The top-level scalar scan
- * alone is blind to state that lives NESTED: a real `full_state` payload carries
- * location under `location.system_id` and ship status under `ship.fuel`/etc, so
- * its only top-level scalars are `version`/`message` — constant frame to frame.
- * Iteration-4 dedup therefore collapsed EVERY `full_state` to one fingerprint,
- * and a 6-system bridge run deduped every snapshot as "duplicate 41x" — zero
+ * Where a state-bearing payload keeps its state object, relative to the payload
+ * root. `[]` = the payload IS the state object (a flat frame); `["snapshot"]` =
+ * the state hangs off a named envelope key.
+ *
+ * THIS IS THE 2026-08-03 FIX. The deep allowlist below was written against the
+ * deleted `full_state` frame, whose payload WAS the state object. Its
+ * replacement, the host-minted `state_sync` frame, wraps the same translated
+ * state one level deeper — `{ sections, tick, snapshot }` — so every path missed
+ * and `eventFingerprint` returned an EMPTY signature for every state frame:
+ * `sections` is an array (skipped), `tick` is volatile (stripped), `snapshot` is
+ * an object (skipped). Two frames differing by system, POI, dock state, fuel
+ * 100%→6% and hull 100%→12% both fingerprinted as bare `state_sync`, so the loop
+ * discarded every state frame after the first for the whole 40-tick dedup
+ * window. Probing both roots keeps the extraction envelope-agnostic instead of
+ * hard-coding one domain's frame layout: a root that is absent (or not a plain
+ * object) contributes nothing, exactly like a missing leaf.
+ */
+const SALIENT_STATE_ROOTS: ReadonlyArray<readonly string[]> = [[], ["snapshot"]]
+
+/**
+ * DEEP salient-field allowlist (Task 1, iteration 5; repointed 2026-08-03). The
+ * top-level scalar scan alone is blind to state that lives NESTED: a state frame
+ * carries location under the player and ship status under `ship.fuel`/etc, so its
+ * only top-level scalars are envelope bookkeeping — constant frame to frame.
+ * Iteration-4 dedup therefore collapsed EVERY state frame to one fingerprint, and
+ * a 6-system bridge run deduped every snapshot as "duplicate 41x" — zero
  * accumulates fired on genuine location/dock changes.
  *
- * These paths are lifted from real payloads (players/vcarl events.jsonl,
- * 04:42-05:08Z): the location-/status-bearing values that MUST distinguish two
- * snapshots (system jump, dock change, combat flip, a real resource drop) while
- * the transient nested churn (`location.nearby_players`, `player.stats`, …) stays
- * dropped. Extracted via safe path lookups; a missing path contributes nothing.
+ * Paths are relative to a SALIENT_STATE_ROOT and name the location-/status-
+ * bearing values that MUST distinguish two snapshots (system jump, dock change,
+ * combat flip, a real resource drop) while the transient nested churn
+ * (`player.stats`, the nearby-player lists, …) stays dropped. Nothing here may
+ * vary per tick on its own — a per-tick-varying leaf would make every frame
+ * unique and turn the blackout into a flood. Extracted via safe path lookups; a
+ * missing path contributes nothing.
  */
 const SALIENT_IDENTITY_PATHS: ReadonlyArray<readonly string[]> = [
-  // location-bearing (full_state nests these under `location`)
-  ["location", "system_id"],
-  ["location", "poi_id"],
-  ["location", "poi_type"],
-  ["location", "docked_at"],
+  // location-bearing (the state object folds location onto the player, and
+  // repeats it on the located `system`/`poi` objects)
+  ["player", "current_system"],
+  ["player", "current_poi"],
+  ["player", "docked_at_base"],
+  ["system", "id"],
+  ["poi", "id"],
+  ["poi", "type"],
   // status-bearing booleans — the player's OWN combat/cloak state (probed at a
   // few plausible seats; only the present one contributes)
-  ["in_combat"],
   ["player", "in_combat"],
   ["ship", "in_combat"],
-  ["location", "in_combat"],
   ["player", "is_cloaked"],
 ]
 
@@ -657,7 +680,7 @@ const SALIENT_IDENTITY_PATHS: ReadonlyArray<readonly string[]> = [
  * value, so each is BUCKETED to a coarse 10% band (`Math.floor(ratio*10)`): a
  * 96%->94% frame-to-frame drip stays in band 9 and still dedups, while a material
  * 96%->71% drop (band 9->7) produces a new fingerprint. Value/max pairs from the
- * real `ship` object; the ratio is value/max.
+ * real `ship` object, relative to a SALIENT_STATE_ROOT; the ratio is value/max.
  */
 const SALIENT_RATIO_PATHS: ReadonlyArray<{
   readonly label: string
@@ -718,18 +741,23 @@ export function eventFingerprint(text: string): EventFingerprint {
           parts.push(`${k}=${String(v)}`)
         }
       }
-      // (2) Deep salient identity fields (nested location/status — makes a
-      // full_state, whose state is ALL nested, sensitive to a real move/flip).
-      for (const path of SALIENT_IDENTITY_PATHS) {
-        const v = deepGet(base, path)
-        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-          parts.push(`${path.join(".")}=${String(v)}`)
+      // (2)+(3) Deep salient extraction, run once per state root (the payload
+      // itself and the `snapshot` envelope) — makes a state frame, whose state is
+      // ALL nested, sensitive to a real move/dock/flip/resource drop.
+      for (const root of SALIENT_STATE_ROOTS) {
+        if (!isPlainObject(deepGet(base, root))) continue
+        // (2) Deep salient identity fields (nested location/status).
+        for (const path of SALIENT_IDENTITY_PATHS) {
+          const v = deepGet(base, [...root, ...path])
+          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+            parts.push(`${[...root, ...path].join(".")}=${String(v)}`)
+          }
         }
-      }
-      // (3) Deep bucketed resource ratios (coarse bands; gradual-drain-safe).
-      for (const { label, value, max } of SALIENT_RATIO_PATHS) {
-        const bucket = ratioBucket(deepGet(base, value), deepGet(base, max))
-        if (bucket !== null) parts.push(`${label}~${bucket}`)
+        // (3) Deep bucketed resource ratios (coarse bands; gradual-drain-safe).
+        for (const { label, value, max } of SALIENT_RATIO_PATHS) {
+          const bucket = ratioBucket(deepGet(base, [...root, ...value]), deepGet(base, [...root, ...max]))
+          if (bucket !== null) parts.push(`${[...root, label].join(".")}~${bucket}`)
+        }
       }
       parts.sort()
       sig = parts.join("|")

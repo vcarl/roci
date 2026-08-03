@@ -851,118 +851,171 @@ describe("eventFingerprint", () => {
     expect(eventFingerprint("type: raw\nnot json").full).not.toBe(eventFingerprint("type: raw\nother").full)
   })
 
-  // ── Deep salient extraction (real full_state shape) ────────────────────────
-  // full_state carries location/ship state NESTED (location.system_id,
-  // ship.fuel/max_fuel), so its only top-level scalars are `version`/`message`.
-  // Before the deep allowlist, EVERY full_state fingerprinted identically and a
-  // 6-system bridge run deduped every snapshot ("duplicate 41x"). These paths
-  // are lifted from real players/vcarl events.jsonl (04:42-05:08Z).
-  const fullState = (over: {
+  // ── Deep salient extraction (real state_sync shape) ────────────────────────
+  // The host-minted `state_sync` frame (domain-spacemolt `stateSyncFrame`) has
+  // payload `{ sections, tick, snapshot }`, where `snapshot` is what
+  // `libStateToSnapshot` returns: `{ player, ship, cargo, system, poi }` with
+  // location folded ONTO THE PLAYER (`current_system` / `current_poi` /
+  // `docked_at_base`). Every state-bearing value is therefore TWO levels down.
+  //
+  // REGRESSION THIS PINS (2026-08-03): the deep allowlist was still keyed to the
+  // deleted `full_state` shape (`location.system_id`, `ship.fuel`), so nothing
+  // matched: `sections` is an array (skipped), `tick` is volatile (stripped),
+  // `snapshot` is an object (skipped) → every state_sync fingerprinted as bare
+  // `state_sync`, and the loop discarded every frame after the first for the
+  // whole 40-tick window — including a jump, a dock, and a fuel collapse.
+  const stateSync = (over: {
+    sections?: string[]
+    tick?: number
     system?: string
     poi?: string
     docked?: string | null
     fuel?: number
     hull?: number
     shield?: number
+    cloaked?: boolean
+    credits?: number
+    stats?: Record<string, number>
   }): string =>
-    evText("full_state", {
-      version: "0.493.0",
-      player: { id: "fd3d78ba", username: "vcarl", credits: 80083 },
-      ship: {
-        id: "s1",
-        hull: over.hull ?? 100,
-        max_hull: 100,
-        shield: over.shield ?? 50,
-        max_shield: 50,
-        fuel: over.fuel ?? 49,
-        max_fuel: 100,
-        cargo_used: 3,
+    evText("state_sync", {
+      sections: over.sections ?? ["ship", "location"],
+      tick: over.tick ?? 1514396,
+      snapshot: {
+        player: {
+          id: "fd3d78ba",
+          username: "vcarl",
+          empire: "terran",
+          credits: over.credits ?? 80083,
+          clan_tag: "",
+          faction_id: null,
+          faction_rank: null,
+          is_cloaked: over.cloaked ?? false,
+          status_message: "",
+          home_base: "first_step_memorial_station",
+          stats: over.stats ?? { jumps: 12 },
+          current_system: over.system ?? "first_step",
+          current_poi: over.poi ?? "first_step_memorial_station",
+          docked_at_base: over.docked === undefined ? "first_step_memorial_station" : over.docked,
+          skills: { mining: 3 },
+          skill_xp: { mining: 420 },
+        },
+        ship: {
+          id: "s1",
+          class_id: "shuttle",
+          name: "Rocinante",
+          hull: over.hull ?? 100,
+          max_hull: 100,
+          shield: over.shield ?? 50,
+          max_shield: 50,
+          fuel: over.fuel ?? 100,
+          max_fuel: 100,
+          cargo_used: 3,
+          cargo_capacity: 20,
+          modules: ["mining_laser_i"],
+          cargo: [{ item_id: "iron_ore", quantity: 3 }],
+        },
+        cargo: [{ item_id: "iron_ore", quantity: 3 }],
+        system: {
+          id: over.system ?? "first_step",
+          name: "First Step",
+          description: "",
+          empire: "terran",
+          police_level: 0,
+          security_status: "high",
+          connections: [{ system_id: "horizon", name: "horizon" }],
+          pois: [],
+        },
+        poi: {
+          id: over.poi ?? "first_step_memorial_station",
+          system_id: over.system ?? "first_step",
+          type: "station",
+          name: "First Step Memorial Station",
+          description: "",
+          position: { x: 0, y: 0 },
+          resources: [],
+          base_id: over.docked === undefined ? "first_step_memorial_station" : over.docked,
+        },
       },
-      location: {
-        system_id: over.system ?? "first_step",
-        system_name: "First Step",
-        poi_id: over.poi ?? "first_step_memorial_station",
-        poi_type: "station",
-        docked_at: over.docked === undefined ? "first_step_memorial_station" : over.docked,
-        nearby_player_count: 4,
-        nearby_players: [{ player_id: "aaa" }, { player_id: "bbb" }],
-      },
-      message: "Current game state",
     })
 
-  it("gives two full_states differing ONLY by nested system_id different fingerprints", () => {
-    const a = fullState({ system: "first_step" })
-    const b = fullState({ system: "horizon" })
+  it("gives two state_syncs differing ONLY by fuel (100% → 6%) different fingerprints", () => {
+    const a = stateSync({ fuel: 100 }) // band 10
+    const b = stateSync({ fuel: 6 }) // band 0
+    expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
+    expect(eventFingerprint(a).type).toBe("state_sync")
+  })
+
+  it("gives two state_syncs differing ONLY by hull (100% → 12%) different fingerprints", () => {
+    const a = stateSync({ hull: 100 })
+    const b = stateSync({ hull: 12 })
+    expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
+  })
+
+  it("gives two state_syncs differing ONLY by nested system different fingerprints", () => {
+    const a = stateSync({ system: "first_step" })
+    const b = stateSync({ system: "horizon" })
     expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
     expect(eventFingerprint(a).type).toBe(eventFingerprint(b).type) // same family
   })
 
-  it("keys two full_states identical except tick/timestamp/transient nested arrays the same", () => {
-    // Same location + same coarse ship bands; only volatile frame data + the
-    // shifting nearby_players list differ → must still collapse.
-    const a = evText("full_state", {
-      version: "0.493.0",
-      ship: { fuel: 49, max_fuel: 100, hull: 100, max_hull: 100, shield: 50, max_shield: 50 },
-      location: {
-        system_id: "first_step",
-        poi_id: "first_step_memorial_station",
-        docked_at: "first_step_memorial_station",
-        nearby_players: [{ player_id: "aaa" }],
-      },
-      tick: 1000,
-      timestamp: "2026-07-13T04:43:00Z",
-    })
-    const b = evText("full_state", {
-      version: "0.493.0",
-      ship: { fuel: 49, max_fuel: 100, hull: 100, max_hull: 100, shield: 50, max_shield: 50 },
-      location: {
-        system_id: "first_step",
-        poi_id: "first_step_memorial_station",
-        docked_at: "first_step_memorial_station",
-        nearby_players: [{ player_id: "bbb" }, { player_id: "ccc" }],
-      },
-      tick: 9999,
-      timestamp: "2026-07-13T05:07:00Z",
-    })
-    expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
-  })
-
-  it("distinguishes a dock-state change (docked → undocked at same poi)", () => {
-    const docked = fullState({ docked: "first_step_memorial_station" })
-    const undocked = fullState({ docked: null })
-    expect(eventFingerprint(docked).full).not.toBe(eventFingerprint(undocked).full)
-  })
-
-  it("distinguishes a moved poi within the same system", () => {
-    const a = fullState({ poi: "first_step_memorial_station" })
-    const b = fullState({ poi: "first_step_gate" })
+  it("distinguishes a moved poi within the same system (state_sync)", () => {
+    const a = stateSync({ poi: "first_step_memorial_station" })
+    const b = stateSync({ poi: "first_step_gate" })
     expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
   })
 
+  it("distinguishes a dock-state change (docked → undocked at the same poi)", () => {
+    const docked = stateSync({ docked: "first_step_memorial_station" })
+    const undocked = stateSync({ docked: null })
+    expect(eventFingerprint(docked).full).not.toBe(eventFingerprint(undocked).full)
+  })
+
+  it("distinguishes a cloak flip on the player's own status (state_sync)", () => {
+    expect(eventFingerprint(stateSync({ cloaked: false })).full).not.toBe(
+      eventFingerprint(stateSync({ cloaked: true })).full,
+    )
+  })
+
+  it("keys two genuinely identical state_syncs the same (dedup must still work)", () => {
+    expect(eventFingerprint(stateSync({})).full).toBe(eventFingerprint(stateSync({})).full)
+  })
+
+  it("keys two state_syncs differing ONLY by the volatile tick the same (no flood)", () => {
+    // The other failure mode: a per-tick-varying leaf in the allowlist would make
+    // every frame unique and the dedup window would stop working entirely.
+    const a = stateSync({ tick: 1000 })
+    const b = stateSync({ tick: 9999 })
+    expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
+  })
+
+  it("keys two state_syncs differing only in transient non-salient state the same", () => {
+    // Changed-section list (array), credits and the stats map churn frame to
+    // frame with no location/status meaning → must still collapse.
+    const a = stateSync({ sections: ["ship"], credits: 80083, stats: { jumps: 12 } })
+    const b = stateSync({ sections: ["ship", "cargo", "location"], credits: 91200, stats: { jumps: 13 } })
+    expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
+  })
+
   it("buckets gradual fuel drain: 96% and 94% are the same coarse band → same fingerprint", () => {
-    const a = fullState({ fuel: 96 }) // ratio 0.96 → band 9
-    const b = fullState({ fuel: 94 }) // ratio 0.94 → band 9
+    const a = stateSync({ fuel: 96 }) // ratio 0.96 → band 9
+    const b = stateSync({ fuel: 94 }) // ratio 0.94 → band 9
     expect(eventFingerprint(a).full).toBe(eventFingerprint(b).full)
   })
 
   it("distinguishes a real fuel drop across bands: 96% vs 71% → different fingerprint", () => {
-    const a = fullState({ fuel: 96 }) // band 9
-    const b = fullState({ fuel: 71 }) // band 7
+    const a = stateSync({ fuel: 96 }) // band 9
+    const b = stateSync({ fuel: 71 }) // band 7
     expect(eventFingerprint(a).full).not.toBe(eventFingerprint(b).full)
   })
 
-  it("distinguishes a combat flip on the player's own status", () => {
-    const calm = evText("full_state", {
-      ship: { fuel: 50, max_fuel: 100 },
-      location: { system_id: "s1", poi_id: "p1" },
-      in_combat: false,
-    })
-    const fighting = evText("full_state", {
-      ship: { fuel: 50, max_fuel: 100 },
-      location: { system_id: "s1", poi_id: "p1" },
-      in_combat: true,
-    })
-    expect(eventFingerprint(calm).full).not.toBe(eventFingerprint(fighting).full)
+  it("still extracts deep salience from a FLAT state payload (root-[] envelope)", () => {
+    // The root probe is envelope-agnostic: a payload that IS the state object
+    // (no `snapshot` wrapper) must keep working, so a domain that nests
+    // differently is not silently blind.
+    const flat = (fuel: number): string =>
+      evText("state_flat", { player: { current_system: "s1" }, ship: { fuel, max_fuel: 100 } })
+    expect(eventFingerprint(flat(100)).full).not.toBe(eventFingerprint(flat(6)).full)
+    expect(eventFingerprint(flat(100)).full).toBe(eventFingerprint(flat(100)).full)
   })
 
   it("still collapses same-station observation_updates (top-level scalars unaffected)", () => {
