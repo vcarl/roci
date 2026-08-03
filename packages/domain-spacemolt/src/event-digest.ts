@@ -21,10 +21,17 @@ import {
  * (no Effect / no `@roci/core` graph).
  */
 
-/** Event `type:` values that carry / reflect ship state and get a STATUS digest. */
+/**
+ * Event `type:` values that carry / reflect ship state and get a STATUS digest.
+ *
+ * Re-derived for the `@spacemolt/lib` read path: `full_state` was a locally
+ * minted frame and is gone; `logged_in` is consumed inside the library and
+ * never reaches the queue. `state_sync` — the edge-driven StateCache delta — is
+ * what now warrants a digest, alongside `observation_update`, whose player
+ * fold keeps location fresh between syncs.
+ */
 export const SNAPSHOT_EVENT_TYPES: ReadonlySet<string> = new Set([
-	"full_state",
-	"logged_in",
+	"state_sync",
 	"observation_update",
 ]);
 
@@ -87,14 +94,12 @@ function nearbyClause(state: GameState): string {
  * Trailing marker: the 2B keys on literal trailing tokens far more reliably
  * than on mid-line bands (measured on the appraisal eval — its reasons echo the
  * line's tail), so the digest always ends with an explicit verdict token:
- * - a banded frame ends `; ALERT: fuel low` / `; ALERT: hull critical` (etc.),
- * - a band-less frame ends `; no alerts` when `noAlertsMarker` is set
- *   (periodic self-snapshots — discard-by-default frames).
+ * - a banded frame ends `; ALERT: fuel low` / `; ALERT: hull critical` (etc.).
  *
  * Example: `STATUS: fuel 6% (LOW), hull 100%, docked at first_step_memorial_station
  * (First Step Memorial Station); ALERT: fuel low`
  */
-export function buildStatusDigest(state: GameState, opts?: { noAlertsMarker?: boolean }): string {
+export function buildStatusDigest(state: GameState): string {
 	const { ship } = state;
 	const fuelRatio = ship.max_fuel > 0 ? ship.fuel / ship.max_fuel : 1;
 	const hullRatio = ship.max_hull > 0 ? ship.hull / ship.max_hull : 1;
@@ -104,25 +109,23 @@ export function buildStatusDigest(state: GameState, opts?: { noAlertsMarker?: bo
 	const alerts: string[] = [];
 	if (fb !== "") alerts.push("fuel low");
 	if (hb !== "") alerts.push(hb === " (CRITICAL)" ? "hull critical" : "hull low");
-	const marker =
-		alerts.length > 0
-			? `; ALERT: ${alerts.join(", ")}`
-			: opts?.noAlertsMarker
-				? "; no alerts"
-				: "";
+	// A banded frame ends with an explicit verdict token — measured on the
+	// appraisal eval, the 2B keys on literal trailing tokens far more reliably
+	// than on mid-line bands. The band-less `; no alerts` counterpart is GONE
+	// with the frames it existed for: it was applied only to `full_state` and
+	// `logged_in`, the discard-by-default periodic snapshots, and telling the
+	// model "nothing is wrong" on an edge-driven frame that only fires BECAUSE
+	// something changed is exactly backwards.
+	const marker = alerts.length > 0 ? `; ALERT: ${alerts.join(", ")}` : "";
 	return `STATUS: ${head}, ${locationClause(state)}${nearbyClause(state)}${marker}`;
 }
 
 /**
  * The digest as the loop consumes it: empty string for non-snapshot event types
  * (so the loop prepends nothing), else the STATUS line. Keeps the snapshot-type
- * gating in the domain so core stays domain-agnostic. Periodic self-snapshots
- * (`full_state`/`logged_in`) get the `; no alerts` marker when nothing is
- * banded — they are discard-by-default frames. `observation_update` does NOT
- * (its news is the arrival/departure delta, which the marker would suppress).
+ * gating in the domain so core stays domain-agnostic.
  */
 export function formatEventDigest(eventType: string, state: GameState): string {
 	if (!isSnapshotEventType(eventType)) return "";
-	const noAlertsMarker = eventType === "full_state" || eventType === "logged_in";
-	return buildStatusDigest(state, { noAlertsMarker });
+	return buildStatusDigest(state);
 }

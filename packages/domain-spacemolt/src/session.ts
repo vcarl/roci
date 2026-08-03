@@ -43,6 +43,23 @@ const PLAYER_SUBDIR = "me"
 export const spaceMoltUrl = (): string => process.env.SPACEMOLT_URL ?? SPACEMOLT_URL_DEFAULT
 
 /**
+ * WebSocket URL for `@spacemolt/lib`'s `Account`.
+ *
+ * The library's own default is `wss://game.spacemolt.com/ws/v2`
+ * (`account.ts:178`); this derives the same shape from `spaceMoltUrl()` so a
+ * `SPACEMOLT_URL` override points BOTH the agent's REST CLI and the host's
+ * socket at the same server. `SPACEMOLT_WS_URL` overrides it outright for the
+ * case where the two genuinely differ (a local gameserver on another port).
+ */
+export const spaceMoltWsUrl = (): string => {
+  const override = process.env.SPACEMOLT_WS_URL
+  if (override) return override
+  const u = new URL(spaceMoltUrl())
+  const scheme = u.protocol === "http:" ? "ws:" : "wss:"
+  return `${scheme}//${u.host}/ws/v2`
+}
+
+/**
  * Origin (scheme + host) for the client-v2 library's `baseUrl` option.
  * `createSocket`/`createSession` want the API origin (e.g.
  * `https://game.spacemolt.com`) and append their own paths, so strip the
@@ -52,14 +69,6 @@ export const spaceMoltSocketBaseUrl = (): string => {
   const u = new URL(spaceMoltUrl())
   return `${u.protocol}//${u.host}`
 }
-
-/**
- * Client identifier we send as the WebSocket handshake `User-Agent`, marking the
- * connection as roci. client-v2 (>=1.6.0) prepends this to its own token, so the
- * server sees e.g. `roci @spacemolt/client-v2/1.6.0`. Override with
- * `SPACEMOLT_USER_AGENT` (e.g. to pin a roci version like `roci/0.1.0`).
- */
-export const spaceMoltUserAgent = (): string => process.env.SPACEMOLT_USER_AGENT ?? "roci"
 
 /** Host path to a player's session file. */
 export const sessionFilePath = (projectRoot: string, playerName: string): string =>

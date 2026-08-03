@@ -22,9 +22,9 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     notifications: [],
     travelProgress: null,
     inCombat: false,
+    connected: true,
     tick: 1,
     timestamp: Date.now(),
-    lastFullStateAt: Date.now(),
     ...overrides,
   }
 }

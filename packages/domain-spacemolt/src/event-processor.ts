@@ -1,17 +1,16 @@
 import { Layer } from "effect"
 import { EventProcessorTag, type EventProcessor, type EventResult } from "@roci/core/brain/limbic/thalamus/event-processor.js"
-import type { CargoItem, GameState, NearbyPlayer, PendingTrade, PlayerState, PoiState, ShipState, SystemState } from "./types.js"
 import type {
-  GameEvent,
-  LoggedInPayload,
-  NotificationChatMessage,
-  NotificationBattleUpdate,
   NotificationBattleDamage,
+  NotificationBattleUpdate,
+  NotificationChatMessage,
   NotificationMiningYield,
   NotificationObservationUpdate,
-  V2GameState,
-} from "./ws-types.js"
-import { FULL_STATE_FRAME } from "./ws-types.js"
+} from "@spacemolt/lib"
+import type { CargoItem, GameState, NearbyPlayer, PlayerState, ShipState } from "./types.js"
+import type { GameEvent } from "./game-events.js"
+import { CONNECTION_STATE_FRAME, STATE_SYNC_FRAME } from "./game-events.js"
+import type { FullStateSnapshot } from "./lib-state.js"
 
 /** A single delta entry from observation_update's nearby_changed / system_changed arrays. */
 type NearbyDelta = NonNullable<NotificationObservationUpdate["nearby_changed"]>[number]
@@ -29,7 +28,10 @@ function deltaToNearby(entry: NearbyDelta): NearbyPlayer {
     primary_color: entry.primary_color ?? "",
     secondary_color: entry.secondary_color ?? "",
     anonymous: false,
-    in_combat: entry.in_combat,
+    // The library's generated `NearbyPlayer` (@spacemolt/lib) marks `in_combat`
+    // optional, unlike client-v2's hand-written inline type this replaced (which
+    // required it) — default to false like every other field here.
+    in_combat: entry.in_combat ?? false,
   }
 }
 
@@ -39,37 +41,24 @@ function nearbyKey(n: { player_id?: string; username?: string }): string {
 }
 
 /**
- * A normalized full player+ship snapshot. Both the `logged_in` handshake and the
- * on-demand `get_state` refresh produce one of these; `applyFullState` is the
- * single merge codepath that folds it onto the prior GameState. Fields are
- * partial so a snapshot only overwrites what it actually carries — a sparse or
- * malformed refresh can never zero out state it omits.
- */
-interface FullStateSnapshot {
-  player: Partial<PlayerState>
-  ship: Partial<ShipState>
-  /** Full replacement cargo list. `undefined` = leave prior cargo untouched. */
-  cargo?: CargoItem[]
-  /** `undefined` = leave prior; `null` = clear; object = merge/replace by id. */
-  system?: SystemState | null
-  poi?: PoiState | null
-  /**
-   * Incoming trade offers. `undefined` = leave prior untouched (the `get_state`
-   * refresh doesn't carry pending_trades, so it preserves what login set).
-   */
-  pendingTrades?: PendingTrade[]
-}
-
-/**
- * The single full-state merge codepath. Spreads each partial onto the prior
- * state so omitted fields survive. poi/system merge onto the prior object when
- * the id matches (keeping fields the snapshot lacks, e.g. base_id/resources) and
- * replace wholesale when the location changed. Stamps `lastFullStateAt` so the
- * state bar's age indicator reflects a genuine full-state refresh.
+ * The single full-state merge codepath. SURVIVES the rebuild, repointed: it now
+ * folds a `FullStateSnapshot` produced by `libStateToSnapshot` from the
+ * library's StateCache instead of one produced by the dead `get_state`
+ * translator. Its behavior is unchanged and is still what a section fold wants.
+ *
+ * Spreads each partial onto the prior state so omitted fields survive — a sparse
+ * or degraded snapshot can never zero out state it does not carry. poi/system
+ * MERGE onto the prior object when the id matches (keeping fields the snapshot
+ * lacks, e.g. a POI's full resource list from a richer earlier read) and REPLACE
+ * wholesale when the location changed.
  */
 function applyFullState(s: GameState, snap: FullStateSnapshot): GameState {
   const player = { ...s.player, ...snap.player } as PlayerState
-  const cargo = snap.cargo ?? snap.ship.cargo ?? s.ship.cargo
+  // `snap.ship` is typed required, but a real state_sync only carries the
+  // sections that changed (e.g. `poi` alone) — optional chain the direct
+  // member access rather than trust the type, matching the spreads below,
+  // which already tolerate `snap.ship` being absent.
+  const cargo = snap.cargo ?? snap.ship?.cargo ?? s.ship.cargo
   const ship = { ...s.ship, ...snap.ship, cargo } as ShipState
   const mergeLocated = <T extends { id: string }>(prev: T | null, next: T | null | undefined): T | null => {
     if (next === undefined) return prev
@@ -83,139 +72,60 @@ function applyFullState(s: GameState, snap: FullStateSnapshot): GameState {
     cargo,
     system: mergeLocated(s.system, snap.system),
     poi: mergeLocated(s.poi, snap.poi),
-    // undefined ⇒ keep prior (get_state has no pending_trades); a login snapshot
-    // supplies the fresh array. See the staleness note on loggedInToSnapshot.
-    pendingTrades: snap.pendingTrades ?? s.pendingTrades,
     timestamp: Date.now(),
-    lastFullStateAt: Date.now(),
   }
 }
 
+/** The `state_sync` frame's payload (minted by `account-socket.ts`). */
+interface StateSyncPayload {
+  readonly sections?: ReadonlyArray<string>
+  readonly tick?: number
+  readonly snapshot?: FullStateSnapshot
+}
+
 /**
- * Map the `logged_in` handshake payload onto a normalized full-state snapshot.
+ * Fold a host `state_sync` frame — the library's StateCache delta, already
+ * translated — onto the prior state.
  *
- * STALENESS LIMITATION (pending_trades): the handshake is the ONLY frame that
- * carries `pending_trades[]`. Neither the periodic `get_state`/`full_state`
- * refresh (V2GameState has no such field) nor any typed notification refreshes
- * it. The trade-RESOLUTION frames (`trade_cancelled`/`trade_complete`/
- * `trade_declined`) are addressed to the OFFERER, not the recipient whose
- * pending_trades these are, AND fall outside client-v2's typed `ServerEvent`
- * union (they'd need a bridge like `battle_damage`) — so the recipient has no
- * cheap signal for when its incoming offers resolve. Consequently
- * `hasPendingTrades` reflects the login snapshot and only refreshes on
- * reconnect/re-login; it may read stale (stuck true) mid-session after the
- * pilot reviews the offers. Accepted as a documented limitation over building a
- * resolution-frame bridge that the game doesn't route to the recipient anyway.
+ * Successor to `handleFullState`, and the differences are the point. That one
+ * arrived every 45 seconds carrying a ~9KB `get_state` dump whether or not
+ * anything had changed; this one arrives only when a section actually changed,
+ * carries the changed section NAMES, and is suppressed entirely when the only
+ * "change" was `subscribeObservation()`'s presence bridge patching
+ * `nearby_players` into the location section (see `shouldEmitStateSync`).
+ *
+ * A malformed frame (no `snapshot`) is a no-op rather than a state wipe.
  */
-function loggedInToSnapshot(payload: LoggedInPayload): FullStateSnapshot {
-  const ship = payload.ship as unknown as ShipState
-  return {
-    player: payload.player as unknown as PlayerState,
-    ship,
-    cargo: ship?.cargo ?? [],
-    system: (payload.system as unknown as SystemState) ?? null,
-    poi: payload.poi ? (payload.poi as unknown as PoiState) : null,
-    pendingTrades: (payload.pending_trades ?? []) as unknown as PendingTrade[],
-  }
-}
-
-function handleLoggedIn(payload: LoggedInPayload): EventResult {
+function handleStateSync(payload: StateSyncPayload): EventResult {
+  const snapshot = payload.snapshot
+  if (!snapshot) return {}
+  const tick = payload.tick
   return {
     category: { _tag: "StateChange" },
-    stateUpdate: (prev) => applyFullState(prev as GameState, loggedInToSnapshot(payload)),
+    stateUpdate: (prev) => {
+      const next = applyFullState(prev as GameState, snapshot)
+      return typeof tick === "number" && tick > 0 ? { ...next, tick } : next
+    },
   }
 }
 
 /**
- * Map a `get_state` (v2) result onto a full-state snapshot. The get_state shape
- * differs from `logged_in`: player/ship are leaner and location (system/poi/dock
- * status) lives in a dedicated `location` object. We defensively unwrap a
- * `structuredContent` envelope (the REST shape) in case the WS `result` frame
- * carries the same wrapper, then translate location → the domain's
- * player.current_system/current_poi/docked_at_base and minimal system/poi objects
- * (id/name/type) so the state bar shows fresh location + names.
+ * Fold a host `connection_state` frame onto the prior state.
+ *
+ * This is the REPLACEMENT for the deleted staleness signal, and it must not be
+ * dropped: `connected` is the character's only indication that its worldview is
+ * frozen rather than merely quiet. `situation.ts` turns it into the warning that
+ * leads the briefing.
+ *
+ * Deliberately NOT a `LifecycleReset`: a dropped socket does not void the plan.
+ * The library reconnects, re-authenticates and re-subscribes on its own, and the
+ * character should be told its data is stale, not have its work destroyed.
  */
-function getStateToSnapshot(raw: Record<string, unknown>): FullStateSnapshot {
-  const gs = ((raw.structuredContent as Record<string, unknown> | undefined) ?? raw) as Partial<V2GameState>
-
-  const player: Partial<PlayerState> = {}
-  const p = gs.player
-  if (p) {
-    if (p.id != null) player.id = p.id
-    if (p.username != null) player.username = p.username
-    if (p.credits != null) player.credits = p.credits
-    if (p.empire != null) player.empire = p.empire
-    if (p.clan_tag != null) player.clan_tag = p.clan_tag
-    if (p.faction_id !== undefined) player.faction_id = p.faction_id ?? null
-    if (p.faction_rank !== undefined) player.faction_rank = p.faction_rank ?? null
-    if (p.is_cloaked != null) player.is_cloaked = p.is_cloaked
-    if (p.status_message != null) player.status_message = p.status_message
-    if (p.home_base != null) player.home_base = p.home_base
-    if (p.primary_color != null) player.primary_color = p.primary_color
-    if (p.secondary_color != null) player.secondary_color = p.secondary_color
-  }
-
-  const loc = gs.location
-  if (loc) {
-    if (loc.system_id != null) player.current_system = loc.system_id
-    if (loc.poi_id != null) player.current_poi = loc.poi_id
-    // `docked_at` present ⇒ docked; absent ⇒ undocked. Set explicitly (incl. null)
-    // so undocking is reflected, not left stale.
-    player.docked_at_base = loc.docked_at ?? null
-  }
-
-  const ship: Partial<ShipState> = {}
-  const sh = gs.ship
-  if (sh) {
-    const numKeys = [
-      "hull", "max_hull", "shield", "max_shield", "shield_recharge", "armor", "speed",
-      "fuel", "max_fuel", "cargo_used", "cargo_capacity", "cpu_used", "cpu_capacity",
-      "power_used", "power_capacity", "weapon_slots", "defense_slots", "utility_slots",
-    ] as const
-    for (const k of numKeys) {
-      const v = (sh as Record<string, unknown>)[k]
-      if (typeof v === "number") (ship as Record<string, unknown>)[k] = v
-    }
-    if (sh.id != null) ship.id = sh.id
-    if (sh.class_id != null) ship.class_id = sh.class_id
-    if (sh.name != null) ship.name = sh.name
-  }
-
-  const cargo = Array.isArray(gs.cargo)
-    ? gs.cargo.map((c) => ({ item_id: String(c.item_id ?? ""), quantity: Number(c.quantity ?? 0) }))
-    : undefined
-
-  // Minimal located objects from `location` (undefined = leave prior untouched).
-  let system: SystemState | null | undefined
-  let poi: PoiState | null | undefined
-  if (loc) {
-    system =
-      loc.system_id != null
-        ? ({ id: loc.system_id, name: loc.system_name ?? loc.system_id } as unknown as SystemState)
-        : undefined
-    poi =
-      loc.poi_id != null
-        ? ({
-            id: loc.poi_id,
-            name: loc.poi_name ?? loc.poi_id,
-            type: loc.poi_type ?? "",
-            system_id: loc.system_id ?? "",
-          } as unknown as PoiState)
-        : null // in open space (no current POI)
-  }
-
-  return { player, ship, cargo, system, poi }
-}
-
-/**
- * Handle the synthetic `full_state` frame carrying a `get_state` payload. Always
- * produces a stateUpdate (reconciling drift AND refreshing `lastFullStateAt` so
- * the age indicator is a true liveness signal, even when nothing changed).
- */
-function handleFullState(payload: Record<string, unknown>): EventResult {
+function handleConnectionState(payload: { connected?: unknown }): EventResult {
+  const connected = payload.connected === true
   return {
     category: { _tag: "StateChange" },
-    stateUpdate: (prev) => applyFullState(prev as GameState, getStateToSnapshot(payload)),
+    stateUpdate: (prev) => ({ ...(prev as GameState), connected, timestamp: Date.now() }),
   }
 }
 
@@ -326,31 +236,36 @@ function handleChatMessage(payload: NotificationChatMessage): EventResult {
 /**
  * SpaceMolt-specific event processor.
  *
- * Maps the `@spacemolt/client-v2` `ServerEvent` union (re-exported as `GameEvent`)
- * onto the domain's `EventResult`. The cortex loop consumes primarily `stateUpdate`
- * (feeding the situation-classifier, state renderer, and interrupts) and `log`;
- * `category`/`context` are set for interface correctness.
+ * Maps the frames the `@spacemolt/lib` adapter puts on the queue —
+ * `TYPED_NOTIFICATION_TYPES` pushes plus the host's own `state_sync` /
+ * `connection_state` — onto the domain's `EventResult`. The loop consumes
+ * `stateUpdate` (feeding the situation classifier, the state renderer and the
+ * digest) and `context`; `category` is set for interface correctness.
+ *
+ * `logged_in` is deliberately absent: the library consumes that frame
+ * internally to complete authentication and never emits it to `onAny`
+ * (`account.ts` `routeFrame`). `full_state` is absent because it never existed
+ * on the wire — it was minted locally by the 45-second poll this rebuild
+ * deleted.
  */
 export const spaceMoltEventProcessor: EventProcessor = {
   processEvent(event, _currentState) {
-    // Synthetic host-injected full-state refresh — not a wire ServerEvent, so it
-    // is dispatched before the closed `ServerEvent` switch below.
-    if ((event as { type?: string }).type === FULL_STATE_FRAME) {
-      return handleFullState((event as { payload?: Record<string, unknown> }).payload ?? {})
-    }
     const smEvent = event as GameEvent
     switch (smEvent.type) {
-      case "logged_in":
-        return handleLoggedIn(smEvent.payload)
+      case STATE_SYNC_FRAME:
+        return handleStateSync((smEvent.payload ?? {}) as StateSyncPayload)
+
+      case CONNECTION_STATE_FRAME:
+        return handleConnectionState((smEvent.payload ?? {}) as { connected?: unknown })
 
       case "observation_update":
-        return handleObservationUpdate(smEvent.payload)
+        return handleObservationUpdate(smEvent.payload as NotificationObservationUpdate)
 
       case "battle_update":
-        return handleBattleUpdate(smEvent.payload)
+        return handleBattleUpdate(smEvent.payload as NotificationBattleUpdate)
 
       case "battle_damage":
-        return handleBattleDamage(smEvent.payload)
+        return handleBattleDamage(smEvent.payload as NotificationBattleDamage)
 
       case "player_died":
         return {
@@ -362,34 +277,21 @@ export const spaceMoltEventProcessor: EventProcessor = {
         }
 
       case "chat_message":
-        return handleChatMessage(smEvent.payload)
+        return handleChatMessage(smEvent.payload as NotificationChatMessage)
 
       case "mining_yield":
-        return handleMiningYield(smEvent.payload)
+        return handleMiningYield(smEvent.payload as NotificationMiningYield)
 
       // Logging handled externally; preserve a no-op log fn (matches old behavior).
       case "error":
       case "action_error":
         return { log: () => {} }
 
-      // Control acks / informational frames the host doesn't act on. They still
-      // reach the hindbrain via the raw event stream.
-      case "welcome":
-      case "registered":
-      case "ok":
-      case "result":
-      case "action_result":
-      case "reconnected":
-      case "pilotless_ship":
-      case "scan_detected":
-      case "market_update":
-      case "skill_level_up":
-      case "trade_offer_received":
-      case "crafting_update":
-        return {}
-
       default:
-        // Unknown / future / RawServerFrame — never throw.
+        // Every other typed notification, every control frame, and every
+        // unknown/future frame. The host takes no state action — but the raw
+        // frame still reaches the hindbrain through the event queue, which is
+        // where it is appraised. Never throws.
         return {}
     }
   },

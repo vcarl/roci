@@ -105,19 +105,12 @@ importers:
       '@roci/core':
         specifier: workspace:*
         version: link:../core
-      '@spacemolt/client-v2':
-        specifier: file:./vendor/spacemolt-client-v2-1.6.0.tgz
-        version: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz(typescript@5.9.3)
+      '@spacemolt/lib':
+        specifier: 12.0.0
+        version: 12.0.0(typescript@5.9.3)
       effect:
         specifier: ^3.19.19
         version: 3.19.19
-      ws:
-        specifier: ^8.19.0
-        version: 8.19.0
-    devDependencies:
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
 
   packages/player-tools:
     devDependencies:
@@ -748,12 +741,11 @@ packages:
   '@sinclair/typebox@0.34.48':
     resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
 
-  '@spacemolt/client-v2@file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz':
-    resolution: {integrity: sha512-VEmK3asa1Vx05KHzrXvvE29iX7GJ/k4FX4eTwBOFVUstp4ZZZ63GtOM+BDpyo3STijZmlE0XwQr5Y8gAP9DYIA==, tarball: file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz}
-    version: 1.6.0
-    hasBin: true
+  '@spacemolt/lib@12.0.0':
+    resolution: {integrity: sha512-Ox2gdp3y3PRYbtHz2JEW5XvYa6spiN1cAcBUPaRaroiRv3AKhtmmIaavo4b19ycE7wuJ9aVHZP8mXeA2MYbcSA==}
+    engines: {node: '>=22'}
     peerDependencies:
-      typescript: ^5 || ^6
+      typescript: ^5.5
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -2083,7 +2075,7 @@ snapshots:
 
   '@sinclair/typebox@0.34.48': {}
 
-  '@spacemolt/client-v2@file:packages/domain-spacemolt/vendor/spacemolt-client-v2-1.6.0.tgz(typescript@5.9.3)':
+  '@spacemolt/lib@12.0.0(typescript@5.9.3)':
     dependencies:
       typescript: 5.9.3
 

@@ -6,8 +6,8 @@ import {
   SPACEMOLT_URL_DEFAULT,
   SESSION_FILE_NAME,
   spaceMoltUrl,
+  spaceMoltWsUrl,
   spaceMoltSocketBaseUrl,
-  spaceMoltUserAgent,
   sessionFilePath,
   validateSessionFile,
   readPlayerCredentials,
@@ -30,6 +30,7 @@ describe("SPACEMOLT_URL wiring", () => {
   afterEach(() => {
     if (prev === undefined) delete process.env.SPACEMOLT_URL
     else process.env.SPACEMOLT_URL = prev
+    delete process.env.SPACEMOLT_WS_URL
   })
 
   it("defaults to the v2 API base URL", () => {
@@ -46,23 +47,22 @@ describe("SPACEMOLT_URL wiring", () => {
     delete process.env.SPACEMOLT_URL
     expect(spaceMoltSocketBaseUrl()).toBe("https://game.spacemolt.com")
   })
-})
 
-describe("SPACEMOLT_USER_AGENT wiring", () => {
-  const prev = process.env.SPACEMOLT_USER_AGENT
-  afterEach(() => {
-    if (prev === undefined) delete process.env.SPACEMOLT_USER_AGENT
-    else process.env.SPACEMOLT_USER_AGENT = prev
+  it("derives the library's wss /ws/v2 URL from the same base", () => {
+    delete process.env.SPACEMOLT_WS_URL
+    expect(spaceMoltWsUrl()).toBe("wss://game.spacemolt.com/ws/v2")
   })
 
-  it("defaults to the roci client identifier", () => {
-    delete process.env.SPACEMOLT_USER_AGENT
-    expect(spaceMoltUserAgent()).toBe("roci")
+  it("downgrades to ws:// for an http base (local gameserver)", () => {
+    delete process.env.SPACEMOLT_WS_URL
+    process.env.SPACEMOLT_URL = "http://localhost:8080/api/v2"
+    expect(spaceMoltWsUrl()).toBe("ws://localhost:8080/ws/v2")
   })
 
-  it("honors the env override", () => {
-    process.env.SPACEMOLT_USER_AGENT = "roci/0.1.0"
-    expect(spaceMoltUserAgent()).toBe("roci/0.1.0")
+  it("honors an outright SPACEMOLT_WS_URL override", () => {
+    process.env.SPACEMOLT_WS_URL = "wss://staging.example/ws/v2"
+    expect(spaceMoltWsUrl()).toBe("wss://staging.example/ws/v2")
+    delete process.env.SPACEMOLT_WS_URL
   })
 })
 

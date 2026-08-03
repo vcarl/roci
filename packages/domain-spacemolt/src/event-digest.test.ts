@@ -33,9 +33,9 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
 		notifications: [],
 		travelProgress: null,
 		inCombat: false,
+		connected: true,
 		tick: 1,
 		timestamp: Date.now(),
-		lastFullStateAt: Date.now(),
 		...overrides,
 	}
 }
@@ -143,28 +143,25 @@ describe("buildStatusDigest", () => {
 describe("formatEventDigest gating", () => {
 	it("returns a digest only for snapshot event types", () => {
 		const s = makeState()
-		expect(formatEventDigest("full_state", s)).toContain("STATUS:")
-		expect(formatEventDigest("logged_in", s)).toContain("STATUS:")
+		expect(formatEventDigest("state_sync", s)).toContain("STATUS:")
 		expect(formatEventDigest("observation_update", s)).toContain("STATUS:")
 	})
 
-	it("appends `; no alerts` to band-less full_state/logged_in digests only", () => {
+	it("emits NO trailing marker on a band-less digest — the `; no alerts` token is gone", () => {
+		// It existed only for full_state/logged_in, the discard-by-default periodic
+		// snapshots. state_sync fires BECAUSE something changed, so handing the
+		// model a "nothing is wrong" verdict on it is exactly backwards.
 		const healthy = makeState()
-		expect(formatEventDigest("full_state", healthy)).toMatch(/; no alerts$/)
-		expect(formatEventDigest("logged_in", healthy)).toMatch(/; no alerts$/)
-		// observation_update never carries the marker — its news is the delta.
+		expect(formatEventDigest("state_sync", healthy)).not.toContain("no alerts")
 		expect(formatEventDigest("observation_update", healthy)).not.toContain("no alerts")
-		// A banded frame ends with an explicit ALERT token instead.
+		expect(formatEventDigest("state_sync", healthy)).not.toMatch(/;\s*$/)
+		// A banded frame still ends with an explicit ALERT token instead (the
+		// band logic itself is unchanged — see buildStatusDigest's band tests
+		// above; this only re-confirms it survives the formatEventDigest gate).
 		const lowFuel = makeState({
 			ship: { fuel: 6, max_fuel: 100, hull: 100, max_hull: 100 } as unknown as GameState["ship"],
 		})
-		expect(formatEventDigest("full_state", lowFuel)).toContain("(LOW)")
-		expect(formatEventDigest("full_state", lowFuel)).toMatch(/; ALERT: fuel low$/)
-		expect(formatEventDigest("full_state", lowFuel)).not.toContain("no alerts")
-		const critHull = makeState({
-			ship: { fuel: 100, max_fuel: 100, hull: 15, max_hull: 100 } as unknown as GameState["ship"],
-		})
-		expect(formatEventDigest("full_state", critHull)).toMatch(/; ALERT: hull critical$/)
+		expect(formatEventDigest("state_sync", lowFuel)).toMatch(/; ALERT: fuel low$/)
 	})
 
 	it("returns empty string for chat and discrete events", () => {
@@ -176,9 +173,10 @@ describe("formatEventDigest gating", () => {
 	})
 
 	it("isSnapshotEventType matches the snapshot frame types", () => {
-		expect(isSnapshotEventType("full_state")).toBe(true)
-		expect(isSnapshotEventType("logged_in")).toBe(true)
+		expect(isSnapshotEventType("state_sync")).toBe(true)
 		expect(isSnapshotEventType("observation_update")).toBe(true)
+		expect(isSnapshotEventType("full_state")).toBe(false)
+		expect(isSnapshotEventType("logged_in")).toBe(false)
 		expect(isSnapshotEventType("chat")).toBe(false)
 		expect(isSnapshotEventType("market_update")).toBe(false)
 	})

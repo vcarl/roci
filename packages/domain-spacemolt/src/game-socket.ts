@@ -1,2 +1,2 @@
-export { GameSocket, GameSocketError, makeGameSocketLive } from "./game-socket-impl.js"
-export type { GameSocketConnection } from "./game-socket-impl.js"
+export { GameSocket, GameSocketError, makeGameSocketLive } from "./account-socket.js"
+export type { GameSocketConnection } from "./account-socket.js"

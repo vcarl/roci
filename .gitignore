@@ -4,8 +4,6 @@ dist/
 coverage/
 *.tsbuildinfo
 *.tgz
-# Vendored client-v2 tarball must be committed (pinned, not on npm)
-!packages/domain-spacemolt/vendor/*.tgz
 # Same tarball copied into the docker build context so the image can install the
 # `spacemolt` CLI from it (Docker COPY can only read files inside the build context)
 !packages/domain-spacemolt/src/docker/*.tgz

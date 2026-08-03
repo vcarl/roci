@@ -25,9 +25,9 @@ export const spaceMoltStateRenderer: StateRenderer = {
     if (typeof metrics.hull === "number") parts.push(`hull:${Math.round(metrics.hull * 100)}%`)
     if (metrics.cargoUsed !== undefined) parts.push(`cargo:${metrics.cargoUsed}/${metrics.cargoCapacity}`)
     if (typeof metrics.tick === "number") parts.push(`t:${metrics.tick}`)
-    // Age of the last full player+ship refresh — a frozen snapshot shows a
-    // climbing age even as ticks advance, making the staleness visible in logs.
-    if (typeof metrics.stateAgeSec === "number") parts.push(`age:${metrics.stateAgeSec}s`)
+    // Liveness. Printed only when it is BAD — a bar that says nothing about the
+    // connection is a healthy one, so the token's presence is the whole signal.
+    if (metrics.connected === false) parts.push("OFFLINE")
     return parts.join(" ")
   },
 

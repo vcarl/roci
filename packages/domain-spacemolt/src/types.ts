@@ -214,15 +214,19 @@ export interface GameState {
 	notifications: GameNotification[];
 	travelProgress: TravelProgress | null;
 	inCombat: boolean;
+	/**
+	 * Whether the live feed is up, from the adapter's `connection_state` frames
+	 * (`onDisconnected` / `onReconnecting` / `onReconnected`).
+	 *
+	 * This is the replacement for the deleted wall-clock staleness signal, and it
+	 * is strictly better: the old `lastFullStateAt` age was an INFERENCE that the
+	 * socket had died because a 45s poll had stopped landing, and it could only
+	 * notice ~90 seconds late. This is the library reporting the fact.
+	 * `situation.ts` reads it to warn cognition that its worldview is frozen.
+	 */
+	connected: boolean;
 	tick: number;
 	timestamp: number;
-	/**
-	 * Wall-clock ms of the last full player+ship snapshot merge (login,
-	 * reconnect, or a periodic get_state refresh). Distinct from `timestamp`
-	 * (any update): drives the state-bar staleness/age indicator, so a frozen
-	 * full-state snapshot is diagnosable even while ticks keep advancing.
-	 */
-	lastFullStateAt?: number;
 	market?: MarketItem[];
 	missions?: MissionInfo[];
 	activeMissions?: ActiveMission[];

@@ -168,6 +168,7 @@ const BASE_STATE: GameState = {
   notifications: [],
   travelProgress: null,
   inCombat: false,
+  connected: true,
   tick: 0,
   timestamp: 0,
 }

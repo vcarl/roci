@@ -22,6 +22,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     notifications: [],
     travelProgress: null,
     inCombat: false,
+    connected: true,
     tick: 7,
     timestamp: 0,
     ...overrides,
@@ -192,71 +193,117 @@ describe("spaceMoltEventProcessor — observation_update", () => {
   })
 })
 
-describe("spaceMoltEventProcessor — full_state refresh", () => {
-  it("flows a get_state snapshot through the same merge as logged_in", () => {
-    const event = {
-      type: "full_state",
-      payload: {
-        player: { username: "Cmdr", credits: 1234 },
-        ship: { hull: 40, max_hull: 100, fuel: 12, cargo_used: 6, cargo_capacity: 20 },
-        cargo: [{ item_id: "ore", quantity: 6 }],
-        location: { system_id: "sysX", system_name: "Xanadu", poi_id: "poiX", poi_name: "Belt X", poi_type: "asteroid_belt", docked_at: null },
-      },
-    }
+describe("spaceMoltEventProcessor — state_sync", () => {
+  const sync = (snapshot: Record<string, unknown>, tick?: number) => ({
+    type: "state_sync",
+    payload: { sections: Object.keys(snapshot), ...(tick !== undefined ? { tick } : {}), snapshot },
+  })
+
+  it("folds a translated StateCache snapshot onto the prior state", () => {
+    const event = sync({
+      player: { credits: 1234, current_system: "sysX", current_poi: "poiX", docked_at_base: null },
+      ship: { hull: 40, max_hull: 100, fuel: 12, cargo_used: 6, cargo_capacity: 20 },
+      cargo: [{ item_id: "ore", quantity: 6 }],
+      system: { id: "sysX", name: "Xanadu" },
+      poi: { id: "poiX", name: "Belt X", type: "asteroid_belt" },
+    }, 4242)
     const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
     expect(next.player.credits).toBe(1234)
     expect(next.ship.hull).toBe(40)
-    expect(next.ship.cargo_used).toBe(6)
     expect(next.cargo).toEqual([{ item_id: "ore", quantity: 6 }])
-    // location → player fields
     expect(next.player.current_system).toBe("sysX")
-    expect(next.player.current_poi).toBe("poiX")
     expect(next.player.docked_at_base).toBeNull()
-    // minimal system/poi objects carry fresh names/type
     expect(next.system?.name).toBe("Xanadu")
-    expect(next.poi?.name).toBe("Belt X")
     expect(next.poi?.type).toBe("asteroid_belt")
-    // full-state stamp advanced for the age indicator
-    expect(typeof next.lastFullStateAt).toBe("number")
+    expect(next.tick).toBe(4242)
   })
 
-  it("unwraps a structuredContent envelope", () => {
-    const event = {
-      type: "full_state",
-      payload: { structuredContent: { ship: { fuel: 3 }, location: { poi_id: "p", system_id: "s" } } },
-    }
-    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
-    expect(next.ship.fuel).toBe(3)
-    expect(next.player.current_poi).toBe("p")
-  })
-
-  it("an empty/degraded refresh payload never zeroes prior state", () => {
+  it("a sparse snapshot never zeroes state it does not carry", () => {
     const prev = makeState({
       player: { username: "Keep", credits: 500, docked_at_base: null } as unknown as GameState["player"],
       ship: { hull: 88, max_hull: 100, fuel: 9, max_fuel: 50, cargo_used: 4, cargo_capacity: 10, cargo: [{ item_id: "ore", quantity: 4 }] } as unknown as GameState["ship"],
     })
-    const next = spaceMoltEventProcessor.processEvent({ type: "full_state", payload: {} }, prev).stateUpdate!(prev) as GameState
+    const next = spaceMoltEventProcessor.processEvent(sync({ ship: { fuel: 3 } }), prev).stateUpdate!(prev) as GameState
     expect(next.player.username).toBe("Keep")
     expect(next.player.credits).toBe(500)
     expect(next.ship.hull).toBe(88)
-    expect(next.ship.cargo_used).toBe(4)
+    expect(next.ship.fuel).toBe(3)
     expect(next.cargo).toEqual([{ item_id: "ore", quantity: 4 }])
-    // still stamps a fresh full-state time (successful, if empty, refresh)
-    expect(typeof next.lastFullStateAt).toBe("number")
   })
 
   it("merges fresh names onto the existing poi object when the id is unchanged", () => {
     const prev = makeState({
       poi: { id: "poiX", name: "old", type: "asteroid_belt", base_id: "baseX" } as unknown as GameState["poi"],
     })
-    const event = {
-      type: "full_state",
-      payload: { location: { poi_id: "poiX", poi_name: "Belt X Renamed", system_id: "sysX" } },
-    }
-    const next = spaceMoltEventProcessor.processEvent(event, prev).stateUpdate!(prev) as GameState
+    const next = spaceMoltEventProcessor
+      .processEvent(sync({ poi: { id: "poiX", name: "Belt X Renamed" } }), prev)
+      .stateUpdate!(prev) as GameState
     expect(next.poi?.name).toBe("Belt X Renamed")
-    // base_id preserved from the prior object (merge-by-id keeps fields get_state lacks)
+    // base_id preserved — merge-by-id keeps fields a leaner snapshot lacks.
     expect((next.poi as unknown as { base_id?: string }).base_id).toBe("baseX")
+  })
+
+  it("replaces the poi wholesale when the id changed", () => {
+    const prev = makeState({
+      poi: { id: "poiX", name: "old", type: "station", base_id: "baseX" } as unknown as GameState["poi"],
+    })
+    const next = spaceMoltEventProcessor
+      .processEvent(sync({ poi: { id: "poiY", name: "Belt Y", type: "asteroid_belt" } }), prev)
+      .stateUpdate!(prev) as GameState
+    expect(next.poi?.id).toBe("poiY")
+    expect((next.poi as unknown as { base_id?: string }).base_id).toBeUndefined()
+  })
+
+  it("is a NO-OP for a malformed frame carrying no snapshot — never a state wipe", () => {
+    expect(spaceMoltEventProcessor.processEvent({ type: "state_sync", payload: {} }, {})).toEqual({})
+    expect(spaceMoltEventProcessor.processEvent({ type: "state_sync" }, {})).toEqual({})
+  })
+})
+
+describe("spaceMoltEventProcessor — connection_state", () => {
+  it("sets connected false on a disconnect and true on a reconnect", () => {
+    const down = spaceMoltEventProcessor
+      .processEvent({ type: "connection_state", payload: { connected: false, phase: "disconnected", reason: "going away" } }, {})
+      .stateUpdate!(makeState()) as GameState
+    expect(down.connected).toBe(false)
+
+    const up = spaceMoltEventProcessor
+      .processEvent({ type: "connection_state", payload: { connected: true, phase: "connected" } }, {})
+      .stateUpdate!(down) as GameState
+    expect(up.connected).toBe(true)
+  })
+
+  it("treats a reconnecting frame as NOT connected", () => {
+    const s = spaceMoltEventProcessor
+      .processEvent({ type: "connection_state", payload: { connected: false, phase: "reconnecting", attempt: 2 } }, {})
+      .stateUpdate!(makeState()) as GameState
+    expect(s.connected).toBe(false)
+  })
+
+  it("is NOT a LifecycleReset — a dropped socket must not void the plan", () => {
+    // The library reconnects, re-authenticates and re-subscribes by itself. The
+    // character should be told its data is stale, not have its work destroyed.
+    const r = spaceMoltEventProcessor.processEvent(
+      { type: "connection_state", payload: { connected: false, phase: "disconnected" } }, {},
+    )
+    expect(r.category).toEqual({ _tag: "StateChange" })
+  })
+
+  it("defaults to disconnected for a malformed payload rather than claiming health", () => {
+    const s = spaceMoltEventProcessor
+      .processEvent({ type: "connection_state", payload: {} }, {})
+      .stateUpdate!(makeState()) as GameState
+    expect(s.connected).toBe(false)
+  })
+})
+
+describe("spaceMoltEventProcessor — frames the library no longer delivers", () => {
+  it("logged_in is a no-op: the library consumes it internally to complete auth", () => {
+    expect(spaceMoltEventProcessor.processEvent({ type: "logged_in", payload: { player: {} } }, {})).toEqual({})
+  })
+
+  it("full_state is a no-op: it never existed on the wire", () => {
+    expect(spaceMoltEventProcessor.processEvent({ type: "full_state", payload: { ship: { fuel: 3 } } }, {})).toEqual({})
   })
 })
 
@@ -281,56 +328,6 @@ describe("spaceMoltEventProcessor — mining_yield", () => {
       .processEvent(event, {})
       .stateUpdate!(makeState({ ship: { cargo_used: 8, cargo_capacity: 10, cargo: [] } as unknown as GameState["ship"] })) as GameState
     expect(next.ship.cargo_used).toBe(10)
-  })
-})
-
-describe("spaceMoltEventProcessor — logged_in", () => {
-  it("rebuilds player/ship from the payload", () => {
-    const event = {
-      type: "logged_in",
-      payload: {
-        player: { username: "Cmdr" },
-        ship: { hull: 55, cargo: [{ item_id: "ore", quantity: 4 }] },
-        system: { id: "sys1" },
-        poi: null,
-      },
-    }
-    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
-    expect(next.player.username).toBe("Cmdr")
-    expect(next.ship.hull).toBe(55)
-    expect(next.cargo).toEqual([{ item_id: "ore", quantity: 4 }])
-  })
-
-  it("stores pending_trades from the handshake payload", () => {
-    const event = {
-      type: "logged_in",
-      payload: {
-        player: { username: "Cmdr" },
-        ship: { hull: 55 },
-        system: { id: "sys1" },
-        poi: null,
-        pending_trades: [{ trade_id: "t1", offerer_name: "Bob" }],
-      },
-    }
-    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
-    expect(next.pendingTrades).toEqual([{ trade_id: "t1", offerer_name: "Bob" }])
-  })
-
-  it("defaults pending_trades to an empty array when the payload omits it", () => {
-    const event = {
-      type: "logged_in",
-      payload: { player: { username: "Cmdr" }, ship: { hull: 55 }, system: { id: "sys1" }, poi: null },
-    }
-    const next = spaceMoltEventProcessor.processEvent(event, {}).stateUpdate!(makeState()) as GameState
-    expect(next.pendingTrades).toEqual([])
-  })
-
-  it("a get_state full_state refresh preserves prior pending_trades (it never carries them)", () => {
-    const prev = makeState({ pendingTrades: [{ trade_id: "t1" }] })
-    const next = spaceMoltEventProcessor
-      .processEvent({ type: "full_state", payload: { ship: { fuel: 3 } } }, prev)
-      .stateUpdate!(prev) as GameState
-    expect(next.pendingTrades).toEqual([{ trade_id: "t1" }])
   })
 })
 
