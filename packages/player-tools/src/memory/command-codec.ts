@@ -9,12 +9,51 @@
  *  - PARSERS (`parse*Args` / `parseCommand`) run IN the container entrypoint
  *    (`memory-run`), turning the CLI's `process.argv` back into a typed command.
  *
- * Grammar (frozen container contract, spec §4): `remember <text> [--tags a,b]
- * --source <s> [--dims <json>]`, `search <query> -k <k> [--tags a,b]`,
- * `recent [-n <n>]`, `mark-get`, `mark-set <json>`, `promote` (stdin). Defaults:
- * `--source` → "conscious", `-k` → 5, `-n` → 10. `--dims` is OMITTED when the
- * signature is empty/absent (→ NULL column → neutral salience at recall); a
- * present-but-malformed `--dims` value is a HARD parse error (loud, not silent).
+ * Grammar (container contract, spec §4): `remember <text> [--tags a,b]
+ * --source <s> [--dims-c <json>]`, `search <query> -k <k> [--tags a,b]`,
+ * `recent [-n <n>]`, `mark-get`, `mark-set <json>`, `promote` (stdin),
+ * `pending [-n <n>]`, `adjudicate <id> <json>`. Defaults: `--source` →
+ * "conscious", `-k` → 5, `-n` → 10 (recent) / 25 (pending). A
+ * present-but-malformed `--dims-c` or `adjudicate` JSON value is a HARD parse
+ * error (loud, not silent).
+ *
+ * ── `--dims` was RENAMED `--dims-c` in Phase 2 (design 2026-07-31 §3) ────────
+ * It used to carry the memory's FINAL salience signature. It now carries the
+ * PRODUCER (C) vector only — the authoring tier's own reading. The CLI computes
+ * the mechanical (A) vector itself at insert, from the memory's embedding
+ * against the axis-gloss embeddings, and writes `dims = mean(A, C)` with
+ * `dims_stage = 'base'`.
+ *
+ * The NAME changed with the meaning, deliberately. The schema now has a `dims`
+ * column (the EFFECTIVE vector — base, then adjudicated), a `dims_a` and a
+ * `dims_c`. A flag still called `--dims` that populated `dims_c` would put three
+ * meanings on one word inside one schema, and the next person to trace why
+ * `dims` disagrees with what the host sent would have to discover that `--dims`
+ * was never `dims`.
+ *
+ * The retired spelling is a HARD PARSE ERROR (see `LEGACY_DIMS_FLAG` below), not
+ * an ignored token. `takeFlag` only strips flags it is asked for, so an
+ * unhandled `--dims` would fall through into the positional remainder, the text
+ * would still resolve, and the row would be written with NO producer vector —
+ * successfully and silently. Version skew between a long-lived container's
+ * provisioned bundle and a redeployed host is real, and that failure mode is
+ * exactly the one this design exists to prevent.
+ *
+ * `--dims-c` is OMITTED when the producer vector is empty/absent — pathway 6
+ * (the agent's own `memory remember`) and pathway 5 (reflection `promote`) have
+ * no C at all. Those rows are NOT dimensionless: A always fires inside the CLI,
+ * so `base = A`. A NULL `dims` is now only possible if the CLI itself failed.
+ *
+ * `promote` deliberately gains NO producer flag. Spec §4 pathway 5 imagines C
+ * coming from "the reflection call that is already running", but at the
+ * promotion seam (`planned-action.ts:72`) there is no such call: promote runs
+ * BEFORE `dream.execute` so it captures raw diary text ahead of the rewrite, and
+ * dream's output is a consolidated diary, not a per-entry vector. Pathway 5 is
+ * A-only, and B supersedes.
+ *
+ * `MEMORY_USAGE` below is unchanged and must stay so: it is the text an AGENT
+ * sees on a bad invocation, and neither the producer vector nor the sweep's
+ * host-only verbs belong on that surface.
  */
 
 export const MEMORY_USAGE =
@@ -26,6 +65,26 @@ const DEFAULT_REMEMBER_SOURCE = "conscious"
 const DEFAULT_SEARCH_K = 5
 /** Row-count default for `recent` (frozen: shipped `intOr(a1.value, 10)`). */
 const DEFAULT_RECENT_N = 10
+/** Row cap for one `pending` page — the adjudicator's per-sweep bound (design §10). */
+const DEFAULT_PENDING_N = 25
+export { DEFAULT_PENDING_N }
+
+/** The producer-vector flag. One site, so encoder, parser and error text agree. */
+const DIMS_C_FLAG = "--dims-c"
+
+/**
+ * The spelling `--dims-c` replaced in Phase 2. Exported so the rejection below
+ * and its test name the same string.
+ *
+ * It is REJECTED rather than ignored. `takeFlag` only consumes flags it is asked
+ * for, so an unhandled `--dims` would fall through into the positional
+ * remainder, `rest[0]` would still resolve to the memory text, and the row would
+ * be written with no producer vector at all — successfully, silently, and
+ * indistinguishably from a pathway-6 write. A stale bundle in a long-lived
+ * container against a redeployed host is a real way to reach that state, and
+ * silence is the one failure mode this design cannot tolerate.
+ */
+export const LEGACY_DIMS_FLAG = "--dims"
 
 /** Split a `--tags a,b , ,c` value into trimmed, non-empty tags. */
 export function parseTags(raw: string): string[] {
@@ -64,25 +123,38 @@ function parseIntFlag(
 
 // ─── Encoders (host → CLI argv) ──────────────────────────────────────────────
 
-/** A single memory to persist; `dims` empty/absent → the `--dims` flag is omitted. */
+/** A single memory to persist; `dims` empty/absent → the `--dims-c` flag is omitted. */
 export interface RememberEntry {
   readonly text: string
   readonly source: string
   readonly tags: ReadonlyArray<string>
+  /** The PRODUCER (C) vector — the authoring tier's own reading of this memory
+   *  across the character's axis namespace. NOT the final signature: the CLI
+   *  merges it with the mechanical (A) vector it computes at insert. Travels on
+   *  the wire as `--dims-c`; the FIELD keeps the name `dims` because it is the
+   *  host-side entry object, not the wire token, and renaming it would push the
+   *  rename through `MemoryWrite`, `LongtermStore.remember` and four extractors
+   *  for no gain. */
   readonly dims?: Record<string, number>
 }
 
 /**
- * Build the argv for `memory remember`. Flag order is FROZEN to the legacy
- * hand-concatenation (spec §4): `remember <text> [--tags <t>] --source <s>
- * [--dims <json>]` — `--source` is always emitted, `--tags`/`--dims` only when
- * non-empty. `shQuote` is applied host-side by the caller.
+ * Build the argv for `memory remember`. Flag ORDER is frozen: `remember <text>
+ * [--tags <t>] --source <s> [--dims-c <json>]` — `--source` is always emitted,
+ * `--tags`/`--dims-c` only when non-empty. `shQuote` is applied host-side by the
+ * caller.
+ *
+ * The producer-vector flag was `--dims` before Phase 2. The output of this
+ * function is therefore NOT byte-identical to Phase 1's, by design — see the
+ * module header for why the name moved with the meaning.
  */
 export function encodeRememberArgs(entry: RememberEntry): string[] {
   const argv: string[] = ["remember", entry.text]
   if (entry.tags.length > 0) argv.push("--tags", entry.tags.join(","))
   argv.push("--source", entry.source)
-  if (entry.dims && Object.keys(entry.dims).length > 0) argv.push("--dims", JSON.stringify(entry.dims))
+  if (entry.dims && Object.keys(entry.dims).length > 0) {
+    argv.push(DIMS_C_FLAG, JSON.stringify(entry.dims))
+  }
   return argv
 }
 
@@ -116,6 +188,26 @@ export function encodePromoteArgs(): string[] {
   return ["promote"]
 }
 
+/**
+ * Build the argv for `memory pending` — the adjudicator's work queue (design §3,
+ * stage B). The cap is ALWAYS emitted: B costs one model call per row, so an
+ * unbounded page is a way to stall a whole reflection cycle behind a burst of
+ * agent-authored writes.
+ */
+export function encodePendingArgs(n?: number): string[] {
+  return ["pending", "-n", String(n ?? DEFAULT_PENDING_N)]
+}
+
+/**
+ * Build the argv for `memory adjudicate <id> <json>` — write B's authoritative
+ * vector over the base on one row. Positional, not flagged: both arguments are
+ * required and neither has a sensible default (an id you have to guess, and a
+ * vector whose absence should never mean `{}`).
+ */
+export function encodeAdjudicateArgs(id: number, dims: Record<string, number>): string[] {
+  return ["adjudicate", String(id), JSON.stringify(dims)]
+}
+
 // ─── Parsers (CLI argv → typed command) ──────────────────────────────────────
 
 export interface RememberParsed {
@@ -123,7 +215,8 @@ export interface RememberParsed {
   text: string
   tags: string[]
   source: string
-  /** Raw `--dims` JSON string (validated), or null when the flag was absent. */
+  /** Raw `--dims-c` JSON string (validated) — the PRODUCER (C) vector — or null
+   *  when the flag was absent (pathways 5 and 6 have no producer). */
   dims: string | null
 }
 export interface SearchParsed {
@@ -146,6 +239,16 @@ export interface MarkSetParsed {
 export interface PromoteParsed {
   verb: "promote"
 }
+export interface PendingParsed {
+  verb: "pending"
+  n: number
+}
+export interface AdjudicateParsed {
+  verb: "adjudicate"
+  id: number
+  /** Raw adjudicated-vector JSON string (validated), mirroring RememberParsed.dims. */
+  dims: string
+}
 
 export type ParsedCommand =
   | RememberParsed
@@ -154,26 +257,40 @@ export type ParsedCommand =
   | MarkGetParsed
   | MarkSetParsed
   | PromoteParsed
+  | PendingParsed
+  | AdjudicateParsed
 
 export type ParseResult<T> = T | { error: string }
 
-/** Parse `remember` argv (must include the leading verb). Applies the source default and validates `--dims`. */
+/** Parse `remember` argv (must include the leading verb). Applies the source default and validates `--dims-c`. */
 export function parseRememberArgs(argv: ReadonlyArray<string>): ParseResult<RememberParsed> {
+  // Reject the retired spelling BEFORE any flag is consumed. Exact token match,
+  // so a memory whose TEXT merely mentions the old flag is unaffected.
+  if (argv.slice(1).includes(LEGACY_DIMS_FLAG)) {
+    return {
+      error:
+        `${LEGACY_DIMS_FLAG} was replaced by ${DIMS_C_FLAG} (it carries the PRODUCER vector, ` +
+        `which the CLI merges with the mechanical one it computes at insert). ` +
+        `This usually means a stale host or a stale provisioned bundle — rebuild ` +
+        `@roci/player-tools and re-provision.`,
+    }
+  }
   const afterTags = takeFlag([...argv.slice(1)], "--tags")
   const afterSource = takeFlag(afterTags.rest, "--source")
-  const afterDims = takeFlag(afterSource.rest, "--dims")
+  const afterDims = takeFlag(afterSource.rest, DIMS_C_FLAG)
   const text = afterDims.rest[0]
   if (!text) return { error: `remember needs text. ${MEMORY_USAGE}` }
   const tags = afterTags.value !== undefined ? parseTags(afterTags.value) : []
   const source = afterSource.value ?? DEFAULT_REMEMBER_SOURCE
-  // --dims: absent → null (neutral salience); present → must be valid JSON, else
-  // a HARD error (loud, not a silently-stored corrupt signature).
+  // --dims-c: absent → null (no producer; the row still gets its mechanical
+  // vector); present → must be valid JSON, else a HARD error (loud, not a
+  // silently-stored corrupt signature).
   let dims: string | null = null
   if (afterDims.value !== undefined) {
     try {
       JSON.parse(afterDims.value)
     } catch {
-      return { error: `--dims must be valid JSON (got ${JSON.stringify(afterDims.value)})` }
+      return { error: `${DIMS_C_FLAG} must be valid JSON (got ${JSON.stringify(afterDims.value)})` }
     }
     dims = afterDims.value
   }
@@ -200,6 +317,39 @@ export function parseRecentArgs(argv: ReadonlyArray<string>): ParseResult<Recent
   return { verb: "recent", n: n.n }
 }
 
+/** Parse `pending` argv (must include the leading verb). Applies the n default. */
+export function parsePendingArgs(argv: ReadonlyArray<string>): ParseResult<PendingParsed> {
+  const afterN = takeFlag([...argv.slice(1)], "-n")
+  const n = parseIntFlag(afterN.value, "-n", DEFAULT_PENDING_N)
+  if ("error" in n) return n
+  return { verb: "pending", n: n.n }
+}
+
+/**
+ * Parse `adjudicate <id> <json>` (must include the leading verb). Both positional
+ * arguments are REQUIRED and both are validated hard: the id must be a positive
+ * integer because it targets a real `UPDATE`, and the vector must be valid JSON
+ * for the same reason `--dims-c` is — an invalid signature must never reach the
+ * store, and it must certainly never OVERWRITE a good one.
+ */
+export function parseAdjudicateArgs(argv: ReadonlyArray<string>): ParseResult<AdjudicateParsed> {
+  const rawId = argv[1]
+  const rawDims = argv[2]
+  if (rawId === undefined || rawDims === undefined) {
+    return { error: `adjudicate needs an id and a JSON vector. ${MEMORY_USAGE}` }
+  }
+  const id = Number(rawId)
+  if (!Number.isInteger(id) || id <= 0) {
+    return { error: `adjudicate id must be a positive integer (got "${rawId}")` }
+  }
+  try {
+    JSON.parse(rawDims)
+  } catch {
+    return { error: `adjudicate vector must be valid JSON (got ${JSON.stringify(rawDims)})` }
+  }
+  return { verb: "adjudicate", id, dims: rawDims }
+}
+
 /**
  * Dispatch a full CLI argv to its typed command. The container entrypoint calls
  * this; unknown/empty verbs and malformed value flags surface `{ error }`.
@@ -218,6 +368,10 @@ export function parseCommand(argv: ReadonlyArray<string>): ParseResult<ParsedCom
       return { verb: "mark-set", value: argv[1] ?? "" }
     case "promote":
       return { verb: "promote" }
+    case "pending":
+      return parsePendingArgs(argv)
+    case "adjudicate":
+      return parseAdjudicateArgs(argv)
     default:
       return { error: `unknown verb "${argv[0] ?? ""}". ${MEMORY_USAGE}` }
   }

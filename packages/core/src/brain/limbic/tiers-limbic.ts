@@ -9,11 +9,12 @@ import { getCadenceGuidance } from "#brain/limbic/hypothalamus/cadence.js"
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
 import { TEMPLATE_DRIVES, parseDriveNames } from "#brain/limbic/hypothalamus/drives.js"
 import { appraise, applyGroundTruthMetrics, extractDomainMetrics, guardAppraisal } from "#brain/stem/state.js"
+import { sanitizeSalienceVector } from "../../core/salience.js"
 import type { ObserveResult, OrientResult, WaitState } from "../../skills/types.js"
 import { parseOr, parseJsonSalvaging, isPlainObject } from "#brain/stem/parse.js"
 import { logToConsole, type CharacterLog } from "../../logging/log-writer.js"
 import type { EpisodeAttribution } from "../../logging/episodes.js"
-import { callTier, emitTier, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
+import { callTier, emitTier, renderAxisBlock, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 
 const SKILLS_DIR = path.resolve(import.meta.dirname, "prompts")
 const skills = {
@@ -48,6 +49,9 @@ export function runHindbrain(
       : "None — not currently waiting.",
     palette: config.palette ?? TEMPLATE_PALETTE,
     drives,
+    // The salience axes this event is scored across (design §3, stage C). One
+    // formatter for all four producing tiers — see renderAxisBlock.
+    axes: renderAxisBlock(config.axes),
   })
   const knownDrives = parseDriveNames(drives)
   return callTier(config, "hindbrain", "observe", prompt).pipe(
@@ -61,6 +65,7 @@ export function runHindbrain(
           reason: "parse failure — defaulting to accumulate",
         }),
         knownDrives,
+        config.axes,
       )
       // Post-model mechanical guards (Task 1): the 2B can't be prompt-guarded
       // against fabricating a threat from a control-plane frame or inventing
@@ -138,6 +143,9 @@ export function runForebrain(
     emotionalWeight,
     recalledMemories,
     workingMemory,
+    // The salience axes this assessment is scored across (design §3, stage C).
+    // Same formatter every producing tier uses — see renderAxisBlock.
+    axes: renderAxisBlock(config.axes),
   })
   const fallback = orientFallback(emotionalWeight)
   return callTier(config, "forebrain", "orient", prompt).pipe(
@@ -159,10 +167,14 @@ export function runForebrain(
         // can never reach the decider. Judgment fields (headline/sections/confidence)
         // are untouched; a no-metrics snapshot is a no-op. Units are made unambiguous
         // here too (N2 — fuel/hull rendered as percent, not a bare 0–1 float).
-        const grounded = applyGroundTruthMetrics(
-          { ...merged, sections },
-          extractDomainMetrics(domainState),
-        )
+        // The C vector goes through the same mechanical clamp observe's does:
+        // unknown axes dropped, non-finite dropped, unipolar floored at 0,
+        // bipolar sign preserved. With no vocabulary the field is left off
+        // entirely rather than storing unvalidated keys.
+        const withSalience = config.axes
+          ? { ...merged, sections, salience: sanitizeSalienceVector(merged.salience, config.axes) }
+          : { ...merged, sections }
+        const grounded = applyGroundTruthMetrics(withSalience, extractDomainMetrics(domainState))
         // When the raw output was truncated at the token cap, parseJsonSalvaging
         // recovered it by dropping the incomplete trailing field. Stamp a metrics
         // marker (visible in the emitted tier record / synthesis) so downstream

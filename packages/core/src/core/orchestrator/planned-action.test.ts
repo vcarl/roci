@@ -13,7 +13,9 @@ vi.mock("../../brain/stem/transport/process-runner.js", () => ({
 }))
 
 import { runReflection, runBreak } from "./planned-action.js"
-import { LongtermStore, diaryMark, type DiaryMark } from "#brain/limbic/hippocampus/memory/longterm-store.js"
+import { LongtermStore, diaryMark, type DiaryMark, type PendingMemory } from "#brain/limbic/hippocampus/memory/longterm-store.js"
+import { ModelClient } from "../../model/client.js"
+import { recordingService } from "../../testing/model-test-layers.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 import { OAuthToken } from "../../services/OAuthToken.js"
@@ -61,8 +63,17 @@ const bulk = (tag: string, repeats = 700) => `${tag}-line\n`.repeat(repeats)
 // only when SYNTHESIS.md is absent/blank) SKIPS its turn in the pre-existing
 // reflection tests — keeping their model-turn call counts intact. Tests that
 // exercise the bootstrap pass `synthesis: ""` explicitly.
-function makeFs(initial: { diary: string; secrets: string; synthesis?: string }) {
-  const state = { synthesis: "SEEDED-SELF-MODEL", ...initial }
+function makeFs(initial: {
+  diary: string
+  secrets: string
+  synthesis?: string
+  // PALETTE.md / DRIVES.md bodies. Default EMPTY, which derives an empty axis
+  // vocabulary and so makes the salience sweep a no-op in every pre-existing
+  // test; the sweep's own tests pass real bodies.
+  palette?: string
+  drives?: string
+}) {
+  const state = { synthesis: "SEEDED-SELF-MODEL", palette: "", drives: "", ...initial }
   const diaryWrites: string[] = []
   const secretsWrites: string[] = []
   const synthesisWrites: string[] = []
@@ -92,8 +103,8 @@ function makeFs(initial: { diary: string; secrets: string; synthesis?: string })
       readCredentials: () => Effect.succeed({ username: "", password: "" }),
       readBackground: () => Effect.succeed("BACKGROUND"),
       readValues: () => Effect.succeed("VALUES"),
-      readPalette: () => Effect.succeed(""),
-      readDrives: () => Effect.succeed(""),
+      readPalette: () => Effect.succeed(state.palette),
+      readDrives: () => Effect.succeed(state.drives),
       readSalience: () => Effect.succeed(""),
       characterExists: () => Effect.succeed(true),
       listSkills: () => Effect.succeed([]),
@@ -116,8 +127,9 @@ function makeFs(initial: { diary: string; secrets: string; synthesis?: string })
  * high-water mark in memory (readMark/writeMark), so a real two-cycle churn test
  * exercises the actual dedup. Can be made to fail on promote.
  */
-function makeStore(opts: { failPromote?: boolean } = {}) {
+function makeStore(opts: { failPromote?: boolean; pendingRows?: ReadonlyArray<PendingMemory> } = {}) {
   const promotedCalls: string[][] = []
+  const adjudicated: Array<{ id: number; dims: Record<string, number> }> = []
   let mark: DiaryMark | null = null
   const layer = Layer.succeed(
     LongtermStore,
@@ -133,9 +145,14 @@ function makeStore(opts: { failPromote?: boolean } = {}) {
             }),
       remember: () => Effect.void,
       recall: () => Effect.succeed([]),
+      pending: () => Effect.succeed(opts.pendingRows ?? []),
+      adjudicate: (_id, _char, id, dims) =>
+        Effect.sync(() => {
+          adjudicated.push({ id, dims })
+        }),
     }),
   )
-  return { layer, promotedCalls, getMark: () => mark }
+  return { layer, promotedCalls, adjudicated, getMark: () => mark }
 }
 
 const fakeLog = Layer.succeed(CharacterLog, CharacterLog.of({ emit: () => Effect.void }))
@@ -765,5 +782,113 @@ describe("runReflection — macro growth stimulation (Stage 5)", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe("runReflection — the B salience adjudicator sweep (wiring)", () => {
+  // A PALETTE.md/DRIVES.md pair that derives a real axis vocabulary. Without one
+  // the sweep correctly no-ops, so these bodies are what make the stage observable.
+  const DRIVES = "- safety — your physical integrity\n- voyage — progress toward your destination"
+  const PALETTE = "😫 😮‍💨 😐 🤩 🚀 # burdened → exhilarated"
+
+  const ROW: PendingMemory = {
+    id: 42,
+    text: "Hull scraped on the debris ring; nothing lost.",
+    dimsA: { safety: 0.31 },
+    dimsC: { safety: 0.8 },
+  }
+
+  /** A ModelClient that records prompts and answers with a fixed adjudicated vector. */
+  function capturingClient(reply: string) {
+    const prompts: string[] = []
+    const layer = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h, messages) => {
+          prompts.push(String(messages[0]?.content ?? ""))
+          return Effect.succeed({ text: reply, raw: {} })
+        },
+      }),
+    )
+    return { layer, prompts }
+  }
+
+  it("adjudicates the base-stage rows, deriving the axes from the character's artifacts", async () => {
+    // Product intent: reflection is the ONLY stage that reaches pathway 6 — the
+    // agent's own `memory remember`, a write the host never observes. If this
+    // stage is dropped from runReflection (or the config it needs stops being
+    // built), those rows keep an unadjudicated base forever and nothing else in
+    // the system notices. This test fails if either production line goes away.
+    const fs = makeFs({ diary: lines(3, "tiny"), secrets: lines(4, "sec"), palette: PALETTE, drives: DRIVES })
+    const store = makeStore({ pendingRows: [ROW] })
+    const client = capturingClient('{"safety":0.9,"burdened-exhilarated":-0.5}')
+    runTurnMock.mockImplementation(() =>
+      Effect.succeed({ output: lines(2, "t"), timedOut: false, durationMs: 1 }),
+    )
+
+    await run(
+      runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            fs.layer,
+            store.layer,
+            fakeLog,
+            NodeFileSystem.layer,
+            StubCommandExecutor,
+            StubOAuthToken,
+            client.layer,
+            recordingService([]),
+          ),
+        ),
+      ) as Effect.Effect<unknown, unknown, never>,
+    )
+
+    expect(store.adjudicated).toEqual([
+      { id: 42, dims: { safety: 0.9, "burdened-exhilarated": -0.5 } },
+    ])
+    // The axis vocabulary reached the model, and both candidate vectors did too.
+    expect(client.prompts.length).toBe(1)
+    expect(client.prompts[0]).toContain("burdened-exhilarated")
+    expect(client.prompts[0]).toContain(JSON.stringify(ROW.dimsA))
+    expect(client.prompts[0]).toContain(JSON.stringify(ROW.dimsC))
+  })
+
+  it("emits the adjudicate reflection stage with its counts", async () => {
+    const fs = makeFs({ diary: lines(3, "tiny"), secrets: lines(4, "sec"), palette: PALETTE, drives: DRIVES })
+    const store = makeStore({ pendingRows: [ROW] })
+    const client = capturingClient('{"safety":0.9}')
+    const events: Array<Record<string, unknown>> = []
+    const recording = Layer.succeed(
+      CharacterLog,
+      CharacterLog.of({
+        emit: (_c, e) => Effect.sync(() => { events.push(e as unknown as Record<string, unknown>) }),
+      }),
+    )
+    runTurnMock.mockImplementation(() =>
+      Effect.succeed({ output: lines(2, "t"), timedOut: false, durationMs: 1 }),
+    )
+
+    await run(
+      runReflection(char, "c1", DEFAULT_MODEL_CONFIG).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            fs.layer,
+            store.layer,
+            recording,
+            NodeFileSystem.layer,
+            StubCommandExecutor,
+            StubOAuthToken,
+            client.layer,
+            recordingService([]),
+          ),
+        ),
+      ) as Effect.Effect<unknown, unknown, never>,
+    )
+
+    const stages = events
+      .map((e) => e.behavior as { type?: string; stage?: string; counts?: Record<string, number> } | undefined)
+      .filter((b) => b?.type === "reflection" && b.stage === "adjudicate")
+    expect(stages.length).toBe(1)
+    expect(stages[0]?.counts).toEqual({ adjudicated: 1, skipped: 0 })
   })
 })

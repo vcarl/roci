@@ -18,6 +18,8 @@ import {
   encodeMarkGetArgs,
   encodeMarkSetArgs,
   encodePromoteArgs,
+  encodePendingArgs,
+  encodeAdjudicateArgs,
   type RememberEntry,
 } from "@roci/player-tools/command-codec"
 import { Docker } from "../../../../services/Docker.js"
@@ -225,7 +227,7 @@ describe("LongtermStore.remember / recall", () => {
     const joined = captured.flat().join(" ")
     // The dims JSON is a single shQuoted token (the codec owns the flag order).
     expect(joined).toContain(shQuote('{"safety":0.8}'))
-    expect(joined).toContain(shQuote("--dims"))
+    expect(joined).toContain(shQuote("--dims-c"))
   })
 
   it("remember omits --dims entirely when dims is empty or absent", async () => {
@@ -254,7 +256,7 @@ describe("command byte-compat — codec+shQuote is shell-equivalent to the legac
   const legacyRemember = (e: RememberEntry): string => {
     const tagsArg = e.tags.length > 0 ? ` --tags ${shQuote(e.tags.join(","))}` : ""
     const dimsArg =
-      e.dims && Object.keys(e.dims).length > 0 ? ` --dims ${shQuote(JSON.stringify(e.dims))}` : ""
+      e.dims && Object.keys(e.dims).length > 0 ? ` --dims-c ${shQuote(JSON.stringify(e.dims))}` : ""
     return `remember ${shQuote(e.text)}${tagsArg} --source ${shQuote(e.source)}${dimsArg}`
   }
   const legacySearch = (query: string, k: number, tags?: string[]): string => {
@@ -296,6 +298,117 @@ describe("command byte-compat — codec+shQuote is shell-equivalent to the legac
     const json = JSON.stringify({ len: 42, hash: "abc" })
     expect(bashSplit(buildMemoryCommand(encodeMarkSetArgs(json)))).toEqual(
       bashSplit(`mark-set ${shQuote(json)}`),
+    )
+  })
+})
+
+/**
+ * A recording fake Docker: every `exec` call is captured (as its argv array) on
+ * `.calls`, and every call returns the same canned stdout. Shared by the
+ * pending/adjudicate tests below so each test only states the stdout it cares
+ * about, not a fresh Docker-mock shape.
+ */
+function recordingDocker(opts: { stdout?: string } = {}): {
+  calls: string[][]
+  exec: (containerId: string, args: ReadonlyArray<string>) => Effect.Effect<string, never>
+} {
+  const calls: string[][] = []
+  return {
+    calls,
+    exec: (_containerId, args) =>
+      Effect.sync(() => {
+        calls.push([...args])
+        return opts.stdout ?? ""
+      }),
+  }
+}
+
+/** A recording fake Docker whose `exec` always fails with `err`. */
+function failingDocker(err: Error): {
+  calls: string[][]
+  exec: (containerId: string, args: ReadonlyArray<string>) => Effect.Effect<never, Error>
+} {
+  const calls: string[][] = []
+  return {
+    calls,
+    exec: (_containerId, args) =>
+      Effect.suspend(() => {
+        calls.push([...args])
+        return Effect.fail(err)
+      }),
+  }
+}
+
+/** Run `f` against `LongtermStoreLive` wired to a recording/failing fake Docker. */
+function runWith<A>(
+  fakeDocker: { exec: (containerId: string, args: ReadonlyArray<string>) => Effect.Effect<string, unknown> },
+  f: (store: typeof LongtermStore.Service) => Effect.Effect<A, unknown, LongtermStore>,
+): Promise<A> {
+  const FakeDockerLayer = Layer.succeed(Docker, fakeDocker as unknown as typeof Docker.Service)
+  return Effect.runPromise(
+    Effect.flatMap(LongtermStore, f).pipe(
+      Effect.provide(LongtermStoreLive.pipe(Layer.provide(FakeDockerLayer))),
+    ) as Effect.Effect<A, unknown, never>,
+  )
+}
+
+describe("LongtermStore.pending / .adjudicate", () => {
+  it("pending shells the codec's argv inside the same env+cd prefix as every other verb", async () => {
+    const exec = recordingDocker({
+      stdout: '{"id":3,"text":"hull breached","dims_a":{"safety":1},"dims_c":{"safety":0.4}}',
+    })
+    const rows = await runWith(exec, (store) => store.pending("cid", char, 5))
+    const joined = exec.calls[0].join(" ")
+    expect(joined).toContain(cliFrag(encodePendingArgs(5)))
+    expect(joined).toContain("export MEMORY_EMBED_URL=")
+    expect(rows).toEqual([
+      { id: 3, text: "hull breached", dimsA: { safety: 1 }, dimsC: { safety: 0.4 } },
+    ])
+  })
+
+  it("pending preserves a NULL producer vector as null, not {}", async () => {
+    const exec = recordingDocker({
+      stdout: '{"id":9,"text":"agent note","dims_a":{"safety":0.2},"dims_c":null}',
+    })
+    const rows = await runWith(exec, (store) => store.pending("cid", char))
+    expect(rows[0].dimsC).toBeNull()
+    expect(rows[0].dimsA).toEqual({ safety: 0.2 })
+  })
+
+  it("pending returns [] on empty output and drops a torn line instead of throwing", async () => {
+    const empty = recordingDocker({ stdout: "" })
+    expect(await runWith(empty, (store) => store.pending("cid", char))).toEqual([])
+    const torn = recordingDocker({ stdout: '{"id":1,"text":"ok","dims_a":{},"dims_c":null}\n{not json' })
+    const rows = await runWith(torn, (store) => store.pending("cid", char))
+    expect(rows).toHaveLength(1)
+  })
+
+  it("pending defaults its cap through the codec rather than hardcoding a number", async () => {
+    const exec = recordingDocker({ stdout: "" })
+    await runWith(exec, (store) => store.pending("cid", char))
+    expect(exec.calls[0].join(" ")).toContain(cliFrag(encodePendingArgs()))
+  })
+
+  it("adjudicate shells the codec's argv and returns void", async () => {
+    const exec = recordingDocker({ stdout: "" })
+    await runWith(exec, (store) => store.adjudicate("cid", char, 3, { safety: 0.9 }))
+    expect(exec.calls[0].join(" ")).toContain(cliFrag(encodeAdjudicateArgs(3, { safety: 0.9 })))
+  })
+
+  it("a signed bipolar component survives the shell quoting intact", async () => {
+    const exec = recordingDocker({ stdout: "" })
+    await runWith(exec, (store) =>
+      store.adjudicate("cid", char, 3, { "burdened-exhilarated": -0.7 }),
+    )
+    expect(exec.calls[0].join(" ")).toContain(
+      cliFrag(encodeAdjudicateArgs(3, { "burdened-exhilarated": -0.7 })),
+    )
+  })
+
+  it("a docker failure surfaces as a typed Error, never a defect", async () => {
+    const failing = failingDocker(new Error("exec boom"))
+    await expect(runWith(failing, (store) => store.adjudicate("cid", char, 3, {}))).rejects.toThrow(
+      /exec boom/,
     )
   })
 })

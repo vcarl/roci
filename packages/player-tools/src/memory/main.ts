@@ -9,6 +9,7 @@
 // comes from the tested mirror modules — so the shipped code IS the tested code.
 import { Database } from "bun:sqlite"
 import { readFileSync } from "node:fs"
+import * as path from "node:path"
 import { buildSchemaSql } from "./memory-sql.js"
 import { MIGRATION_COLUMNS } from "./memory-provenance.js"
 import { embed } from "./memory-embed.js"
@@ -56,6 +57,30 @@ async function main(): Promise<number> {
     db: db as unknown as MemoryDb,
     embed: (text: string) => embed(text, cfg.embedUrl),
     nowIso: () => new Date().toISOString(),
+    // PALETTE.md and DRIVES.md sit beside the db: MEMORY_DB_PATH defaults to
+    // `me/longterm.db` relative to the container cwd, and `longterm-store` shells
+    // `cd '<char root>' && memory …`, so `me/` holds all three. Resolving from
+    // dirname(dbPath) rather than a hardcoded `me/` keeps an explicit
+    // MEMORY_DB_PATH override (the byte-diff gate uses one) coherent.
+    axes: {
+      readAxisArtifacts: () => {
+        const dir = path.dirname(cfg.dbPath)
+        const read = (name: string): string | null => {
+          try {
+            return readFileSync(path.join(dir, name), "utf8")
+          } catch {
+            return null
+          }
+        }
+        const palette = read("PALETTE.md")
+        const drives = read("DRIVES.md")
+        // Neither present → the caller warns and A is inert. One present → the
+        // other falls back to its template inside resolveAxisSpecs, exactly as
+        // the host's CharacterFs does.
+        if (palette === null && drives === null) return null
+        return { palette: palette ?? "", drives: drives ?? "" }
+      },
+    },
     // fd 0 = stdin; readFileSync(0) works under both bun and node.
     readStdin: async () => {
       try {

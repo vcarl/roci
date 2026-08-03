@@ -63,11 +63,30 @@ Be pragmatic. If reasonable progress was made toward the goal, lean toward `succ
    - `wait` — the step produced something that needs an external response (opened a PR, triggered CI, asked a question). Specify what you're waiting for and how you'll know it resolved.
    - `terminate` — the plan is complete (this was the last step and it succeeded), or no further progress is possible
 
+## Salience axes (where this outcome sits, as a JSON object)
+
+Score the outcome you just judged against the axes below that genuinely bear on
+it — most outcomes only truly bear on one or two, so leaving the rest out
+entirely (rather than writing them at `0`) is the common, correct answer. Two
+kinds of axis, two ranges:
+
+{{axes}}
+
+This is a reading, not a justification — it says what KIND of outcome this was
+for you. If the list above says `(none)`, omit the `salience` field entirely.
+
+Worked example, shown ONLY to illustrate the shape — score your own axes for
+THIS outcome, don't reuse these names unless they truly apply: an outcome
+where a tense exchange unexpectedly restored goodwill with a wary faction
+might score `"salience": {"trust-suspicion": 0.6}` — one axis that actually
+bears on that outcome, nothing padded in beyond it.
+
 Respond with ONLY this JSON:
 ```json
 {
   "judgment": "succeeded | partially_succeeded | failed",
   "reasoning": "<brief explanation, under 50 words>",
+  "salience": {"<axis-name>": 0.0},
   "transition": {
     "transition": "next_step | replan | wait | terminate",
     "reason": "<if replan: why replanning is needed>",

@@ -2,7 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { describe, it, expect } from "vitest"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
 import { CharacterFs, type CharacterConfig } from "../../../../services/CharacterFs.js"
-import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
+import type { OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
 import { RERANK_OVERFETCH } from "./memory-rank.js"
 import { TEMPLATE_SALIENCE } from "../../../../core/salience.js"
 import {
@@ -37,6 +37,8 @@ function fakeStore(opts: { hits?: MemoryHit[]; fail?: boolean } = {}) {
               if (o?.k !== undefined) recalledKs.push(o.k)
               return opts.hits ?? []
             }),
+      pending: () => Effect.succeed([]),
+      adjudicate: () => Effect.void,
     }),
   )
   return { layer, remembered, recalledKs }
@@ -61,20 +63,44 @@ const run = <A>(store: ReturnType<typeof fakeStore>, program: Effect.Effect<A, n
   )
 
 describe("pure capture extractors", () => {
-  it("observeMemories captures the reason with disposition+drive tags AND a {drive: weight/5} dims signature", () => {
-    const discard = { disposition: "discard", emotionalWeight: "😐", drive: "curiosity", weight: 0, reason: "noise" } as ObserveResult
-    const keep = { disposition: "escalate", emotionalWeight: "😨", drive: "safety", weight: 4, reason: "hull breach imminent" } as ObserveResult
-    expect(observeMemories(discard)).toEqual([])
+  it("observeMemories carries the observe tier's OWN axis vector as the producer (C) dims", () => {
+    const keep = {
+      disposition: "accumulate" as const,
+      emotionalWeight: "😟",
+      drive: "safety",
+      weight: 4,
+      reason: "hull scraped",
+      salience: { safety: 0.8, "burdened-exhilarated": -0.5 },
+    }
     expect(observeMemories(keep)).toEqual([
-      { source: "observe", text: "hull breach imminent", tags: ["escalate", "safety"], dims: { safety: 0.8 } },
+      {
+        source: "observe",
+        text: "hull scraped",
+        tags: ["accumulate", "safety"],
+        dims: { safety: 0.8, "burdened-exhilarated": -0.5 },
+      },
     ])
   })
 
-  it("observeMemories carries empty dims when the event bears on no drive", () => {
-    const keep = { disposition: "accumulate", emotionalWeight: "😐", drive: null, weight: 3, reason: "a ship passed by" } as ObserveResult
-    expect(observeMemories(keep)).toEqual([
-      { source: "observe", text: "a ship passed by", tags: ["accumulate"], dims: {} },
-    ])
+  it("observeMemories no longer synthesizes a one-hot from drive+weight", () => {
+    const keep = {
+      disposition: "accumulate" as const,
+      emotionalWeight: "😟",
+      drive: "safety",
+      weight: 4,
+      reason: "hull scraped",
+    }
+    // The tags still carry the fired drive (escalation-adjacent, untouched);
+    // dims is now the model's vector, absent here — NOT { safety: 0.8 }.
+    expect(observeMemories(keep)[0].tags).toEqual(["accumulate", "safety"])
+    expect(observeMemories(keep)[0].dims).toEqual({})
+  })
+
+  it("observeMemories still drops a discarded event entirely", () => {
+    const discard = {
+      disposition: "discard" as const, emotionalWeight: "😐", drive: null, weight: 0, reason: "repeat",
+    }
+    expect(observeMemories(discard)).toEqual([])
   })
 
   it("orientMemories captures each section and whatChanged", () => {
@@ -83,8 +109,8 @@ describe("pure capture extractors", () => {
       sections: [{ id: "1", heading: "Threats", body: "raider nearby" }],
     } as OrientResult
     expect(orientMemories(orient)).toEqual([
-      { source: "orient", text: "Threats: raider nearby", tags: ["high", "threats"] },
-      { source: "orient", text: "a new ship arrived", tags: ["high", "what-changed"] },
+      { source: "orient", text: "Threats: raider nearby", tags: ["high", "threats"], dims: {} },
+      { source: "orient", text: "a new ship arrived", tags: ["high", "what-changed"], dims: {} },
     ])
   })
 
@@ -94,8 +120,8 @@ describe("pure capture extractors", () => {
       steps: [{ task: "fly", goal: "reach belt" }],
     } as unknown as DecideResult
     expect(decideMemories(plan)).toEqual([
-      { source: "decide", text: "mine the belt", tags: ["plan", "reasoning"] },
-      { source: "decide", text: "fly: reach belt", tags: ["plan", "step"] },
+      { source: "decide", text: "mine the belt", tags: ["plan", "reasoning"], dims: {} },
+      { source: "decide", text: "fly: reach belt", tags: ["plan", "step"], dims: {} },
     ])
     expect(decideMemories({ decision: "continue", reasoning: "x" } as DecideResult)).toEqual([])
   })
@@ -103,15 +129,60 @@ describe("pure capture extractors", () => {
   it("decideMemories handles a plan decision with no steps array without throwing", () => {
     const plan = { decision: "plan", reasoning: "mine the belt" } as unknown as DecideResult
     expect(decideMemories(plan)).toEqual([
-      { source: "decide", text: "mine the belt", tags: ["plan", "reasoning"] },
+      { source: "decide", text: "mine the belt", tags: ["plan", "reasoning"], dims: {} },
     ])
   })
 
   it("evaluateMemories captures judgment + reasoning", () => {
     const ev = { judgment: "failed", reasoning: "docking was rejected", transition: { transition: "replan", reason: "r" } } as EvaluateResult
     expect(evaluateMemories(ev)).toEqual([
-      { source: "evaluate", text: "failed: docking was rejected", tags: ["failed"] },
+      { source: "evaluate", text: "failed: docking was rejected", tags: ["failed"], dims: {} },
     ])
+  })
+})
+
+describe("orientMemories carries the forebrain's axis vector", () => {
+  const orient = {
+    headline: "Fuel is thin",
+    sections: [
+      { id: "s1", heading: "Fuel", body: "Down to 6% and no depot in range." },
+      { id: "s2", heading: "Company", body: "Two CULT pilots idling nearby." },
+    ],
+    whatChanged: "Fuel crossed into the low band.",
+    emotionalState: "😟",
+    confidence: "medium" as const,
+    metrics: {},
+    salience: { sustenance: 0.9, "burdened-exhilarated": -0.6 },
+  }
+
+  it("stamps the SAME vector on every memory the result produces", () => {
+    const writes = orientMemories(orient)
+    expect(writes).toHaveLength(3)
+    for (const w of writes) {
+      expect(w.dims).toEqual({ sustenance: 0.9, "burdened-exhilarated": -0.6 })
+    }
+  })
+
+  it("leaves the section/whatChanged text and tags exactly as before", () => {
+    const writes = orientMemories(orient)
+    expect(writes[0].text).toBe("Fuel: Down to 6% and no depot in range.")
+    expect(writes[0].tags).toEqual(["medium", "fuel"])
+    expect(writes[2].text).toBe("Fuel crossed into the low band.")
+    expect(writes[2].tags).toEqual(["medium", "what-changed"])
+  })
+
+  it("emits {} — not undefined — when the tier produced no vector", () => {
+    const writes = orientMemories({ ...orient, salience: undefined })
+    expect(writes[0].dims).toEqual({})
+  })
+
+  it("still drops a section with an empty body", () => {
+    const writes = orientMemories({
+      ...orient,
+      sections: [{ id: "s1", heading: "Empty", body: "   " }],
+      whatChanged: "",
+    })
+    expect(writes).toEqual([])
   })
 })
 
@@ -151,6 +222,62 @@ describe("formatAge", () => {
     expect(formatAge(5 * 3600_000)).toBe("~5h ago")
     expect(formatAge(3 * 24 * 3600_000)).toBe("~3d ago")
     expect(formatAge(NaN)).toBe("age unknown")
+  })
+})
+
+describe("decideMemories / evaluateMemories carry the conscious tier's axis vector", () => {
+  it("stamps the plan's vector on the reasoning AND every step memory", () => {
+    const writes = decideMemories({
+      decision: "plan",
+      reasoning: "Refuel before the next jump.",
+      steps: [
+        { task: "dock", goal: "reach the depot" },
+        { task: "buy fuel", goal: "top the tank" },
+      ] as never,
+      salience: { sustenance: 0.8, agency: 0.3 },
+    })
+    expect(writes).toHaveLength(3)
+    for (const w of writes) expect(w.dims).toEqual({ sustenance: 0.8, agency: 0.3 })
+    expect(writes[0].tags).toEqual(["plan", "reasoning"])
+    expect(writes[1].tags).toEqual(["plan", "step"])
+  })
+
+  it("emits {} when the decide tier produced no vector", () => {
+    const writes = decideMemories({
+      decision: "plan", reasoning: "r", steps: [] as never,
+    })
+    expect(writes[0].dims).toEqual({})
+  })
+
+  it("still writes nothing for a non-plan decision", () => {
+    expect(decideMemories({ decision: "continue", reasoning: "carry on", salience: { agency: 0.4 } })).toEqual([])
+  })
+
+  it("stamps the evaluate vector on the outcome lesson", () => {
+    expect(
+      evaluateMemories({
+        judgment: "failed",
+        reasoning: "The depot was dry.",
+        transition: { transition: "replan", reason: "no fuel" },
+        salience: { sustenance: 0.9, "burdened-exhilarated": -0.8 },
+      }),
+    ).toEqual([
+      {
+        source: "evaluate",
+        text: "failed: The depot was dry.",
+        tags: ["failed"],
+        dims: { sustenance: 0.9, "burdened-exhilarated": -0.8 },
+      },
+    ])
+  })
+
+  it("evaluate emits {} with no vector, and still drops an empty reasoning", () => {
+    expect(
+      evaluateMemories({ judgment: "succeeded", reasoning: "done", transition: { transition: "next_step" } })[0].dims,
+    ).toEqual({})
+    expect(
+      evaluateMemories({ judgment: "succeeded", reasoning: "  ", transition: { transition: "next_step" } }),
+    ).toEqual([])
   })
 })
 

@@ -367,9 +367,34 @@ export function axisFingerprint(specs: ReadonlyArray<AxisSpec>): string {
  *    bear on safety" is meaningless
  *  - a bipolar palette axis clamps to `[-1, +1]` and KEEPS ITS SIGN; the sign is
  *    the whole point of the palette tier (spec §6)
+ *  - an ALL-ZERO result collapses to `{}` — see below
  *
  * Never throws. A malformed vector degrades to `{}`, which the CLI's ⊕ merge
  * then treats as "no C" — the memory still gets its mechanical A vector.
+ *
+ * ── The all-zero rule (task-12 review, finding 2) ──────────────────────────
+ *
+ * A vector of nothing but zeros is a model saying "I have no reading", not a
+ * measurement that every axis is genuinely neutral. Small models emit it freely:
+ * the first live observe run scored 45 of 55 non-empty vectors as zeros on every
+ * axis, while the events that actually bore on something (a combat frame, a
+ * fuel-low frame) emitted no vector at all.
+ *
+ * Kept, such a vector is NON-EMPTY, so `encodeRememberArgs` ships it as
+ * `--dims-c` and `mergeBaseVector` averages it against the mechanical A vector —
+ * `mean(A, 0) = A/2` on every axis it names. A C reading carrying no information
+ * would then halve the one reading that does. That is exactly the "C must not
+ * cancel A" hazard the drop-a-`null` rule exists to prevent, arriving through a
+ * literal `0` that the per-key checks above cannot distinguish from a deliberate
+ * one — so it is caught here, on the whole vector, where it IS distinguishable.
+ *
+ * Deliberately narrow: only the case where EVERY surviving component is exactly
+ * 0. A mix of zeros and non-zeros ships intact, because there the zeros are
+ * informative — the model scored some axes and explicitly neutral-ed others.
+ *
+ * This lives in the shared C-stage validator, not in any one tier, because all
+ * four producing tiers (observe / orient / decide / evaluate — spec §3) sanitize
+ * through here on their way to storage. One guard, four tiers.
  */
 export function sanitizeSalienceVector(
   raw: unknown,
@@ -387,5 +412,9 @@ export function sanitizeSalienceVector(
     out[spec.name] =
       spec.polarity === "bipolar" ? Math.min(1, Math.max(-1, n)) : Math.min(1, Math.max(0, n))
   }
+  // All-zero → no reading (see the rule above). Checked AFTER clamping, so a
+  // vector that only becomes all-zero by clamping is caught too.
+  const values = Object.values(out)
+  if (values.length > 0 && values.every((v) => v === 0)) return {}
   return out
 }

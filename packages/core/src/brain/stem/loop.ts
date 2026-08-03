@@ -16,10 +16,8 @@ import { makeConsciousSession } from "#brain/cortex/conscious/conscious-session.
 import { consciousModelLabel } from "../../model/conscious-label.js"
 import { ModelClient } from "../../model/client.js"
 import type { ModelError } from "../../model/errors.js"
-import { DEFAULT_CORTEX_MODELS, resolveHandle, type CortexModelConfig } from "../../model/handles.js"
+import { resolveHandle, type CortexModelConfig } from "../../model/handles.js"
 import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "../../core/model-config.js"
-import { TEMPLATE_PALETTE } from "../../core/palette.js"
-import { TEMPLATE_DRIVES } from "#brain/limbic/hypothalamus/drives.js"
 import type { Cadence } from "#brain/limbic/hypothalamus/cadence.js"
 import type { Alert } from "../../core/types.js"
 import type { ObserveResult, OrientResult, DecideResult } from "../../skills/types.js"
@@ -36,6 +34,7 @@ import { runForebrain } from "#brain/limbic/tiers-limbic.js"
 import { makeReflexScheduler } from "#brain/limbic/reflex-scheduler.js"
 import { runConsciousDecide } from "#brain/cortex/conscious/tiers-conscious.js"
 import type { ActivationRunnerConfig } from "./tier-config.js"
+import { buildRunnerConfig } from "./runner-config.js"
 import {
   freshActivationState,
   shouldForceOrient,
@@ -198,19 +197,16 @@ export const runActivation = (config: ActivationConfig) =>
     const orientInterval = config.orientInterval ?? DEFAULT_ORIENT_INTERVAL
     const tickMs = config.tickIntervalMs ?? DEFAULT_TICK_MS
     const workerTimeoutMs = config.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS
-    const palette = yield* charFs
-      .readPalette(config.char)
-      .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_PALETTE)))
-    const drives = yield* charFs
-      .readDrives(config.char)
-      .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_DRIVES)))
-    const runnerConfig: ActivationRunnerConfig = {
+    // Palette, drives, and the salience axis vocabulary derived from them — built
+    // ONCE per run, in the one shared derivation site (`buildRunnerConfig`). It is
+    // shared rather than inline because the adjudicator sweep at the reflection
+    // seam needs the SAME vocabulary the CLI scored A against, and a second
+    // derivation is exactly the drift the axis-vocab module exists to prevent.
+    const runnerConfig: ActivationRunnerConfig = yield* buildRunnerConfig({
       char: config.char,
       cadence,
-      models: config.cortexModels ?? DEFAULT_CORTEX_MODELS,
-      palette,
-      drives,
-    }
+      models: config.cortexModels,
+    })
 
     // Conscious body-model handle + its `-m` label. Resolved once here (no side
     // effects) so both the session owner (below) and provision (later) share it.

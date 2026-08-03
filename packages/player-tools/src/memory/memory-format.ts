@@ -17,6 +17,12 @@ export interface MemoryRow {
   provenance?: string
   /** Raw JSON dims column (`{drive: weight/5}`); null/absent for legacy/non-observe rows. */
   dims?: string | null
+  /** Raw JSON of the MECHANICAL (A) vector — cosine against the axis glosses. */
+  dims_a?: string | null
+  /** Raw JSON of the PRODUCER (C) vector, or null when the pathway has no C. */
+  dims_c?: string | null
+  /** `base` | `adjudicated` | `legacy` — see STAGE_* in memory-sql.ts. */
+  dims_stage?: string | null
   /** comma-joined tags, or null/empty when none. */
   tags: string | null
   text: string
@@ -55,12 +61,42 @@ export function formatResults(rows: ReadonlyArray<MemoryRow>): string {
         source: r.source,
         provenance: r.provenance,
         dims: r.dims ? JSON.parse(r.dims) : null,
+        // The stage marker rides the recall line so "the adjudicator never ran"
+        // is answerable from the HOST too, not only by opening the db (§3).
+        // `dims_a`/`dims_c` deliberately do NOT ride along: recall ranks with the
+        // current-best vector, and shipping B's inputs on every hit would be
+        // dead weight on the hottest path in the system.
+        stage: r.dims_stage ?? null,
         tags: splitTags(r.tags),
         text: r.text,
       }
       if (r.distance !== undefined) obj.score = scoreFromDistance(r.distance)
       return JSON.stringify(obj)
     })
+    .join("\n")
+}
+
+/**
+ * Render the adjudicator's work queue as NDJSON — one row per line, no trailing
+ * newline. Deliberately a DIFFERENT shape from `formatResults`: B needs the
+ * memory text and its two producer vectors and nothing else, and `formatResults`
+ * carries neither `dims_a` nor `dims_c`.
+ *
+ * A missing C renders as `null`, never `{}`: pathway 6 (the agent's own `memory
+ * remember`, which the host never observes) genuinely has no producer vector,
+ * and B must be able to tell that apart from a producer that scored every axis
+ * at zero.
+ */
+export function formatPending(rows: ReadonlyArray<MemoryRow>): string {
+  return rows
+    .map((r) =>
+      JSON.stringify({
+        id: r.id,
+        text: r.text,
+        dims_a: r.dims_a ? JSON.parse(r.dims_a) : null,
+        dims_c: r.dims_c ? JSON.parse(r.dims_c) : null,
+      }),
+    )
     .join("\n")
 }
 
@@ -79,6 +115,8 @@ export interface ParsedMemoryHit {
   text: string
   score?: number
   dims?: Record<string, number> | null
+  /** `base` | `adjudicated` | `legacy`; absent on a pre-Phase-2 CLI's output. */
+  stage?: string | null
 }
 
 /** Default drop-logger for `parseResults`: warn (no longer fully silent) before dropping a bad line. */

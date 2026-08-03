@@ -34,11 +34,26 @@ export function classify(source: string): Provenance {
  * Idempotent migration columns for dbs created before provenance existed.
  * `ALTER TABLE ADD COLUMN` has no `IF NOT EXISTS`, so the CLI guards each with a
  * `PRAGMA table_info` presence check. The `DEFAULT` backfills legacy rows to the
- * safe-but-not-privileged episodic tier. (provenance + dims.)
+ * safe-but-not-privileged episodic tier. (provenance + dims + the Phase 2
+ * dims_a/dims_c/dims_stage salience columns.)
  */
 export const MIGRATION_COLUMNS: ReadonlyArray<{ name: string; ddl: string }> = [
   { name: "provenance", ddl: "ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'episodic'" },
   // dims is nullable with NO default — legacy rows stay NULL → neutral salience
   // at recall (Phase 3). No backfill: an un-scored old memory has no signature.
   { name: "dims", ddl: "ALTER TABLE memories ADD COLUMN dims TEXT" },
+  // Phase 2 (design 2026-07-31 §3): the two PRODUCERS retained separately beside
+  // the current-best vector, because the adjudicator takes both as inputs and
+  // cannot recover them from their mean. Nullable, no default — an old row has
+  // no A and no C, and pretending otherwise would feed B fabricated inputs.
+  { name: "dims_a", ddl: "ALTER TABLE memories ADD COLUMN dims_a TEXT" },
+  { name: "dims_c", ddl: "ALTER TABLE memories ADD COLUMN dims_c TEXT" },
+  // The stage marker backfills to 'legacy', NOT 'base'. 'base' is the
+  // adjudicator's work queue; backfilling it would enqueue the whole historical
+  // corpus — 565 rows in the last live validation — at ONE model call each, for
+  // a re-score design §8 explicitly does not schedule.
+  {
+    name: "dims_stage",
+    ddl: "ALTER TABLE memories ADD COLUMN dims_stage TEXT NOT NULL DEFAULT 'legacy'",
+  },
 ]

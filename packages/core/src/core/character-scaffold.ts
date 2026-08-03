@@ -43,6 +43,48 @@ const DIARY_TEMPLATE = `# Diary
 const SECRETS_TEMPLATE = `# Secrets
 `
 
+/**
+ * An identity artifact EXISTS on disk but could not be read (EISDIR, EACCES, a
+ * mid-run delete). Distinct from a malformed one: the file's CONTENT was never
+ * seen, so nothing can be said about its shape.
+ *
+ * It has its own type because the alternative was reusing `MalformedAxisError`,
+ * whose message is fixed text naming a malformed *palette axis line* and telling
+ * the operator to fix `PALETTE.md`. Two of the three reads below are of
+ * `DRIVES.md` and `SALIENCE.md`, so that report named the wrong file as well as
+ * the wrong problem, and `.line` — documented as the offending palette row — held
+ * a filesystem error string. A typed failure that misdirects the operator is the
+ * same failure class as one that never fires: it looks handled.
+ *
+ * It lives HERE, not in `@roci/player-tools/axis-vocab` beside its siblings, on
+ * purpose. That module is the vocabulary shared with the in-container `memory`
+ * CLI and is deliberately import-free and I/O-free; "an artifact on disk could
+ * not be read" is a host-side scaffold concern, produced by exactly one function
+ * (`bodyOnDisk`, below) and by nothing else. Same precedent as
+ * `EmptyGenerationError` in `identity-gen/generate.ts`: the error lives with the
+ * operation that raises it. Nothing inside core imports this module, so there is
+ * no cycle to create.
+ */
+export class ArtifactUnreadableError extends Error {
+  readonly _tag = "ArtifactUnreadableError"
+  constructor(
+    /** The artifact that could not be read — a resolved path. */
+    readonly artifact: string,
+    /** The underlying fs error, preserved rather than flattened to a string. */
+    readonly cause: unknown,
+  ) {
+    super(
+      `${artifact} exists but could not be read: ${String(cause)}. The file is ` +
+        `present, so the salience axis vocabulary cannot be derived from it and ` +
+        `must not be derived from the fallback instead — that would key this ` +
+        `character's SALIENCE.md to an artifact nobody can read. Fix the file's ` +
+        `permissions/type (a directory where a file should be is the usual cause) ` +
+        `and re-run.`,
+    )
+    this.name = "ArtifactUnreadableError"
+  }
+}
+
 /** Operator's decision on a generated artifact during the interactive review. */
 export type ReviewDecision =
   | { action: "accept"; content: string }
@@ -112,7 +154,8 @@ export const scaffoldCharacter = (opts: {
   | EmptyGenerationError
   | AxisCollisionError
   | MalformedAxisError
-  | UnknownAxisError,
+  | UnknownAxisError
+  | ArtifactUnreadableError,
   ModelClient | ModelService
 > =>
   Effect.gen(function* () {
@@ -194,13 +237,18 @@ export const scaffoldCharacter = (opts: {
     // unreadable (EISDIR, EACCES, a mid-run delete), and deriving a vocabulary
     // from the fallback in that case would key SALIENCE.md to an artifact nobody
     // can read.
+    //
+    // The thrown type names THIS artifact and carries the underlying fs error
+    // (`ArtifactUnreadableError`). It used to throw `MalformedAxisError`, whose
+    // fixed message accused a malformed PALETTE.md axis line — false for the
+    // DRIVES.md and SALIENCE.md reads, and misdirecting for all three.
     const bodyOnDisk = (name: string, inMemory: string): string => {
       const p = path.resolve(charDir, name)
       if (!existsSync(p)) return inMemory
       try {
         return readFileSync(p, "utf-8")
       } catch (e) {
-        throw new MalformedAxisError(`${p} exists but could not be read: ${String(e)}`)
+        throw new ArtifactUnreadableError(p, e)
       }
     }
 
@@ -217,6 +265,16 @@ export const scaffoldCharacter = (opts: {
     // heading and the comment block, so no header stripping is needed here. The
     // READS are inside this Effect.try too (R3): an unreadable artifact must
     // reach the caller as a typed failure, exactly like a malformed one.
+    //
+    // Only the EXPECTED throws are typed failures. Anything else is a DEFECT and
+    // is re-thrown as one: this `catch` used to end `: new
+    // AxisCollisionError(String(e))`, which reported every unexpected exception as
+    // a duplicate salience axis — `.axis` holding a stringified stack, the message
+    // sending the operator to fix a DRIVES.md that was never the problem, and the
+    // setup command's per-character catch then swallowing it as a known
+    // vocabulary defect. A bug that looks handled is the exact failure class this
+    // subsystem exists to refuse. `Effect.die` keeps the error union honest too —
+    // it never gains an `unknown` member.
     const derived = yield* Effect.try({
       try: () => {
         const effectiveDriveBody = bodyOnDisk("DRIVES.md", driveBody)
@@ -227,11 +285,16 @@ export const scaffoldCharacter = (opts: {
           axes: buildAxisList(effectiveDriveBody, effectivePaletteBody),
         }
       },
-      catch: (e) =>
-        e instanceof AxisCollisionError || e instanceof MalformedAxisError
-          ? e
-          : new AxisCollisionError(String(e)),
-    })
+      catch: (e) => e,
+    }).pipe(
+      Effect.catchAll((e) =>
+        e instanceof AxisCollisionError ||
+        e instanceof MalformedAxisError ||
+        e instanceof ArtifactUnreadableError
+          ? Effect.fail(e)
+          : Effect.die(e),
+      ),
+    )
     const { effectiveDriveBody, effectivePaletteBody, axes } = derived
     // The salience prompt enumerates `salienceAxes`; `palette` and `baseDrives`
     // ride along as context so the model can see the gradient and the drive
@@ -270,10 +333,16 @@ export const scaffoldCharacter = (opts: {
     // character whose on-disk profile disagrees with their on-disk palette:
     // inert, clean, and unnoticed. (The mirror of the bug bodyOnDisk fixed for
     // the derivation inputs — same file, same reasoning, other direction.)
+    // `bodyOnDisk` raises exactly one expected type; everything else is a defect,
+    // for the same reason as the derivation site above.
     const effectiveSalienceBody = yield* Effect.try({
       try: () => bodyOnDisk("SALIENCE.md", salienceBody),
-      catch: (e) => (e instanceof MalformedAxisError ? e : new AxisCollisionError(String(e))),
-    })
+      catch: (e) => e,
+    }).pipe(
+      Effect.catchAll((e) =>
+        e instanceof ArtifactUnreadableError ? Effect.fail(e) : Effect.die(e),
+      ),
+    )
     const unknown = unknownSalienceAxes(parseSalience(effectiveSalienceBody), axes)
     if (unknown.length > 0) return yield* Effect.fail(new UnknownAxisError(unknown, axes))
 

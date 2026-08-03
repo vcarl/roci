@@ -23,8 +23,11 @@ import { logToConsole } from "@roci/core/logging/log-writer.js"
 import { DOMAIN_REGISTRY, loadProjectConfig, resolveConfigs } from "./domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, autoAcceptReview } from "@roci/core/core/character-scaffold.js"
-import { AxisCollisionError, UnknownAxisError } from "@roci/core/core/salience.js"
-import { MalformedAxisError } from "@roci/core/core/palette.js"
+import {
+  isPerCharacterScaffoldError,
+  logScaffoldSkip,
+  logRegistrationSkip,
+} from "./setup/scaffold-errors.js"
 import { runGuidedSetup } from "./setup/guided-setup.js"
 import { validateAndStart } from "./setup/validate-and-start.js"
 import { OAuthTokenLive } from "@roci/core/services/OAuthToken.js"
@@ -535,17 +538,8 @@ const setupCommand = Command.make(
         domainConfig,
         review: autoAcceptReview,
       }).pipe(
-        Effect.catchIf(
-          (e): e is AxisCollisionError | MalformedAxisError | UnknownAxisError =>
-            e instanceof AxisCollisionError ||
-            e instanceof MalformedAxisError ||
-            e instanceof UnknownAxisError,
-          (e) =>
-            logToConsole(
-              "setup",
-              "cli",
-              `Identity generation for ${charName} produced an inconsistent salience vocabulary — skipping this character (others are unaffected).\n  ${e.message}`,
-            ).pipe(Effect.as(null)),
+        Effect.catchIf(isPerCharacterScaffoldError, (e) =>
+          logScaffoldSkip(charName, e).pipe(Effect.as(null)),
         ),
       )
       if (scaffolded === null) continue
@@ -563,7 +557,7 @@ const setupCommand = Command.make(
         for (const msg of msgs) yield* logProcMsg(msg)
         // Check if any errors occurred
         if (msgs.some(m => m.level === "error")) {
-          yield* logToConsole("setup", "cli", `Skipping config.json registration for ${charName} due to errors`)
+          yield* logRegistrationSkip(charName)
           continue
         }
       }

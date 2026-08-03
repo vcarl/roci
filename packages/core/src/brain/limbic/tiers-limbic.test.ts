@@ -11,6 +11,7 @@ import { runHindbrain, runForebrain } from "./tiers-limbic.js"
 import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import type { UnifiedEvent } from "../../logging/events.js"
 import { fixedClient, recordingService, recordingLog, silentLog } from "../../testing/model-test-layers.js"
+import { buildAxisSpecs } from "../../core/salience.js"
 import {
   setEpisodeTick,
   setEpisodeStep,
@@ -481,6 +482,74 @@ describe("memory-index prompt variable (synthesis)", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+// Pathway 2 (design 2026-07-31 §3): orient's producer (C) stage. Unlike
+// runHindbrain's equivalent (appraise, state.ts — directly unit-tested at
+// state.test.ts:1140-1193), runForebrain inlines the render + sanitize steps
+// itself with no pure seam, so nothing else on this branch would catch a
+// dropped `axes: renderAxisBlock(config.axes)` or a dropped
+// `sanitizeSalienceVector` call. These two tests pin exactly those two lines.
+describe("salience axes — producer (C) stage (pathway 2)", () => {
+  const layers = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
+  // Same axis fixture as state.test.ts's "appraise — the C salience vector":
+  // one unipolar drive ("voyage") and one bipolar palette axis
+  // ("burdened-exhilarated"), neither of which appears anywhere else in this
+  // test's (empty) identity/prompt inputs — so their presence in the rendered
+  // prompt is unambiguous evidence the axis block reached it.
+  const axes = buildAxisSpecs(
+    "- safety — your physical integrity\n- voyage — progress",
+    "😫 😮‍💨 😐 🤩 🚀 # burdened → exhilarated",
+  )
+
+  it("renders the axis block into the orient prompt", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "axes-tiers-limbic-"))
+    resetEpisodeContext("ada")
+    try {
+      await Effect.runPromise(
+        Effect.provide(
+          runForebrain(
+            { ...configWithLogs(root), axes },
+            ["evt"],
+            "{}",
+            { background: "", values: "", diary: "", synthesis: "" },
+            "😐",
+          ),
+          layers(
+            '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{}}',
+          ),
+        ),
+      )
+      const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+      const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      expect(rec.prompt).toContain("voyage")
+      expect(rec.prompt).toContain("burdened-exhilarated")
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("sanitizes the model's raw salience vector: unknown axis dropped, out-of-range clamped, null-valued key dropped", async () => {
+    const out = await Effect.runPromise(
+      Effect.provide(
+        runForebrain(
+          { ...config, axes },
+          ["evt"],
+          "{}",
+          { background: "", values: "", diary: "", synthesis: "" },
+          "😐",
+        ),
+        layers(
+          '{"headline":"h","sections":[],"whatChanged":"x","emotionalState":"😐","confidence":"low","metrics":{},' +
+            '"salience":{"safety":1.6,"curiosity":0.9,"voyage":null,"burdened-exhilarated":-0.4}}',
+        ),
+      ),
+    )
+    // safety: 1.6 clamped to 1 (unipolar). curiosity: dropped, not in the
+    // derived vocabulary. voyage: null dropped entirely — a missing reading,
+    // not clamped to 0. burdened-exhilarated: -0.4 kept as-is (bipolar, in range).
+    expect(out.salience).toEqual({ safety: 1, "burdened-exhilarated": -0.4 })
   })
 })
 

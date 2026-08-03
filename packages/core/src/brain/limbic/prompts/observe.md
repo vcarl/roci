@@ -99,6 +99,9 @@ Ask only: is something physically attacking or destroying me RIGHT NOW, where wa
 One concrete clause, ~12 words max. Name the ACTUAL thing THIS event shows, then your call. State plainly what IS there — describe only what happened, never what did NOT happen. Do NOT write the words *attack, threat, hostile, danger, damage, weapons,* or *station* unless the event genuinely IS combat or a genuine new station. Writing "no threat" or "not attacking" is FORBIDDEN — those words must simply never appear.
 
 For an `observation_update`, your reason names only WHICH pilots or clans are nearby, then ends. Write it as `Pilots from <clan names> nearby.` and STOP — end the sentence right after the clan names. Never append "at ...", never write the `poi_id` or any place name (those often contain the word "station", which is forbidden here), never add whether anyone is a threat.
+
+For a `full_state` the reason describes THE FRAME, not the people in it: `Routine snapshot, no alerts, nothing changed.` A snapshot whose only story is who is nearby is a repeat — `discard`, weight 0.
+
 ## Emotional palette (paint your gut reaction as emoji, no words)
 
 {{palette}}
@@ -106,21 +109,35 @@ For an `observation_update`, your reason names only WHICH pilots or clans are ne
 ## Worked examples — copy the SHAPE, write your own reason
 
 event: type: full_state\nSTATUS: fuel 84%, hull 100%, at ...; no alerts\n{...position same as last frame...} (seen 6x recently)
--> {"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"reason":"<one clause: repeat frame, STATUS no alerts, nothing new>"}
+-> {"disposition":"discard","emotionalWeight":"😐","drive":null,"weight":0,"interrupt":false,"salience":{},"reason":"<one clause: repeat frame, STATUS no alerts, nothing new>"}
 event: type: logged_in\n{...your own session/status frame...}
--> {"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":1,"interrupt":false,"reason":"<one clause: reconnected / own status, nothing pressing>"}
+-> {"disposition":"accumulate","emotionalWeight":"😐","drive":null,"weight":1,"interrupt":false,"salience":{},"reason":"<one clause: reconnected / own status, nothing pressing>"}
 event: type: observation_update\n{...nearby_changed: pilots with clan_tag CULT...}
--> {"disposition":"accumulate","emotionalWeight":"🧐","drive":null,"weight":2,"interrupt":false,"reason":"<one clause: which pilots/ships are near, faction tag is only a name>"}
+-> {"disposition":"accumulate","emotionalWeight":"🧐","drive":null,"weight":2,"interrupt":false,"salience":{},"reason":"<one clause: which pilots/ships are near, faction tag is only a name>"}
 event: type: chat\n{...another pilot messages you...}
--> {"disposition":"accumulate","emotionalWeight":"🤩","drive":null,"weight":3,"interrupt":false,"reason":"<one clause: who said what, may reply>"}
+-> {"disposition":"accumulate","emotionalWeight":"🤩","drive":null,"weight":3,"interrupt":false,"salience":{},"reason":"<one clause: who said what, may reply>"}
 event: type: full_state\nSTATUS: fuel 6% (LOW), hull 100%, docked at ...; ALERT: fuel low\n{..."fuel":6,"max_fuel":100...}
--> {"disposition":"accumulate","emotionalWeight":"😟","drive":"sustenance","weight":3,"interrupt":false,"reason":"<one clause: fuel low, name the percent from STATUS>"}
+-> {"disposition":"accumulate","emotionalWeight":"😟","drive":"sustenance","weight":3,"interrupt":false,"salience":{"sustenance":0.6},"reason":"<one clause: fuel low, name the percent from STATUS>"}
 event: type: market\n{...fuel far below its average price...}
--> {"disposition":"accumulate","emotionalWeight":"🙂","drive":"sustenance","weight":3,"interrupt":false,"reason":"<one clause: the good and how good the price is>"}
+-> {"disposition":"accumulate","emotionalWeight":"🙂","drive":"sustenance","weight":3,"interrupt":false,"salience":{"sustenance":0.4},"reason":"<one clause: the good and how good the price is>"}
 event: type: api_error\n{"status":429,...retry...}
--> {"disposition":"escalate","emotionalWeight":"😟😟","drive":"sustenance","weight":4,"interrupt":false,"reason":"<one clause: rate-limited, blocked but nothing attacking>"}
+-> {"disposition":"escalate","emotionalWeight":"😟😟","drive":"sustenance","weight":4,"interrupt":false,"salience":{"sustenance":0.8,"agency":0.6},"reason":"<one clause: rate-limited, blocked but nothing attacking>"}
 event: type: combat\n{"event":"weapons_fire","target":"you","damage":32,"in_combat":true}
--> {"disposition":"escalate","emotionalWeight":"😱","drive":"safety","weight":5,"interrupt":true,"reason":"<one clause: who is firing, taking damage now>"}
+-> {"disposition":"escalate","emotionalWeight":"😱","drive":"safety","weight":5,"interrupt":true,"salience":{"safety":0.9},"reason":"<one clause: who is firing, taking damage now>"}
+
+## Salience axes (the `salience` field only)
+
+This changes nothing you decided above. List ONLY the axes this event truly bears
+on — often none, so `{}` is the common answer. An axis you would score `0` must be
+left OUT, not written as `0`. Palette axes are signed: negative toward the first
+pole named on its line, positive toward the second.
+
+{{axes}}
+
+If the list above says `(none)`, omit the `salience` field entirely.
+
+A `(seen Nx recently)` repeat or an unchanged `full_state` — including one where
+all you could say is who is nearby — stays `discard`, weight 0, drive null, `{}`.
 
 ## The event
 
@@ -134,4 +151,4 @@ If there is an active wait state and this event matches the resolution signal, e
 
 ## Output — respond with ONLY this JSON (note: drive is a bare name or bare null, never the string "null"):
 
-{"disposition":"discard|accumulate|escalate","emotionalWeight":"<emoji>","drive":null,"weight":0,"interrupt":false,"reason":"<concrete clause, ~12 words max>"}
+{"disposition":"discard|accumulate|escalate","emotionalWeight":"<emoji>","drive":null,"weight":0,"interrupt":false,"salience":{},"reason":"<concrete clause, ~12 words max>"}

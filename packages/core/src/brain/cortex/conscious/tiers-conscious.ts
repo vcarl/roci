@@ -10,7 +10,8 @@ import { loadSkillSync } from "../../../skills/loader.js"
 import { sanitizeDecideSkill, renderDomainStateForPrompt } from "#brain/stem/state.js"
 import { parseOr, isPlainObject } from "#brain/stem/parse.js"
 import type { DecideResult, EvaluateResult, EvaluateTransition, OrientResult } from "../../../skills/types.js"
-import { callTier, emitTier, getCadenceGuidance, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
+import { callTier, emitTier, getCadenceGuidance, renderAxisBlock, type ActivationRunnerConfig } from "#brain/stem/tier-config.js"
+import { sanitizeSalienceVector } from "../../../core/salience.js"
 
 const SKILLS_DIR = path.resolve(import.meta.dirname, "prompts")
 const skills = {
@@ -89,13 +90,22 @@ export function runConsciousDecide(
     recalledMemories,
     workingMemory,
     skillIndex,
+    // The salience axes this decision is scored across (design §3, stage C).
+    // Same formatter every producing tier uses — see renderAxisBlock.
+    axes: renderAxisBlock(config.axes),
   })
   return callTier(config, "conscious", "decide", prompt).pipe(
-    Effect.map((text) =>
-      sanitizeDecideSkill(
+    Effect.map((text) => {
+      const parsed = sanitizeDecideSkill(
         parseOr<DecideResult>(text, { decision: "continue", reasoning: "parse failure — defaulting to continue" }),
-      ),
-    ),
+      )
+      // The C vector through the same mechanical clamp every other tier's goes
+      // through. NOTE the parse-miss fallback above carries no `salience`, and
+      // must not: a decide that failed to parse produced no reading, and `{}`
+      // would claim it read neutral on every axis.
+      if (!config.axes) return parsed
+      return { ...parsed, salience: sanitizeSalienceVector((parsed as { salience?: unknown }).salience, config.axes) }
+    }),
     Effect.tap((result) => emitTier(config.char, "decide", prompt, result, undefined, attribution)),
   )
 }
@@ -156,6 +166,9 @@ export function runConsciousEvaluate(
     emotionalState: input.emotionalState,
     remainingSteps: input.remainingSteps,
     recalledMemories: input.recalledMemories ?? "",
+    // The salience axes this outcome is scored across (design §3, stage C).
+    // Same formatter every producing tier uses — see renderAxisBlock.
+    axes: renderAxisBlock(config.axes),
   })
   return callTier(config, "conscious", "evaluate", prompt).pipe(
     Effect.map((text) => {
@@ -167,7 +180,14 @@ export function runConsciousEvaluate(
       // Normalize `transition` at the parse boundary so the loop's
       // `evalResult.transition.transition` reads are always against a valid
       // object — a bare-string or wrong-typed transition is coerced here.
-      return { ...result, transition: normalizeTransition(result.transition) }
+      const normalized = { ...result, transition: normalizeTransition(result.transition) }
+      // The C vector through the same mechanical clamp every other tier's goes
+      // through. Absent vocabulary ⇒ no field, matching the other three tiers.
+      if (!config.axes) return normalized
+      return {
+        ...normalized,
+        salience: sanitizeSalienceVector((result as { salience?: unknown }).salience, config.axes),
+      }
     }),
     Effect.tap((result) => emitTier(config.char, "evaluate", prompt, result)),
   )

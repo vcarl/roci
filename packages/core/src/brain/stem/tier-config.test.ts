@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest"
 import { Effect, Layer } from "effect"
-import { isResponseTruncated, classifyTierOutcome, callTier, type ActivationRunnerConfig } from "./tier-config.js"
+import {
+  isResponseTruncated,
+  classifyTierOutcome,
+  callTier,
+  renderAxisBlock,
+  type ActivationRunnerConfig,
+} from "./tier-config.js"
+import { buildAxisSpecs } from "../../core/salience.js"
 import { DEFAULT_CORTEX_MODELS } from "../../model/handles.js"
 import { fixedClient, recordingService, recordingLog } from "../../testing/model-test-layers.js"
 import type { UnifiedEvent } from "../../logging/events.js"
@@ -73,5 +80,39 @@ describe("callTier — in-flight start event", () => {
       tier: "conscious",
       step: "decide",
     })
+  })
+})
+
+describe("renderAxisBlock", () => {
+  const axes = buildAxisSpecs(
+    "- safety — your physical integrity\n- voyage — progress toward your destination",
+    "😫 😮‍💨 😐 🤩 🚀 # burdened → exhilarated",
+  )
+
+  it("lists every axis with its range, drives before palette axes", () => {
+    const block = renderAxisBlock(axes)
+    const lines = block.trim().split("\n")
+    expect(lines[0]).toContain("safety")
+    expect(lines[1]).toContain("voyage")
+    expect(lines[2]).toContain("burdened-exhilarated")
+  })
+
+  it("states the unipolar range for a drive axis and NO negative pole", () => {
+    const line = renderAxisBlock(axes).split("\n").find((l) => l.includes("safety"))!
+    expect(line).toContain("0.0 to 1.0")
+    expect(line).not.toContain("-1.0")
+  })
+
+  it("states the SIGNED range for a palette axis and names both poles in order", () => {
+    const line = renderAxisBlock(axes).split("\n").find((l) => l.includes("burdened-exhilarated"))!
+    expect(line).toContain("-1.0")
+    expect(line).toContain("+1.0")
+    // first pole negative, second positive — the convention is legible from the line
+    expect(line.indexOf("burdened")).toBeLessThan(line.indexOf("exhilarated"))
+  })
+
+  it("renders (none) for an absent or empty axis list, and never throws", () => {
+    expect(renderAxisBlock(undefined)).toContain("(none)")
+    expect(renderAxisBlock([])).toContain("(none)")
   })
 })

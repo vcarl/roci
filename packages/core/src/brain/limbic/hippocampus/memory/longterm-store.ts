@@ -12,6 +12,8 @@ import {
   encodeMarkGetArgs,
   encodeMarkSetArgs,
   encodePromoteArgs,
+  encodePendingArgs,
+  encodeAdjudicateArgs,
 } from "@roci/player-tools/command-codec"
 import { parseResults } from "@roci/player-tools/memory-format"
 
@@ -86,6 +88,29 @@ export interface MemoryHit {
    * and non-observe writes → neutral salience at recall. Parsed from NDJSON.
    */
   readonly dims?: Record<string, number>
+  /**
+   * Which stage of the scoring pipeline produced `dims` (design 2026-07-31 §3):
+   * `base` (the optimistic ⊕ of A and C, adjudication still owed),
+   * `adjudicated` (B has run and superseded it), or `legacy` (pre-Phase-2 row,
+   * never enqueued for a sweep). Carried through so "the adjudicator never ran"
+   * is answerable from a recall; nothing in Phase 2 ranks on it.
+   */
+  readonly stage?: "base" | "adjudicated" | "legacy"
+}
+
+/**
+ * One row awaiting adjudication — the adjudicator's input (design §3, stage B):
+ * the memory text plus BOTH producer vectors, which B needs because it exists
+ * precisely to reconcile them. `dimsC` is `null`, never `{}`, when the pathway
+ * had no producer at all (the agent's own `memory remember`, and reflection
+ * promotion): "nobody scored this" and "the producer scored every axis at zero"
+ * are different facts and B is told which one it has.
+ */
+export interface PendingMemory {
+  readonly id: number
+  readonly text: string
+  readonly dimsA: Record<string, number>
+  readonly dimsC: Record<string, number> | null
 }
 
 export class LongtermStore extends Context.Tag("LongtermStore")<
@@ -126,6 +151,19 @@ export class LongtermStore extends Context.Tag("LongtermStore")<
       query: string,
       opts?: { readonly k?: number; readonly tags?: ReadonlyArray<string> },
     ) => Effect.Effect<ReadonlyArray<MemoryHit>, Error>
+    /** Rows still carrying the optimistic base vector, oldest first, capped (in-container `memory pending`). */
+    readonly pending: (
+      containerId: string,
+      char: CharacterConfig,
+      n?: number,
+    ) => Effect.Effect<ReadonlyArray<PendingMemory>, Error>
+    /** Write the adjudicator's authoritative vector over one row's base (in-container `memory adjudicate`). */
+    readonly adjudicate: (
+      containerId: string,
+      char: CharacterConfig,
+      id: number,
+      dims: Record<string, number>,
+    ) => Effect.Effect<void, Error>
   }
 >() {}
 
@@ -220,6 +258,25 @@ export const LongtermStoreLive: Layer.Layer<LongtermStore, never, Docker> = Laye
           // line is logged (no longer silent) then dropped, never thrown.
           return parseResults(out) as unknown as ReadonlyArray<MemoryHit>
         }),
+      pending: (containerId, char, n) =>
+        Effect.gen(function* () {
+          const cmd = withEnv(`${cd(char)} && ${cli(encodePendingArgs(n))}`)
+          const out = yield* docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail))
+          // Same NDJSON discipline as recall: a torn line is logged and dropped,
+          // never thrown — one bad row must not cancel a whole sweep.
+          return parseResults(out).map(
+            (r): PendingMemory => ({
+              id: r.id,
+              text: r.text,
+              dimsA: (r as { dims_a?: Record<string, number> }).dims_a ?? {},
+              dimsC: (r as { dims_c?: Record<string, number> | null }).dims_c ?? null,
+            }),
+          )
+        }),
+      adjudicate: (containerId, char, id, dims) => {
+        const cmd = withEnv(`${cd(char)} && ${cli(encodeAdjudicateArgs(id, dims))}`)
+        return docker.exec(containerId, ["bash", "-lc", cmd]).pipe(Effect.mapError(fail), Effect.asVoid)
+      },
     })
   }),
 )

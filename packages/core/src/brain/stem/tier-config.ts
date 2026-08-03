@@ -1,6 +1,7 @@
 import { Cause, Effect } from "effect"
 import { ModelClient } from "../../model/client.js"
 import { resolveHandle, type CortexModelConfig } from "../../model/handles.js"
+import type { AxisSpec } from "../../core/salience.js"
 import type { Cadence } from "#brain/limbic/hypothalamus/cadence.js"
 export { getCadenceGuidance } from "#brain/limbic/hypothalamus/cadence.js"
 export type { Cadence } from "#brain/limbic/hypothalamus/cadence.js"
@@ -32,6 +33,42 @@ export interface ActivationRunnerConfig {
   /** The character's innate drives block (core + domain). Defaults to TEMPLATE_DRIVES.
    *  Threaded into the per-event observe prompt as the appraisal reference frame. */
   drives?: string
+  /**
+   * The character's derived salience axes (design 2026-07-31 §1), in order:
+   * core drives, domain drives, then one bipolar axis per PALETTE.md pole pair.
+   * Every tier that produces a C vector (§3) shows this list to the model and
+   * sanitizes the answer against it.
+   *
+   * ABSENT means the vocabulary could not be derived. That is not an error and
+   * must never be treated as one here: consumers ask for no vector and sanitize
+   * to `{}`, the memory CLI still computes A at insert, and the adjudicator
+   * still supersedes. A tick must never fail over a malformed PALETTE.md.
+   */
+  axes?: ReadonlyArray<AxisSpec>
+}
+
+/**
+ * Render the axis list for a prompt's `{{axes}}` slot. ONE formatter for all
+ * four producing tiers (observe / orient / decide / evaluate): four prompts
+ * describing the same vocabulary in four slightly different ways is how a
+ * cross-tier scoring rubric drifts, and the adjudicator exists precisely because
+ * per-tier rubrics already drift enough.
+ *
+ * Each line carries the axis name EXACTLY as it must be keyed, plus its range —
+ * and for a bipolar palette axis, which pole each end is. The sign convention is
+ * recoverable from the name alone (first pole negative), and the line says so
+ * again anyway, because a model reading `burdened-exhilarated: -0.7` at
+ * generation time has no other place to look.
+ */
+export function renderAxisBlock(axes?: ReadonlyArray<AxisSpec>): string {
+  if (!axes || axes.length === 0) return "(none) — omit the salience field entirely"
+  return axes
+    .map((a) =>
+      a.polarity === "bipolar"
+        ? `- ${a.name}: -1.0 (hard toward "${a.negativeGloss}") through 0.0 (neutral middle) to +1.0 (hard toward "${a.positiveGloss}")`
+        : `- ${a.name}: 0.0 to 1.0 (bears on it hard) — ${a.positiveGloss}`,
+    )
+    .join("\n")
 }
 
 /**
@@ -68,7 +105,10 @@ export function classifyTierOutcome(error: unknown): "error" | "timeout" {
 export const callTier = (
   config: ActivationRunnerConfig,
   tier: "hindbrain" | "forebrain" | "conscious",
-  step: "observe" | "orient" | "decide" | "evaluate" | "diary",
+  // `adjudicate` is the B stage of the salience pipeline (design 2026-07-31 §3).
+  // It is not an OODA step, but it IS a tier call, and routing it through here is
+  // what puts it on the exchange stream alongside every other one.
+  step: "observe" | "orient" | "decide" | "evaluate" | "diary" | "adjudicate",
   prompt: string,
 ) =>
   Effect.gen(function* () {

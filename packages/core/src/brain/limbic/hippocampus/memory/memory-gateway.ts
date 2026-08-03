@@ -10,7 +10,13 @@ export interface MemoryWrite {
   readonly source: string
   readonly text: string
   readonly tags: ReadonlyArray<string>
-  /** Per-memory salience signature `{drive: weight/5}` (observe writes only; empty otherwise). */
+  /**
+   * The PRODUCER (C) vector — the authoring tier's own reading of this memory
+   * across the character's axis namespace (design 2026-07-31 §3). NOT the final
+   * signature: the in-container CLI merges it with the mechanical (A) vector it
+   * computes at insert, and the adjudicator later supersedes the mean. Absent /
+   * empty is legitimate — the row still gets A.
+   */
   readonly dims?: Record<string, number>
 }
 
@@ -21,53 +27,94 @@ const slug = (s: string): string =>
 // ---- Pure capture extractors: what a boundary payload contributes to memory ----
 
 /**
- * Hindbrain observe → memory: the appraisal reason, unless discarded/empty. The
- * discarded observe `weight`/`drive` become the memory's salience signature
- * `dims` (Phase 3 §3): `{ [drive]: weight/5 }`, or `{}` when the event bears on no
- * drive. weight is already clamped to 0–5 upstream by the observe skill.
+ * Hindbrain observe → memory: the appraisal reason, unless discarded/empty.
+ *
+ * `dims` is the observe tier's OWN axis vector (design 2026-07-31 §3, stage C),
+ * emitted in the appraisal call the hindbrain already makes. It replaces the v1
+ * single-fired-drive one-hot `{ [drive]: weight / 5 }`, which could only ever
+ * describe one axis and only on this one pathway. The `drive` tag on the memory
+ * is untouched — that is escalation-adjacent metadata, not a score.
  */
 export function observeMemories(observe: ObserveResult): MemoryWrite[] {
   if (observe.disposition === "discard") return []
   const reason = observe.reason?.trim()
   if (!reason) return []
   const tags = [observe.disposition, ...(observe.drive ? [observe.drive] : [])]
-  const dims = observe.drive ? { [observe.drive]: observe.weight / 5 } : {}
-  return [{ source: "observe", text: clip(reason), tags, dims }]
+  return [{ source: "observe", text: clip(reason), tags, dims: observe.salience ?? {} }]
 }
 
-/** Orient → memory: each section (heading + body) plus whatChanged. */
+/**
+ * Orient → memory: each section (heading + body) plus whatChanged.
+ *
+ * Every write carries the SAME producer (C) vector — the one the forebrain
+ * emitted for this assessment (design 2026-07-31 §3, pathway 2). One reading per
+ * result, not one per fragment: the tier scored the situation, and its sections
+ * are how it wrote that situation up. `{}` rather than `undefined` when the tier
+ * produced nothing, so the codec's omit-empty rule handles it uniformly.
+ */
 export function orientMemories(orient: OrientResult): MemoryWrite[] {
   const out: MemoryWrite[] = []
+  const dims = orient.salience ?? {}
   const sections = Array.isArray(orient.sections) ? orient.sections : []
   for (const s of sections) {
     const body = s.body?.trim()
     if (!body) continue
-    out.push({ source: "orient", text: clip(`${s.heading}: ${body}`), tags: [orient.confidence, slug(s.heading)].filter(Boolean) })
+    out.push({
+      source: "orient",
+      text: clip(`${s.heading}: ${body}`),
+      tags: [orient.confidence, slug(s.heading)].filter(Boolean),
+      dims,
+    })
   }
   const changed = orient.whatChanged?.trim()
-  if (changed) out.push({ source: "orient", text: clip(changed), tags: [orient.confidence, "what-changed"].filter(Boolean) })
+  if (changed) {
+    out.push({
+      source: "orient",
+      text: clip(changed),
+      tags: [orient.confidence, "what-changed"].filter(Boolean),
+      dims,
+    })
+  }
   return out
 }
 
-/** Decide → memory: plan reasoning + each step's intent (plan decisions only). */
+/**
+ * Decide → memory: plan reasoning + each step's intent (plan decisions only).
+ *
+ * Every write carries the SAME producer (C) vector the conscious tier emitted
+ * for this decision (design 2026-07-31 §3, pathway 3). One reading per decision,
+ * not one per step: the tier scored the moment, and the steps are how it chose
+ * to act on it.
+ */
 export function decideMemories(decide: DecideResult): MemoryWrite[] {
   if (decide.decision !== "plan") return []
   const out: MemoryWrite[] = []
+  const dims = decide.salience ?? {}
   const reasoning = decide.reasoning?.trim()
-  if (reasoning) out.push({ source: "decide", text: clip(reasoning), tags: ["plan", "reasoning"] })
+  if (reasoning) out.push({ source: "decide", text: clip(reasoning), tags: ["plan", "reasoning"], dims })
   const steps = Array.isArray(decide.steps) ? decide.steps : []
   for (const step of steps) {
     const t = `${step.task}: ${step.goal}`.trim()
-    if (t) out.push({ source: "decide", text: clip(t), tags: ["plan", "step"] })
+    if (t) out.push({ source: "decide", text: clip(t), tags: ["plan", "step"], dims })
   }
   return out
 }
 
-/** Evaluate → memory: the judgment + reasoning (an outcome lesson). */
+/**
+ * Evaluate → memory: the judgment + reasoning (an outcome lesson), carrying the
+ * producer (C) vector the tier emitted for this outcome (design §3, pathway 4).
+ */
 export function evaluateMemories(evalResult: EvaluateResult): MemoryWrite[] {
   const reasoning = evalResult.reasoning?.trim()
   if (!reasoning) return []
-  return [{ source: "evaluate", text: clip(`${evalResult.judgment}: ${reasoning}`), tags: [evalResult.judgment] }]
+  return [
+    {
+      source: "evaluate",
+      text: clip(`${evalResult.judgment}: ${reasoning}`),
+      tags: [evalResult.judgment],
+      dims: evalResult.salience ?? {},
+    },
+  ]
 }
 
 // ---- Pure recall query builders ----

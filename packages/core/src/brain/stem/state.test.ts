@@ -35,6 +35,7 @@ import {
   CONTROL_PLANE_MAX_WEIGHT,
   UNSUPPORTED_THREAT_WEIGHT,
 } from "./state.js"
+import { buildAxisSpecs } from "../../core/salience.js"
 import type { DecideResult, ObserveResult, OrientResult } from "../../skills/types.js"
 
 const T = DEFAULT_APPRAISAL_THRESHOLDS
@@ -1133,5 +1134,72 @@ describe("scrubVolatileMetrics (Task 2)", () => {
     expect(scrubVolatileMetrics("install CPU Co-Processor at First Step")).toBe(
       "install CPU Co-Processor at First Step",
     )
+  })
+})
+
+describe("appraise — the C salience vector", () => {
+  const axes = buildAxisSpecs(
+    "- safety — your physical integrity\n- voyage — progress",
+    "😫 😮‍💨 😐 🤩 🚀 # burdened → exhilarated",
+  )
+
+  it("keeps a well-formed vector, clamped per polarity", () => {
+    const r = appraise(
+      { disposition: "escalate", weight: 5, drive: "safety", salience: { safety: 1.4, "burdened-exhilarated": -0.6 } },
+      ["safety", "voyage"],
+      axes,
+    )
+    expect(r.salience).toEqual({ safety: 1, "burdened-exhilarated": -0.6 })
+  })
+
+  it("drops an invented axis rather than storing it", () => {
+    const r = appraise({ salience: { curiosity: 0.9, safety: 0.3 } }, ["safety"], axes)
+    expect(r.salience).toEqual({ safety: 0.3 })
+  })
+
+  it("is undefined when no axes are supplied — every existing caller is unaffected", () => {
+    expect(appraise({ salience: { safety: 0.5 } }, ["safety"]).salience).toBeUndefined()
+    expect(appraise({ weight: 3 }).salience).toBeUndefined()
+  })
+
+  it("is {} when the model omitted the field entirely", () => {
+    expect(appraise({ weight: 3 }, ["safety"], axes).salience).toEqual({})
+  })
+
+  it("never throws on junk", () => {
+    expect(appraise({ salience: "lots" }, ["safety"], axes).salience).toEqual({})
+    expect(appraise({ salience: [1, 2] }, ["safety"], axes).salience).toEqual({})
+  })
+
+  it("collapses an all-zero vector to {} so a no-information C never halves A", () => {
+    // The 2B's commonest C output: every axis dutifully scored 0. Kept, it would
+    // ship as --dims-c and mergeBaseVector would average it against the
+    // mechanical vector — A/2 on every axis (task-12 review, finding 2).
+    expect(
+      appraise({ salience: { safety: 0, "burdened-exhilarated": 0 } }, ["safety"], axes).salience,
+    ).toEqual({})
+  })
+
+  it("keeps a mixed vector whose zeros sit beside real readings", () => {
+    expect(
+      appraise({ salience: { safety: 0, "burdened-exhilarated": -0.6 } }, ["safety"], axes).salience,
+    ).toEqual({ safety: 0, "burdened-exhilarated": -0.6 })
+  })
+
+  it("does NOT disturb drive, weight, disposition or interrupt — escalation is untouched", () => {
+    const withAxes = appraise(
+      { disposition: "escalate", weight: 9, drive: "SAFETY", interrupt: "true", reason: "r", salience: { safety: 1 } },
+      ["safety"],
+      axes,
+    )
+    const without = appraise(
+      { disposition: "escalate", weight: 9, drive: "SAFETY", interrupt: "true", reason: "r" },
+      ["safety"],
+    )
+    expect(withAxes.disposition).toBe(without.disposition)
+    expect(withAxes.weight).toBe(without.weight)
+    expect(withAxes.drive).toBe(without.drive)
+    expect(withAxes.interrupt).toBe(without.interrupt)
+    expect(withAxes.reason).toBe(without.reason)
   })
 })

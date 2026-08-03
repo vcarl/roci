@@ -13,6 +13,9 @@ import { logToConsole, logError, logBehavior } from "../../logging/log-writer.js
 import type { ModelConfig } from "../model-config.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { LongtermStore, newSinceMark, diaryMark } from "#brain/limbic/hippocampus/memory/longterm-store.js"
+import { runSalienceSweep } from "#brain/limbic/hippocampus/memory/salience-sweep.js"
+import { buildRunnerConfig } from "#brain/stem/runner-config.js"
+import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import { finishEpisodeCycle } from "../../logging/episodes.js"
 
 // ── Types ────────────────────────────────────────────────────
@@ -46,6 +49,16 @@ export const runReflection = (
 	models: ModelConfig,
 	addDirs?: string[],
 	env?: Record<string, string>,
+	/**
+	 * The tick runner's config, for the salience adjudicator sweep: it carries the
+	 * character's already-derived axis specs and the tier handles. Reflection runs
+	 * in its own phase and cannot see the loop's local config, so when this is
+	 * absent the config is built from `buildRunnerConfig` — the SAME single
+	 * derivation site the loop uses, never a second copy of the derivation. The
+	 * parameter exists so a caller holding a live config (or a test) can pass it
+	 * instead of re-reading the artifacts.
+	 */
+	runnerConfig?: ActivationRunnerConfig,
 ) =>
 	Effect.gen(function* () {
 		// Issue 2 (fail loud, best-effort continuation): a consolidate/dream failure
@@ -86,6 +99,37 @@ export const runReflection = (
 		}).pipe(
 			Effect.catchAll((e) =>
 				logError(char.name, "hippocampus", `Long-term promotion failed: ${e}`).pipe(
+					Effect.catchAll(() => Effect.void),
+				),
+			),
+		)
+
+		// B — the salience adjudicator (design 2026-07-31 §3). Runs AFTER promote so
+		// entries promoted in THIS cycle are eligible immediately rather than waiting
+		// a full cycle for their first adjudication. One model call per row, capped
+		// at SWEEP_ROW_CAP; whatever it does not reach keeps its optimistic base and
+		// is picked up oldest-first next cycle.
+		//
+		// This is the only stage that reaches pathway 6 — the agent's own `memory
+		// remember`, a write the host never observes and therefore can never trigger
+		// on. `runSalienceSweep` never fails; the catchAll here is belt-and-braces
+		// consistent with every other reflection stage.
+		// The fallback build reads the character's CURRENT artifacts, which is what
+		// we want at this seam. It defaults the tier handles to DEFAULT_CORTEX_MODELS
+		// — the same value every live `runActivation` resolves to today — and the
+		// cadence to `planned-action`, which the sweep never reads.
+		const sweepConfig = runnerConfig ?? (yield* buildRunnerConfig({ char }))
+		yield* runSalienceSweep({ char, containerId, config: sweepConfig }).pipe(
+			Effect.flatMap((r) =>
+				logBehavior(char.name, "hippocampus", "reflection", {
+					type: "reflection",
+					stage: "adjudicate",
+					status: "done",
+					counts: { adjudicated: r.adjudicated, skipped: r.skipped },
+				}),
+			),
+			Effect.catchAll((e) =>
+				logError(char.name, "hippocampus", `Salience sweep failed: ${e}`).pipe(
 					Effect.catchAll(() => Effect.void),
 				),
 			),

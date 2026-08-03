@@ -334,4 +334,43 @@ describe("sanitizeSalienceVector", () => {
     expect(sanitizeSalienceVector("nope", specs)).toEqual({})
     expect(sanitizeSalienceVector({ safety: 0.5 }, [])).toEqual({})
   })
+
+  // ── The all-zero guard (task-12 review, finding 2) ───────────────────────
+  //
+  // A vector of nothing but zeros is a model saying "I have no reading", not a
+  // measurement that every axis is neutral. Kept, it is NON-EMPTY, so
+  // encodeRememberArgs ships it as --dims-c and mergeBaseVector averages it
+  // against the mechanical A vector — halving A on every axis it names. That is
+  // the "C must not cancel A" hazard the null-drop rule exists to prevent,
+  // arriving through a literal 0.
+
+  it("treats an ALL-ZERO vector as no reading at all, so it can never halve A", () => {
+    expect(sanitizeSalienceVector({ safety: 0 }, specs)).toEqual({})
+    expect(
+      sanitizeSalienceVector({ safety: 0, voyage: 0, "cynical-curious": 0 }, specs),
+    ).toEqual({})
+  })
+
+  it("treats a vector that CLAMPS to all-zero as no reading either", () => {
+    // -0.4 on a unipolar axis clamps to 0; the result is all-zero and must go.
+    expect(sanitizeSalienceVector({ safety: -0.4 }, specs)).toEqual({})
+  })
+
+  it("keeps a genuine mix of zeros and non-zeros INTACT — only all-zero is noise", () => {
+    expect(sanitizeSalienceVector({ safety: 0, voyage: 0.7 }, specs)).toEqual({
+      safety: 0,
+      voyage: 0.7,
+    })
+    expect(sanitizeSalienceVector({ safety: 0, "cynical-curious": -0.6 }, specs)).toEqual({
+      safety: 0,
+      "cynical-curious": -0.6,
+    })
+  })
+
+  it("does not confuse a negative reading with an absent one", () => {
+    // -0.6 is a real measurement toward the first pole, not a missing value.
+    expect(sanitizeSalienceVector({ "cynical-curious": -0.6 }, specs)).toEqual({
+      "cynical-curious": -0.6,
+    })
+  })
 })

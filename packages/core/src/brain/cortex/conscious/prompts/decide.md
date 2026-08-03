@@ -86,6 +86,25 @@ When the situation assessment reports **low confidence** or unresolved open ques
 
 If one of Your Skills fits what you're about to do, add a top-level `"skill": "<its exact name>"` to your JSON (any decision shape). Omit it if none fit — never invent a name. The chosen skill's guidance is handed to the worker that carries out the step.
 
+## Salience axes (where this decision sits, as a JSON object)
+
+Score the decision you just made against the axes below that genuinely bear on
+it — most decisions only truly bear on one or two, so leaving the rest out
+entirely (rather than writing them at `0`) is the common, correct answer. Two
+kinds of axis, two ranges:
+
+{{axes}}
+
+This is a reading, not a justification — it says what KIND of moment this
+decision is for you, not why you chose it. If the list above says `(none)`,
+omit the `salience` field entirely.
+
+Worked example, shown ONLY to illustrate the shape — score your own axes for
+THIS decision, don't reuse these names unless they truly apply: choosing to
+press into an unfamiliar system to chase a lead, rather than sticking to a
+known route, might score `"salience": {"wary-curious": 0.5}` — one axis that
+actually bears on that choice, nothing padded in beyond it.
+
 Respond with ONLY one of these JSON shapes:
 
 **Plan:**
@@ -93,6 +112,7 @@ Respond with ONLY one of these JSON shapes:
 {
   "decision": "plan",
   "reasoning": "<why this plan>",
+  "salience": {"<axis-name>": 0.0},
   "steps": [
     {
       "task": "<domain skill name>",
@@ -109,6 +129,7 @@ Respond with ONLY one of these JSON shapes:
 ```json
 {
   "decision": "continue",
+  "salience": {"<axis-name>": 0.0},
   "reasoning": "<why current work is still valid>"
 }
 ```
@@ -118,6 +139,7 @@ Respond with ONLY one of these JSON shapes:
 {
   "decision": "wait",
   "reasoning": "<why we're blocked>",
+  "salience": {"<axis-name>": 0.0},
   "wait": {
     "waitingFor": "<human-readable description>",
     "resolutionSignal": "<what observe should watch for>",
@@ -131,6 +153,7 @@ Respond with ONLY one of these JSON shapes:
 {
   "decision": "terminate",
   "reasoning": "<why we're done>",
+  "salience": {"<axis-name>": 0.0},
   "summary": "<what was accomplished>"
 }
 ```
@@ -140,6 +163,7 @@ Respond with ONLY one of these JSON shapes:
 {
   "decision": "discover",
   "reasoning": "<why I don't know enough to plan well>",
+  "salience": {"<axis-name>": 0.0},
   "discover": {
     "questions": ["<what I need to learn>", "..."],
     "tier": "fast | smart",

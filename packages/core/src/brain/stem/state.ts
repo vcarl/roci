@@ -1,6 +1,7 @@
 import type { DecideResult, Disposition, ObserveResult, WaitState, OrientResult } from "../../skills/types.js"
 import type { PlanStep } from "../../core/types.js"
 import { isPlainObject } from "./parse.js"
+import { sanitizeSalienceVector, type AxisSpec } from "../../core/salience.js"
 
 export interface ActivationState {
   accumulatedEvents: string[]
@@ -115,6 +116,14 @@ function normalizeDrive(raw: unknown, knownDrives?: ReadonlyArray<string>): stri
 export function appraise(
   raw: Partial<ObserveResult> | Record<string, unknown>,
   knownDrives?: ReadonlyArray<string>,
+  /**
+   * The character's salience axes (design 2026-07-31 §1). OPTIONAL, and its
+   * absence is meaningful rather than a degradation: with no vocabulary there is
+   * nothing to validate a model-authored vector against, so `salience` is left
+   * undefined rather than storing unvalidated keys. Every pre-Phase-2 caller —
+   * including `tools/appraisal-eval` — omits it and is unaffected.
+   */
+  axes?: ReadonlyArray<AxisSpec>,
 ): ObserveResult {
   const r = raw as Record<string, unknown>
   const disposition = DISPOSITIONS.has(r.disposition as Disposition)
@@ -131,6 +140,11 @@ export function appraise(
     weight: clampWeight(r.weight),
     interrupt,
     reason: typeof r.reason === "string" ? r.reason : "",
+    // The C vector, through the same mechanical clamp `drive` and `weight` go
+    // through: unknown axes dropped, non-finite dropped, unipolar floored at 0,
+    // bipolar sign preserved. A model's structured output never reaches storage
+    // unvalidated.
+    ...(axes ? { salience: sanitizeSalienceVector(r.salience, axes) } : {}),
   }
 }
 

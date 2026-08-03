@@ -6,8 +6,14 @@ import {
   buildInsertSql,
   buildVecInsertSql,
   buildKnnSql,
+  buildRecentSql,
+  buildPendingSql,
+  buildAdjudicateSql,
   buildMetaGetSql,
   buildMetaSetSql,
+  STAGE_BASE,
+  STAGE_ADJUDICATED,
+  STAGE_LEGACY,
 } from "./memory-sql.js"
 
 describe("EMBED_DIM", () => {
@@ -49,9 +55,11 @@ describe("buildSchemaSql — provenance column", () => {
 
 describe("buildInsertSql — provenance column", () => {
   it("inserts provenance in the fixed column order", () => {
+    // Phase 2 extended the 6-column form to 9 (dims_a, dims_c, dims_stage); see
+    // "phase 2 salience columns" below for the exact pinned string.
     const sql = buildInsertSql()
-    expect(sql).toContain("(ts, source, tags, text, provenance, dims)")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?)")
+    expect(sql).toContain("(ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage)")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
   })
 })
 
@@ -71,7 +79,7 @@ describe("buildInsertSql / buildVecInsertSql", () => {
     expect(sql).toContain("text")
     expect(sql).toContain("provenance")
     expect(sql).toContain("dims")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?)")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
   })
   it("inserts the vector row keyed by the same id", () => {
     const sql = buildVecInsertSql()
@@ -131,15 +139,79 @@ describe("buildSchemaSql — dims column", () => {
 })
 
 describe("buildInsertSql — dims column", () => {
-  it("inserts six columns in a fixed order with six binds", () => {
+  it("inserts nine columns in a fixed order with nine binds (Phase 2: + dims_a, dims_c, dims_stage)", () => {
     const sql = buildInsertSql()
-    expect(sql).toContain("(ts, source, tags, text, provenance, dims)")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?)")
+    expect(sql).toContain("(ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage)")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
   })
 })
 
 describe("buildKnnSql — dims column", () => {
   it("selects dims alongside the ranked row", () => {
     expect(buildKnnSql(5)).toContain("m.dims AS dims")
+  })
+})
+
+describe("phase 2 salience columns", () => {
+  it("the schema carries dims_a, dims_c and a legacy-defaulted stage marker", () => {
+    const sql = buildSchemaSql()
+    expect(sql).toContain("dims TEXT")
+    expect(sql).toContain("dims_a TEXT")
+    expect(sql).toContain("dims_c TEXT")
+    // 'legacy', not 'base': a pre-Phase-2 row was never through the pipeline and
+    // must never cost the adjudicator a model call (design §8).
+    expect(sql).toContain("dims_stage TEXT NOT NULL DEFAULT 'legacy'")
+  })
+
+  it("the insert binds all nine columns in a fixed order", () => {
+    expect(buildInsertSql()).toBe(
+      "INSERT INTO memories (ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+  })
+
+  // The stage marker travels under its COLUMN name; `formatResults` owns the
+  // single rename to the wire name `stage`. An `AS stage` alias here silently
+  // broke that (the formatter reads `r.dims_stage`) — see the derived-key seam
+  // tests in memory-format.test.ts, which fail if either side renames again.
+  it("knn selects the stage marker so 'never adjudicated' is queryable from a recall", () => {
+    const sql = buildKnnSql(5)
+    expect(sql).toContain("m.dims AS dims")
+    expect(sql).toContain("m.dims_stage AS dims_stage")
+    expect(sql).not.toContain("AS stage")
+  })
+
+  it("recent selects the same field set as knn, minus the distance", () => {
+    const sql = buildRecentSql(10)
+    expect(sql).toContain("dims_stage")
+    expect(sql).not.toContain("AS stage")
+    expect(sql).toContain("LIMIT 10")
+    expect(sql).not.toContain("distance")
+  })
+
+  it("pending selects only base-stage rows with both producer vectors, oldest first", () => {
+    const sql = buildPendingSql(25)
+    expect(sql).toContain("WHERE dims_stage = 'base'")
+    expect(sql).toContain("id, text, dims_a, dims_c")
+    expect(sql).toContain("ORDER BY id ASC")
+    expect(sql).toContain("LIMIT 25")
+    // legacy rows are NOT swept
+    expect(sql).not.toContain("'legacy'")
+  })
+
+  it("pending rejects a non-integer cap rather than interpolating it", () => {
+    expect(() => buildPendingSql(1.5)).toThrow(/positive integer/)
+    expect(() => buildPendingSql(0)).toThrow(/positive integer/)
+    expect(() => buildPendingSql(Number.NaN)).toThrow(/positive integer/)
+  })
+
+  it("adjudicate updates ONLY the derived columns, on one id", () => {
+    expect(buildAdjudicateSql()).toBe(
+      "UPDATE memories SET dims = ?, dims_stage = 'adjudicated' WHERE id = ?",
+    )
+  })
+
+  it("exports the three stage markers at one site", () => {
+    expect([STAGE_BASE, STAGE_ADJUDICATED, STAGE_LEGACY]).toEqual(["base", "adjudicated", "legacy"])
   })
 })

@@ -10,10 +10,11 @@
  *
  * ── Assembly fidelity ──────────────────────────────────────────────────────
  * Prompt assembly mirrors brain/limbic/tiers-limbic.ts `runHindbrain` exactly:
- *   prompt = observe.md.render({ event, waitState, palette, drives })
+ *   prompt = observe.md.render({ event, waitState, palette, drives, axes })
  * We import the SAME pure functions the runtime uses (loadSkillSync, parseOr,
- * appraise, guardAppraisal, TEMPLATE_DRIVES, parseDriveNames) directly from
- * packages/core/src — no reimplementation. See README.md "Assembly fidelity".
+ * appraise, guardAppraisal, TEMPLATE_DRIVES, parseDriveNames, buildAxisSpecs,
+ * renderAxisBlock) directly from packages/core/src — no reimplementation. See
+ * README.md "Assembly fidelity".
  *
  * The model HTTP call mirrors model/client.ts: POST /v1/chat/completions with
  * { model, messages:[{role:"user",content:prompt}], temperature, max_tokens,
@@ -31,6 +32,8 @@ import { loadSkillSync } from "../../packages/core/src/skills/loader.ts"
 import { parseOr } from "../../packages/core/src/brain/stem/parse.ts"
 import { appraise, guardAppraisal, composeDigestedEventText } from "../../packages/core/src/brain/stem/state.ts"
 import { TEMPLATE_DRIVES, parseDriveNames } from "../../packages/core/src/brain/limbic/hypothalamus/drives.ts"
+import { renderAxisBlock } from "../../packages/core/src/brain/stem/tier-config.ts"
+import { buildAxisSpecs } from "../../packages/core/src/core/salience.ts"
 import { DEFAULT_CORTEX_MODELS } from "../../packages/core/src/model/handles.ts"
 import type { ObserveResult } from "../../packages/core/src/skills/types.ts"
 // Digest assembly mirror (see README "Assembly fidelity"): the SAME domain
@@ -100,6 +103,11 @@ const PALETTE = (() => {
 })()
 const DRIVES = TEMPLATE_DRIVES // vcarl has no me/DRIVES.md → runtime uses TEMPLATE_DRIVES
 const KNOWN_DRIVES = parseDriveNames(DRIVES)
+// The salience axis block, assembled through the SAME renderAxisBlock +
+// buildAxisSpecs the runtime uses (loop.ts derives the specs once per run and
+// tiers-limbic.ts renders them). Derived from the same two artifacts already
+// read above, so the eval scores the prompt the runtime actually sends.
+const AXES = renderAxisBlock(buildAxisSpecs(DRIVES, PALETTE))
 
 // ── digest assembly (mirrors loop.ts submit seam) ────────────────────────────
 // A minimal healthy base GameState. Snapshot fixtures (full_state / logged_in)
@@ -213,7 +221,7 @@ function renderPrompt(fx: Fixture): string {
   // disk stays the raw payload) — same as the runtime composing it only after
   // fingerprinting.
   const event = composeDigestedEventText(fx.event, digestForFixture(fx))
-  return skill.render({ event, waitState: fx.waitState, palette: PALETTE, drives: DRIVES })
+  return skill.render({ event, waitState: fx.waitState, palette: PALETTE, drives: DRIVES, axes: AXES })
 }
 
 // Worked-example reason strings, parsed from the prompt template, for echo-rate.

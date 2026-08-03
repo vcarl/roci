@@ -71,6 +71,24 @@ Worked contrast, given a live state of *docked at First Step Memorial Station, f
 - WRONG headline: "Drifting through Horizon in phase drift, fuel critical at 6/100." (That is the diary talking — stale history restated as now.)
 - RIGHT headline: "Docked at First Step Memorial Station, fuel full 100/100; the earlier phase-drift scare is over per my notes." (Live state first; the old crisis named as past.)
 
+## Salience axes (where this assessment sits, as a JSON object)
+
+Score the SITUATION you just assessed — the whole thing, not each section —
+against the axes below that genuinely bear on it. Two kinds of axis, two
+ranges:
+
+{{axes}}
+
+Most assessments only truly bear on a couple of axes; leave the rest out
+entirely rather than writing them at `0`. One vector for the whole assessment.
+If the list above says `(none)`, omit the `salience` field entirely.
+
+Worked example, shown ONLY to illustrate the shape — score your own axes for
+THIS situation, don't reuse these names unless they truly apply: a pilot
+whose fuel is genuinely critical while an unfamiliar ship idles nearby might
+score `"salience": {"sustenance": 0.85, "safety": 0.3}` — two axes that
+actually bear on that assessment, nothing padded in beyond them.
+
 Respond with ONLY this JSON:
 ```json
 {
@@ -85,6 +103,7 @@ Respond with ONLY this JSON:
   "whatChanged": "<delta since last orientation>",
   "emotionalState": "<emoji string — carried forward from observations, potentially amplified>",
   "confidence": "low | medium | high",
+  "salience": {"<axis-name>": 0.0},
   "metrics": {
     "<key>": "<value>"
   }

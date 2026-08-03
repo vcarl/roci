@@ -128,7 +128,8 @@ reimplementation) directly from `packages/core/src`, run under `bun`:
 | runtime seam (`brain/limbic/tiers-limbic.ts` → `runHindbrain`) | harness |
 | --- | --- |
 | loop composes the model-facing text: inserts the domain **STATUS digest** under the snapshot event's `type:` line (`brain/stem/loop.ts` submit seam, `renderer.formatEventDigest(type, state)` + `composeDigestedEventText`) | imports the SAME `formatEventDigest` (domain `event-digest.ts`) and `composeDigestedEventText`, reconstructing the fixture's `state` through the SAME `spaceMoltEventProcessor.processEvent` reducer — no hand-written digest, no hand-rolled state |
-| `skills.observe.render({ event, waitState, palette, drives })` | `loadSkillSync(promptPath).render({ event, waitState, palette, drives })` — same `loadSkillSync`, same template engine |
+| `skills.observe.render({ event, waitState, palette, drives, axes })` | `loadSkillSync(promptPath).render({ event, waitState, palette, drives, axes })` — same `loadSkillSync`, same template engine |
+| `axes` ← `renderAxisBlock(config.axes)`, where `loop.ts` derives the specs once per run via `buildAxisSpecs(drives, palette)` | same `buildAxisSpecs` + `renderAxisBlock` imports, over the same `DRIVES`/`PALETTE` values — so the axis block is the three core drives plus vcarl's five palette axes |
 | `config.palette` ← `readPalette` (`players/vcarl/me/PALETTE.md`) | reads the same file verbatim |
 | `config.drives` ← `readDrives`, falls back to `TEMPLATE_DRIVES` (vcarl has no `DRIVES.md`) | imports `TEMPLATE_DRIVES` |
 | `parseDriveNames(drives)` | same import |

@@ -6,8 +6,11 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { DOMAIN_REGISTRY, resolveConfigs } from "../domains/registry.js"
 import type { ProcedureMessage } from "@roci/core/core/domain-bundle.js"
 import { scaffoldCharacter, type ReviewDecision } from "@roci/core/core/character-scaffold.js"
-import { AxisCollisionError, UnknownAxisError } from "@roci/core/core/salience.js"
-import { MalformedAxisError } from "@roci/core/core/palette.js"
+import {
+  isPerCharacterScaffoldError,
+  logScaffoldSkip,
+  logRegistrationSkip,
+} from "./scaffold-errors.js"
 import { makeCharacterConfig } from "@roci/core/services/CharacterFs.js"
 import { meDir } from "@roci/core/services/character-paths.js"
 import { logToConsole } from "@roci/core/logging/log-writer.js"
@@ -177,17 +180,8 @@ export const runGuidedSetup = (projectRoot: string) =>
           domainConfig,
           review: interactiveReview,
         }).pipe(
-          Effect.catchIf(
-            (e): e is AxisCollisionError | MalformedAxisError | UnknownAxisError =>
-              e instanceof AxisCollisionError ||
-              e instanceof MalformedAxisError ||
-              e instanceof UnknownAxisError,
-            (e) =>
-              logToConsole(
-                "setup",
-                "cli",
-                `Identity generation for ${name} produced an inconsistent salience vocabulary — skipping this character (others are unaffected).\n  ${e.message}`,
-              ).pipe(Effect.as(null)),
+          Effect.catchIf(isPerCharacterScaffoldError, (e) =>
+            logScaffoldSkip(name, e).pipe(Effect.as(null)),
           ),
         )
         if (scaffolded === null) continue
@@ -205,7 +199,7 @@ export const runGuidedSetup = (projectRoot: string) =>
           for (const msg of msgs) yield* logProcMsg(msg)
 
           if (msgs.some(m => m.level === "error")) {
-            yield* logToConsole("setup", "cli", `Skipping config.json registration for ${name} due to errors`)
+            yield* logRegistrationSkip(name)
           } else {
             if (!config[domainName].characters.includes(name)) {
               config[domainName].characters.push(name)

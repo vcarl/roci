@@ -8,7 +8,7 @@ import * as path from "node:path"
 import { ModelClient } from "../model/client.js"
 import { ModelService } from "../services/ModelService.js"
 import type { ModelHandle } from "../model/handles.js"
-import { scaffoldCharacter, autoAcceptReview, type ReviewDecision, type ReviewFn } from "./character-scaffold.js"
+import { scaffoldCharacter, autoAcceptReview, ArtifactUnreadableError, type ReviewDecision, type ReviewFn } from "./character-scaffold.js"
 import type { DomainConfig } from "./domain-bundle.js"
 
 // minimal DomainConfig stub — only identityTemplate matters here
@@ -515,7 +515,12 @@ describe("scaffoldCharacter", () => {
     })
   })
 
-  it("an unreadable PALETTE.md is a TYPED failure, never a defect", async () => {
+  // Was: "…is a TYPED failure" asserting MalformedAxisError. It was typed, but it
+  // named the WRONG PROBLEM — MalformedAxisError's message is fixed text about a
+  // malformed palette axis LINE, and `.line` held a filesystem error string. For
+  // DRIVES.md and SALIENCE.md the same throw also named the wrong FILE. Typed and
+  // wrong is the failure class this branch exists to prevent.
+  it("an unreadable PALETTE.md is a typed ArtifactUnreadableError, never a defect and never mislabelled", async () => {
     const dir = meDir("unreadable")
     mkdirSync(dir, { recursive: true })
     // A DIRECTORY where PALETTE.md should be: existsSync is true, readFileSync
@@ -532,8 +537,52 @@ describe("scaffoldCharacter", () => {
     const err = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : Option.none()
     expect(Option.isSome(err)).toBe(true)
     const value = Option.getOrThrow(err)
-    expect(value).toBeInstanceOf(MalformedAxisError)
-    expect((value as MalformedAxisError).line).toContain("PALETTE.md")
+    expect(value).toBeInstanceOf(ArtifactUnreadableError)
+    expect(value).not.toBeInstanceOf(MalformedAxisError)
+    expect((value as ArtifactUnreadableError).artifact).toContain("PALETTE.md")
+    expect((value as ArtifactUnreadableError).cause).toBeDefined()
+    // It must not tell the operator to go fix a palette axis line.
+    expect((value as ArtifactUnreadableError).message).not.toMatch(/malformed palette axis line/i)
+    expect((value as ArtifactUnreadableError).message).toContain("PALETTE.md")
+  })
+
+  it("an unreadable DRIVES.md names DRIVES.md, not PALETTE.md", async () => {
+    const dir = meDir("unreadabledrives")
+    mkdirSync(dir, { recursive: true })
+    mkdirSync(path.join(dir, "DRIVES.md"), { recursive: true })
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(
+        scaffoldCharacter({ projectRoot: root, characterName: "unreadabledrives", domainConfig, review: autoAcceptReview }),
+        layers,
+      ),
+    )
+    const err = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : Option.none()
+    expect(Option.isSome(err)).toBe(true)
+    const value = Option.getOrThrow(err)
+    expect(value).toBeInstanceOf(ArtifactUnreadableError)
+    expect((value as ArtifactUnreadableError).artifact).toContain("DRIVES.md")
+    expect((value as ArtifactUnreadableError).message).not.toContain("PALETTE.md")
+  })
+
+  // The SECOND Effect.try site — the on-disk SALIENCE.md read, which had the same
+  // mislabelling and additionally routed anything unexpected to AxisCollisionError.
+  it("an unreadable SALIENCE.md is a typed ArtifactUnreadableError naming SALIENCE.md", async () => {
+    const dir = meDir("unreadablesal")
+    mkdirSync(dir, { recursive: true })
+    mkdirSync(path.join(dir, "SALIENCE.md"), { recursive: true })
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(
+        scaffoldCharacter({ projectRoot: root, characterName: "unreadablesal", domainConfig, review: autoAcceptReview }),
+        layers,
+      ),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    const err = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : Option.none()
+    expect(Option.isSome(err)).toBe(true)
+    const value = Option.getOrThrow(err)
+    expect(value).toBeInstanceOf(ArtifactUnreadableError)
+    expect(value).not.toBeInstanceOf(AxisCollisionError)
+    expect((value as ArtifactUnreadableError).artifact).toContain("SALIENCE.md")
   })
 
   it("R4: derives drive axes from the ON-DISK DRIVES.md when one already exists", async () => {

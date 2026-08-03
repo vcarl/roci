@@ -39,3 +39,23 @@ describe("MIGRATION_COLUMNS — dims", () => {
     expect(dims!.ddl).not.toContain("DEFAULT")
   })
 })
+
+describe("phase 2 migration columns", () => {
+  it("adds the three salience columns, idempotently and after dims", () => {
+    const names = MIGRATION_COLUMNS.map((c) => c.name)
+    expect(names).toEqual(["provenance", "dims", "dims_a", "dims_c", "dims_stage"])
+  })
+
+  it("dims_a and dims_c are nullable with no default — an unscored old row has no A or C", () => {
+    const byName = new Map(MIGRATION_COLUMNS.map((c) => [c.name, c.ddl]))
+    expect(byName.get("dims_a")).toBe("ALTER TABLE memories ADD COLUMN dims_a TEXT")
+    expect(byName.get("dims_c")).toBe("ALTER TABLE memories ADD COLUMN dims_c TEXT")
+  })
+
+  it("dims_stage backfills legacy rows to 'legacy', NOT 'base' — the sweep must not adopt them", () => {
+    const byName = new Map(MIGRATION_COLUMNS.map((c) => [c.name, c.ddl]))
+    expect(byName.get("dims_stage")).toBe(
+      "ALTER TABLE memories ADD COLUMN dims_stage TEXT NOT NULL DEFAULT 'legacy'",
+    )
+  })
+})

@@ -9,6 +9,7 @@ import type { ActivationRunnerConfig } from "#brain/stem/tier-config.js"
 import type { OrientResult } from "../../../skills/types.js"
 import { fixedClient, recordingService, silentLog } from "../../../testing/model-test-layers.js"
 import { setEpisodeTick, resetEpisodeContext } from "../../../logging/episodes.js"
+import { buildAxisSpecs } from "../../../core/salience.js"
 
 const config: ActivationRunnerConfig = {
   char: { name: "ada", root: "/work/players/ada" },
@@ -263,5 +264,108 @@ describe("decide skill selection (spec §3)", () => {
       ),
     )
     expect("skill" in junk).toBe(false)
+  })
+})
+
+// Pathways 3 and 4 (design 2026-07-31 §3): decide's and evaluate's producer (C)
+// stage. Like runForebrain, runConsciousDecide/runConsciousEvaluate inline the
+// render + sanitize steps with no pure seam of their own, so nothing else on
+// this branch would catch a dropped `axes: renderAxisBlock(config.axes)` or a
+// dropped `sanitizeSalienceVector` call. These four tests pin exactly those
+// lines, mirroring tiers-limbic.test.ts's "salience axes — producer (C) stage
+// (pathway 2)" for orient.
+describe("salience axes — producer (C) stage (pathways 3 and 4)", () => {
+  const layers = (text: string) => Layer.mergeAll(fixedClient(text), recordingService([]), silentLog)
+  // Same axis fixture as tiers-limbic.test.ts / state.test.ts: one unipolar
+  // drive ("voyage") and one bipolar palette axis ("burdened-exhilarated"),
+  // neither of which appears anywhere else in these tests' (empty/minimal)
+  // inputs — so their presence in the rendered prompt is unambiguous evidence
+  // the axis block reached it.
+  const axes = buildAxisSpecs(
+    "- safety — your physical integrity\n- voyage — progress",
+    "😫 😮‍💨 😐 🤩 🚀 # burdened → exhilarated",
+  )
+  const orientFixture: OrientResult = {
+    headline: "h", sections: [], whatChanged: "w", emotionalState: "😐", confidence: "low", metrics: {},
+  }
+
+  describe("decide", () => {
+    it("renders the axis block into the decide prompt", async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "axes-decide-"))
+      resetEpisodeContext("ada")
+      try {
+        await Effect.runPromise(
+          Effect.provide(
+            runConsciousDecide({ ...configWithLogs(root), axes }, orientFixture, "No active plan.", "actions"),
+            layers('{"decision":"continue","reasoning":"r"}'),
+          ),
+        )
+        const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+        const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+        expect(rec.prompt).toContain("voyage")
+        expect(rec.prompt).toContain("burdened-exhilarated")
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it("sanitizes the model's raw salience vector: unknown axis dropped, out-of-range clamped, null-valued key dropped", async () => {
+      const out = await Effect.runPromise(
+        Effect.provide(
+          runConsciousDecide({ ...config, axes }, orientFixture, "No active plan.", "actions"),
+          layers(
+            '{"decision":"continue","reasoning":"r","salience":' +
+              '{"safety":1.6,"curiosity":0.9,"voyage":null,"burdened-exhilarated":-0.4}}',
+          ),
+        ),
+      )
+      // safety: 1.6 clamped to 1 (unipolar). curiosity: dropped, not in the
+      // derived vocabulary. voyage: null dropped entirely — a missing reading,
+      // not clamped to 0. burdened-exhilarated: -0.4 kept as-is (bipolar, in range).
+      expect((out as { salience?: Record<string, number> }).salience).toEqual({
+        safety: 1,
+        "burdened-exhilarated": -0.4,
+      })
+    })
+  })
+
+  describe("evaluate", () => {
+    const evalInput = {
+      task: "t", goal: "g", successCondition: "c", ticksBudgeted: 2, ticksConsumed: 1,
+      executionReport: "did stuff", stateDiff: "diff", conditionCheck: "checked",
+      emotionalState: "😐", remainingSteps: "None.",
+    }
+
+    it("renders the axis block into the evaluate prompt", async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "axes-evaluate-"))
+      resetEpisodeContext("ada")
+      try {
+        await Effect.runPromise(
+          Effect.provide(
+            runConsciousEvaluate({ ...configWithLogs(root), axes }, evalInput),
+            layers('{"judgment":"succeeded","reasoning":"r","transition":{"transition":"next_step"}}'),
+          ),
+        )
+        const file = path.join(root, "players", "ada", "logs", "episodes-transition.jsonl")
+        const [rec] = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+        expect(rec.prompt).toContain("voyage")
+        expect(rec.prompt).toContain("burdened-exhilarated")
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it("sanitizes the model's raw salience vector: unknown axis dropped, out-of-range clamped, null-valued key dropped", async () => {
+      const out = await Effect.runPromise(
+        Effect.provide(
+          runConsciousEvaluate({ ...config, axes }, evalInput),
+          layers(
+            '{"judgment":"succeeded","reasoning":"r","transition":{"transition":"next_step"},"salience":' +
+              '{"safety":1.6,"curiosity":0.9,"voyage":null,"burdened-exhilarated":-0.4}}',
+          ),
+        ),
+      )
+      expect(out.salience).toEqual({ safety: 1, "burdened-exhilarated": -0.4 })
+    })
   })
 })
