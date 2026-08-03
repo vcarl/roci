@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import * as path from "node:path"
 import { Context, Effect, Layer } from "effect"
 import { describe, it, expect } from "vitest"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
@@ -317,5 +320,61 @@ describe("MemoryGateway", () => {
     const store = fakeStore()
     await run(store, Effect.flatMap(MemoryGateway, (g) => g.recall("cid", char, "q", { k: 3, label: "Relevant memories" })))
     expect(store.recalledKs).toEqual([3 * RERANK_OVERFETCH])
+  })
+
+  it("ranks with the character's emotional state read from me/mood.json", async () => {
+    // The mood-matching hit is deliberately LESS relevant (0.5 vs 0.6), so it can
+    // only reach the top through the situational factor. Do NOT make the two hits
+    // identical and rely on a tie: they would not actually tie — their salience
+    // weights differ (0.5 vs NEUTRAL_SALIENCE), so their half-lives differ, and at
+    // a few milliseconds of age that already separates them by ~1e-9 in the
+    // dominant memory's favour. The margin here is 0.15, well clear of that dust.
+    //
+    //   HIGHREL   : 0.6 × grounded 1.0 × ~1 × 1.0 = 0.60
+    //   MOODMATCH : 0.5 × grounded 1.0 × ~1 × 1.5 = 0.75
+    //
+    // Deleting the readMood line drops the factor to 1.0 and HIGHREL wins.
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-mood-"))
+    const moodChar = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    mkdirSync(path.join(moodChar.root, "me"), { recursive: true })
+    writeFileSync(
+      path.join(moodChar.root, "me", "mood.json"),
+      JSON.stringify({ version: 1, updatedAt: "2026-08-01T00:00:00.000Z", state: { safety: 1 } }),
+    )
+    const ts = new Date().toISOString()
+    const store = fakeStore({
+      hits: [
+        { id: 1, ts, source: "orient", provenance: "grounded", tags: [], text: "HIGHREL", score: 0.6, dims: {} },
+        { id: 2, ts, source: "orient", provenance: "grounded", tags: [], text: "MOODMATCH", score: 0.5, dims: { safety: 1 } },
+      ] as MemoryHit[],
+    })
+    const block = await run(
+      store,
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", moodChar, "q", { k: 2, label: "Relevant memories" }),
+      ),
+    )
+    expect(block.indexOf("MOODMATCH")).toBeGreaterThan(-1)
+    expect(block.indexOf("HIGHREL")).toBeGreaterThan(-1)
+    expect(block.indexOf("MOODMATCH")).toBeLessThan(block.indexOf("HIGHREL"))
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it("degrades to an inert situational factor when there is no mood file", async () => {
+    // Every other test in this file uses a character with no `root` at all, so
+    // this is also the assertion that they keep passing: no mood → factor 1 →
+    // ranking is exactly what it was before the situational term existed.
+    const ts = new Date().toISOString()
+    const store = fakeStore({
+      hits: [
+        { id: 1, ts, source: "orient", provenance: "asserted", tags: [], text: "LOWTRUST", score: 0.5, dims: { safety: 1 } },
+        { id: 2, ts, source: "orient", provenance: "grounded", tags: [], text: "HIGHTRUST", score: 0.5, dims: {} },
+      ] as MemoryHit[],
+    })
+    const block = await run(
+      store,
+      Effect.flatMap(MemoryGateway, (g) => g.recall("cid", char, "q", { k: 2, label: "Relevant memories" })),
+    )
+    expect(block.indexOf("HIGHTRUST")).toBeLessThan(block.indexOf("LOWTRUST"))
   })
 })

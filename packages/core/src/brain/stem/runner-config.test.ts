@@ -3,13 +3,14 @@ import { Effect, Layer } from "effect"
 import { buildRunnerConfig } from "./runner-config.js"
 import { CharacterFs } from "../../services/CharacterFs.js"
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
+import { DEFAULT_VOLATILITY } from "../../core/salience.js"
 import { TEMPLATE_DRIVES } from "#brain/limbic/hypothalamus/drives.js"
 import { CharacterLog } from "../../logging/log-writer.js"
 import type { UnifiedEvent } from "../../logging/events.js"
 
 const char = { name: "ada", root: "/work/players/ada" }
 
-function fsLayer(opts: { palette?: string; drives?: string; fail?: boolean }) {
+function fsLayer(opts: { palette?: string; drives?: string; salience?: string; fail?: boolean }) {
   const read = (v: string | undefined) =>
     opts.fail ? Effect.fail(new Error("no such file")) : Effect.succeed(v ?? "")
   return Layer.succeed(
@@ -24,7 +25,7 @@ function fsLayer(opts: { palette?: string; drives?: string; fail?: boolean }) {
       readValues: () => Effect.succeed(""),
       readPalette: () => read(opts.palette) as never,
       readDrives: () => read(opts.drives) as never,
-      readSalience: () => Effect.succeed(""),
+      readSalience: () => read(opts.salience) as never,
       characterExists: () => Effect.succeed(true),
       listSkills: () => Effect.succeed([]),
       readSkill: () => Effect.succeed(null),
@@ -81,5 +82,32 @@ describe("buildRunnerConfig — the ONE salience-axis derivation site", () => {
     expect(cfg.axes).toEqual([])
     // logError, not a silenceable info line.
     expect(sink.some((e) => e.kind === "error")).toBe(true)
+  })
+
+  it("reads the character's emotional volatility (α) from SALIENCE.md", async () => {
+    const cfg = await build(
+      fsLayer({
+        drives: "- safety — your physical integrity",
+        palette: "😫 😮‍💨 😐 🤩 🚀 # burdened → exhilarated",
+        salience: "Volatility: 0.75\n\n- safety: 0.9",
+      }),
+    )
+    expect(cfg.volatility).toBeCloseTo(0.75, 6)
+  })
+
+  it("falls back to the default volatility when SALIENCE.md is unreadable", async () => {
+    const cfg = await build(fsLayer({ fail: true }))
+    expect(cfg.volatility).toBeCloseTo(DEFAULT_VOLATILITY, 6)
+  })
+
+  it("falls back to the default volatility when the line is absent", async () => {
+    const cfg = await build(
+      fsLayer({
+        drives: "- safety — your physical integrity",
+        palette: "😫 😮‍💨 😐 🤩 🚀 # burdened → exhilarated",
+        salience: "- safety: 0.9",
+      }),
+    )
+    expect(cfg.volatility).toBeCloseTo(DEFAULT_VOLATILITY, 6)
   })
 })

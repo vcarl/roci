@@ -3,6 +3,7 @@ import { CharacterFs, type CharacterConfig } from "../../../../services/Characte
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
 import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
 import { rerank, RERANK_OVERFETCH } from "./memory-rank.js"
+import { readMood } from "../../mood/mood-store.js"
 import { parseSalience, TEMPLATE_SALIENCE } from "../../../../core/salience.js"
 
 /** One unit to persist: the source phase, the text, derived tags, and an optional salience signature. */
@@ -238,7 +239,15 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
             .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<MemoryHit>)))
           const now = yield* Clock.currentTimeMillis
           const salience = yield* loadSalience(containerId, char)
-          const ranked = rerank(hits, opts.k, now, salience)
+          // The character's smoothed emotional state (design 2026-07-31 §5, job
+          // 2). Read per recall rather than cached like the salience profile
+          // above, because unlike the profile it MOVES — the tick loop rewrites
+          // it whenever the mood changes, and a cached copy would pin recall to
+          // whatever the character felt at the first recall of the process.
+          // Never fails: a missing file is `{}`, which makes the situational
+          // factor exactly 1 and leaves ranking as it was.
+          const state = yield* readMood(char)
+          const ranked = rerank(hits, opts.k, now, salience, state)
           return formatRecall(ranked, opts.label, now, opts.maxChars)
         }),
     })

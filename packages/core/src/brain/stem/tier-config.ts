@@ -45,6 +45,17 @@ export interface ActivationRunnerConfig {
    * still supersedes. A tick must never fail over a malformed PALETTE.md.
    */
   axes?: ReadonlyArray<AxisSpec>
+  /**
+   * This character's emotional volatility `α` — how fast their mood moves
+   * (design 2026-07-31 §2), parsed from SALIENCE.md's dash-less `Volatility:`
+   * line. Per character, not global: if WHAT a character finds salient is a
+   * trait, HOW FAST their mood moves is the same kind of trait.
+   *
+   * ABSENT means "not derived here" and consumers fall back to
+   * DEFAULT_VOLATILITY; it is never an error. Only the emotional-state EMA
+   * (`advanceMood`) reads it.
+   */
+  volatility?: number
 }
 
 /**

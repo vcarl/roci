@@ -4,7 +4,7 @@ import { CharacterFs } from "../../services/CharacterFs.js"
 import { CharacterLog, logError } from "../../logging/log-writer.js"
 import { DEFAULT_CORTEX_MODELS, type CortexModelConfig } from "../../model/handles.js"
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
-import { buildAxisSpecs, type AxisSpec } from "../../core/salience.js"
+import { buildAxisSpecs, parseVolatility, TEMPLATE_SALIENCE, type AxisSpec } from "../../core/salience.js"
 import { TEMPLATE_DRIVES } from "#brain/limbic/hypothalamus/drives.js"
 import type { Cadence } from "#brain/limbic/hypothalamus/cadence.js"
 import type { ActivationRunnerConfig } from "./tier-config.js"
@@ -41,6 +41,13 @@ export const buildRunnerConfig = (opts: {
     const drives = yield* charFs
       .readDrives(opts.char)
       .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_DRIVES)))
+    // The same read the memory gateway makes for the profile weights, made once
+    // more here for the ONE scalar that is not an axis: α, the emotional-state
+    // EMA's smoothing constant. Reading it beside the axis derivation keeps
+    // every per-character salience input on one object, derived once per run.
+    const salienceMd = yield* charFs
+      .readSalience(opts.char)
+      .pipe(Effect.catchAll(() => Effect.succeed(TEMPLATE_SALIENCE)))
     const axes: ReadonlyArray<AxisSpec> = yield* Effect.try(() =>
       buildAxisSpecs(drives, palette),
     ).pipe(
@@ -62,5 +69,6 @@ export const buildRunnerConfig = (opts: {
       palette,
       drives,
       axes,
+      volatility: parseVolatility(salienceMd),
     }
   })

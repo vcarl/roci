@@ -1663,6 +1663,107 @@ describe("runActivation (conscious-session executor)", () => {
       fs.rmSync(root, { recursive: true, force: true })
     }
   }, 20_000)
+
+  it("advances the emotional-state EMA on EVERY tick — quiet ticks decay a seeded mood", async () => {
+    // Wiring test with no model coupling: the mood is rewritten on every tick
+    // regardless of what the hindbrain said, so a pre-seeded value cannot survive
+    // the run. Deliberately NOT run against the file's default CharacterFs stub,
+    // whose "" palette/drives derive an EMPTY axis list — under that fixture the
+    // mood is emptied wholesale and any post-condition would also hold for a
+    // mistakenly-inert update. This fixture supplies a real DRIVES.md body (two
+    // unipolar axes) and `Volatility: 0.5`, so:
+    //   - the surviving keys prove the axis vocabulary came from runnerConfig,
+    //   - the dropped `bogus` key proves the update iterates the AXIS LIST rather
+    //     than the union of the two vectors' keys,
+    //   - each tick is an exact halving, so the decay is COUNTABLE — and a count
+    //     ≥ 2 proves the advance also ran on ticks after the only event was
+    //     consumed, i.e. it sits outside the `appraisals.length > 0` branch.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "loop-mood-"))
+    resetEpisodeContext("ada")
+    const charRoot = path.join(root, "players", "ada")
+    fs.mkdirSync(path.join(charRoot, "me"), { recursive: true })
+    fs.writeFileSync(
+      path.join(charRoot, "me", "mood.json"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-08-01T00:00:00.000Z",
+        state: { safety: 0.8, bogus: 0.5 },
+      }),
+    )
+    const moodFs = Layer.succeed(
+      CharacterFs,
+      CharacterFs.of({
+        readDiary: () => Effect.succeed(""),
+        writeDiary: () => Effect.void,
+        readSecrets: () => Effect.succeed(""),
+        writeSecrets: () => Effect.void,
+        readCredentials: () => Effect.succeed({ username: "", password: "" }),
+        readBackground: () => Effect.succeed(""),
+        readValues: () => Effect.succeed(""),
+        readPalette: () => Effect.succeed(""),
+        readDrives: () =>
+          Effect.succeed("- safety — being attacked.\n- sustenance — running out of fuel."),
+        readSalience: () => Effect.succeed("Volatility: 0.5\n\n- safety: 0.5"),
+        characterExists: () => Effect.succeed(true),
+        listSkills: () => Effect.succeed([]),
+        readSkill: () => Effect.succeed(null),
+        writeSkill: () => Effect.void,
+        readSynthesis: () => Effect.succeed(""),
+        writeSynthesis: () => Effect.void,
+        deleteSkill: () => Effect.void,
+      }),
+    )
+    const evalCountRef = { n: 0 }
+    const multiStepClient = makeMultiStepClient(evalCountRef)
+    const ctLayer = ConsciousThoughtTest((config, _resume) => ({
+      result: successTurnResult(config.prompt),
+      sessionId: "ses_mood",
+    }))
+    try {
+      const program = Effect.gen(function* () {
+        const events = yield* Queue.unbounded<unknown>()
+        // ONE event, at tick 1. Every later tick has no events at all.
+        yield* Queue.offer(events, { type: "combat" })
+        return yield* runActivation({
+          char: { name: "ada", root: charRoot },
+          containerId: "c1",
+          events,
+          initialState: {},
+          cadence: "real-time",
+          orientInterval: 1,
+          tickIntervalMs: 1,
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              multiStepClient,
+              ctLayer,
+              fakeDomain,
+              Layer.mergeAll(moodFs, fakeLog),
+              fakeRuntimeDeps,
+              noopModelService,
+            ),
+          ),
+        )
+      })
+      const result = await Effect.runPromise(program)
+      expect(result._tag).toBe("Completed")
+      const after = JSON.parse(
+        fs.readFileSync(path.join(charRoot, "me", "mood.json"), "utf8"),
+      ) as { state: Record<string, number> }
+      // Not a derived axis → gone on the first advance, never decayed.
+      expect(after.state.bogus).toBeUndefined()
+      // α = 0.5 with no observation is an exact halving each tick, and every
+      // intermediate is exactly representable, so the value pins the tick count.
+      const halvings = Array.from({ length: 12 }, (_, i) => 0.8 * Math.pow(0.5, i + 1))
+      expect(halvings).toContain(after.state.safety)
+      // ≥ 2, not an exact count: the tick count of this fixture run (currently 5)
+      // is not a contract. What IS one is that quiet, event-free ticks pull too,
+      // and one halving could only have come from the single event-bearing tick.
+      expect(halvings.indexOf(after.state.safety) + 1).toBeGreaterThanOrEqual(2)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
 })
 
 // ── Subteam A — limbic drives: per-event triage, fast-path, graded ladder ──────

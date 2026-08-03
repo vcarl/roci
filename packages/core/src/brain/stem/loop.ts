@@ -70,6 +70,7 @@ import {
   type EpisodeAttribution,
 } from "../../logging/episodes.js"
 import { discardDeadPlanTodos, drainWmDeltas } from "#brain/limbic/wm/wm-store.js"
+import { advanceMood, readMood } from "#brain/limbic/mood/mood-store.js"
 import { makePlanTodoTracker } from "#brain/limbic/wm/plan-todos.js"
 import { renderSkillIndex, type SkillMeta } from "../../services/skills-core.js"
 import { readIdentityContext } from "#brain/limbic/hippocampus/identity-context.js"
@@ -552,6 +553,12 @@ export const runActivation = (config: ActivationConfig) =>
       yield* appendWmDeltas(config.char, tick, sweptOrphans)
     }
 
+    // The character's smoothed emotional-state vector (design 2026-07-31 §5,
+    // job 2), seeded from disk so a mood survives a process restart the way a
+    // plan does. It is advanced below on EVERY tick and read back at recall time
+    // by the memory gateway, which loads it from the same file.
+    let mood = yield* readMood(config.char)
+
     while (true) {
       tick++
 
@@ -749,6 +756,27 @@ export const runActivation = (config: ActivationConfig) =>
       appraisals.push(...landed.map(({ event, observe }) => ({ event, observe })))
       const esc =
         appraisals.length > 0 ? appraiseTick(appraisals, DEFAULT_APPRAISAL_THRESHOLDS) : emptyEscalation()
+      // Advance the emotional-state EMA — EVERY tick, regardless of disposition,
+      // and outside the `appraisals.length > 0` block below on purpose. A discard
+      // tick and a tick with no events at all both pull the mood toward neutral;
+      // skipping them would leave a character who had one frightening moment
+      // frightened indefinitely, because nothing would ever relax the state back
+      // (design 2026-07-31 §5). The memory-write decision and the mood-update
+      // decision are independent and nothing here couples them.
+      //
+      // The reading is the DOMINANT event's vector, matching the tick-mood rule
+      // two blocks down (`cortex.emotionalWeight = esc.dominant.emotionalWeight`)
+      // so the vector and the emoji come from the same appraisal. No vector, no
+      // dominant, or no events at all → an implicit zero → decay.
+      //
+      // Never fails; persists only when the vector actually moved.
+      mood = yield* advanceMood({
+        char: config.char,
+        prev: mood,
+        observed: esc.dominant?.salience,
+        alpha: runnerConfig.volatility,
+        axes: runnerConfig.axes ?? [],
+      })
       const nonDiscard = esc.accumulated.length > 0
       if (appraisals.length > 0) {
         yield* logBehavior(config.char.name, "cortex", "hindbrain", {

@@ -1,11 +1,13 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, beforeEach } from "vitest"
 import { Effect, Layer, Fiber, TestClock, TestContext } from "effect"
 import {
   buildAdjudicatePrompt,
   runSalienceSweep,
+  resetUnscorableMemo,
   MAX_CONSECUTIVE_MODEL_FAILURES,
   SWEEP_DEADLINE_MS,
   SWEEP_ROW_CAP,
+  SWEEP_FETCH_CAP,
 } from "./salience-sweep.js"
 import { buildAxisSpecs } from "../../../../core/salience.js"
 import { LongtermStore, type PendingMemory } from "./longterm-store.js"
@@ -165,7 +167,9 @@ function makeStore(opts: {
         pendingCalls.push({ containerId, n })
         return opts.failPending
           ? Effect.fail(new Error("pending boom"))
-          : Effect.succeed(opts.rows ?? [])
+          : // Honour `n` — buildPendingSql is `… ORDER BY id ASC LIMIT n`, and a
+            // fake that ignores it cannot reproduce head-of-queue starvation.
+            Effect.succeed((opts.rows ?? []).slice(0, n ?? Number.MAX_SAFE_INTEGER))
       },
       adjudicate: (_id, _c, id, dims) =>
         opts.failAdjudicateIds?.includes(id)
@@ -194,6 +198,12 @@ const runSweep = (
       Effect.provide(layers as Layer.Layer<never>),
     ) as Effect.Effect<{ adjudicated: number; skipped: number }, never, never>,
   )
+
+// The unscorable memo is module state that deliberately outlives one sweep, so
+// it must not outlive one TEST.
+beforeEach(() => {
+  resetUnscorableMemo()
+})
 
 describe("runSalienceSweep", () => {
   it("asks the store for base-stage rows, capped at SWEEP_ROW_CAP", async () => {
@@ -403,5 +413,68 @@ describe("runSalienceSweep", () => {
     expect(store.pendingCalls).toEqual([])
     expect(client.prompts.length).toBe(0)
     expect(out).toEqual({ adjudicated: 0, skipped: 0 })
+  })
+
+  it("does not re-select a row whose answer was unusable — the queue behind it DRAINS", async () => {
+    // 11 rows at `base`, oldest first. Rows 1-10 always sanitize to {} (an
+    // all-zero answer); row 11 is fine. With a plain `LIMIT 10` and no memo,
+    // every cycle forever hands back rows 1-10 and row 11 is unreachable.
+    const rows: PendingMemory[] = []
+    for (let i = 1; i <= 10; i++) {
+      rows.push({ id: i, text: `poison ${i}`, dimsA: { safety: 0.1 }, dimsC: null })
+    }
+    rows.push({ id: 11, text: "clean", dimsA: { safety: 0.2 }, dimsC: null })
+    const store = makeStore({ rows })
+    const client = Layer.succeed(
+      ModelClient,
+      ModelClient.of({
+        complete: (_h, messages) =>
+          Effect.succeed({
+            text: String(messages[0]?.content ?? "").includes("clean")
+              ? '{"safety":0.7}'
+              : '{"safety":0}', // all-zero → sanitizes to {} → unusable
+            raw: {},
+          }),
+      }),
+    )
+    const layers = Layer.mergeAll(store.layer, client, recordingService([]), silentLog)
+
+    const first = await runSweep(layers)
+    expect(first.adjudicated).toBe(0)
+
+    const second = await runSweep(layers)
+    expect(second.adjudicated).toBe(1)
+    expect(store.writes.map((w) => w.id)).toEqual([11])
+    // The second fetch asked for more rows, to see past the memoed ones.
+    expect(store.pendingCalls[0].n).toBe(SWEEP_ROW_CAP)
+    expect(store.pendingCalls[1].n).toBe(SWEEP_ROW_CAP + 10)
+  })
+
+  it("never asks the store for more than SWEEP_FETCH_CAP rows", async () => {
+    const rows: PendingMemory[] = []
+    for (let i = 1; i <= 60; i++) {
+      rows.push({ id: i, text: `poison ${i}`, dimsA: {}, dimsC: null })
+    }
+    const store = makeStore({ rows })
+    const client = capturingClient(['{"safety":0}'])
+    const layers = Layer.mergeAll(store.layer, client.layer, recordingService([]), silentLog)
+    for (let cycle = 0; cycle < 8; cycle++) await runSweep(layers)
+    expect(Math.max(...store.pendingCalls.map((c) => c.n ?? 0))).toBe(SWEEP_FETCH_CAP)
+  })
+
+  it("the memo is per (container, character), not global", async () => {
+    const rows = [{ id: 1, text: "poison 1", dimsA: {}, dimsC: null }]
+    const store = makeStore({ rows })
+    const client = capturingClient(['{"safety":0}'])
+    const layers = Layer.mergeAll(store.layer, client.layer, recordingService([]), silentLog)
+    await runSweep(layers)
+    // A different container is a different memo: the row is tried again.
+    await Effect.runPromise(
+      runSalienceSweep({ char, containerId: "c2", config: config() }).pipe(
+        Effect.provide(layers as Layer.Layer<never>),
+      ) as Effect.Effect<{ adjudicated: number; skipped: number }, never, never>,
+    )
+    expect(store.pendingCalls.map((c) => c.containerId)).toEqual(["c1", "c2"])
+    expect(store.pendingCalls[1].n).toBe(SWEEP_ROW_CAP)
   })
 })

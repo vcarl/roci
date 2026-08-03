@@ -88,6 +88,61 @@ export const SWEEP_DEADLINE_MS = 300_000
 export const MAX_CONSECUTIVE_MODEL_FAILURES = 3
 
 /**
+ * Ceiling on how many rows one sweep may ASK the store for. UNTUNED.
+ *
+ * The sweep over-fetches past rows it already knows it cannot score (see the
+ * memo below); this bounds that growth, so a character with a large permanently
+ * unscorable set cannot turn one `pending` query into an unbounded scan. It only
+ * ever bounds the QUERY — SWEEP_ROW_CAP still bounds the model calls.
+ */
+export const SWEEP_FETCH_CAP = 50
+
+/**
+ * Per-(container, character) ids whose adjudication produced an unusable answer
+ * THIS RUN. Module-level because it must outlive one sweep — the whole point is
+ * that the next cycle looks past them — while a run boundary is a reasonable
+ * place to retry, in case the unusable answer was the model's fault rather than
+ * the row's.
+ *
+ * ── Why this exists ─────────────────────────────────────────────────────────
+ *
+ * `pending` is `WHERE dims_stage = 'base' ORDER BY id ASC LIMIT n`, and a row
+ * whose answer sanitizes to `{}` is deliberately left at `base` (superseding a
+ * real base with `{}` would turn a scored memory into a neutral one on the
+ * strength of a parse miss). Those rows are the OLDEST, so without this memo the
+ * next cycle selects them FIRST, again, forever: everything behind them is never
+ * reached, and each one costs a forebrain cold-spawn every cycle.
+ *
+ * ── The durable fix, and why it is not here ─────────────────────────────────
+ *
+ * The right long-term answer is a TERMINAL STAGE VALUE — a third `dims_stage`
+ * the sweep can move a genuinely unscorable row to, so `pending` stops selecting
+ * it and the fact survives a restart. That needs a new SQL builder, a CLI
+ * grammar change, a deterministic bundle rebuild and the byte-diff gate. This
+ * host-side memo buys the same drain behaviour with none of that, at the cost of
+ * one retry per row per run. Worth replacing when the CLI is next opened.
+ */
+const unscorableThisRun = new Map<string, Set<number>>()
+
+const unscorableFor = (key: string): Set<number> => {
+  let s = unscorableThisRun.get(key)
+  if (!s) {
+    s = new Set<number>()
+    unscorableThisRun.set(key, s)
+  }
+  return s
+}
+
+/**
+ * TEST-ONLY. Drop the unscorable memo so one test's poisoned rows do not leak
+ * into the next. Never called in production — a real run wants the memo to live
+ * exactly as long as the process does.
+ */
+export function resetUnscorableMemo(): void {
+  unscorableThisRun.clear()
+}
+
+/**
  * The adjudicator's prompt. Pure, so the rubric is unit-testable without a
  * model, and a TS builder rather than a `.md` skill because it takes structured
  * per-row inputs rather than a fixed slot set.
@@ -209,10 +264,28 @@ export const runSalienceSweep = (opts: {
       return { adjudicated: 0, skipped: 0 }
     }
     const store = yield* LongtermStore
-    const pending: ReadonlyArray<PendingMemory> = yield* store
-      .pending(containerId, char, SWEEP_ROW_CAP)
+    // Over-fetch past the rows this run already knows it cannot score, so the
+    // queue behind them drains instead of starving (see `unscorableThisRun`).
+    const memoKey = `${containerId}:${char.name}`
+    const unscorable = unscorableFor(memoKey)
+    const fetch = Math.min(SWEEP_ROW_CAP + unscorable.size, SWEEP_FETCH_CAP)
+    const fetched: ReadonlyArray<PendingMemory> = yield* store
+      .pending(containerId, char, fetch)
       .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<PendingMemory>)))
-    if (pending.length === 0) return { adjudicated: 0, skipped: 0 }
+    const pending = fetched.filter((r) => !unscorable.has(r.id)).slice(0, SWEEP_ROW_CAP)
+    if (pending.length === 0) {
+      // Fetched rows but every one of them is memoed: the head of the queue is
+      // entirely unscorable and the over-fetch is not reaching past it. That is
+      // an operational fact, not an idle cycle, so it goes out unsilenceably.
+      if (fetched.length > 0) {
+        yield* logError(
+          char.name,
+          "hippocampus",
+          `Salience sweep found ${fetched.length} pending row(s), all of which already failed adjudication this run (fetch cap ${SWEEP_FETCH_CAP}); nothing was adjudicated`,
+        ).pipe(Effect.catchAll(() => Effect.void))
+      }
+      return { adjudicated: 0, skipped: 0 }
+    }
 
     // The loop's state lives OUTSIDE the deadline-wrapped effect on purpose: when
     // the deadline interrupts the loop mid-row, the work already committed is
@@ -257,7 +330,16 @@ export const runSalienceSweep = (opts: {
         // An empty vector is NOT written. Superseding a real base with `{}` would
         // turn a scored memory into a neutral one on the strength of a parse miss —
         // strictly worse than leaving it at `base` for the next sweep.
-        if (Object.keys(outcome.dims).length === 0) continue
+        //
+        // But the row stays at `base`, and `pending` is ordered oldest-first, so
+        // without the memo it would be re-selected FIRST every cycle forever and
+        // everything behind it would never be reached. The model ANSWERED here —
+        // this is not a tier-health event — so it is the ROW that is set aside,
+        // for this run only.
+        if (Object.keys(outcome.dims).length === 0) {
+          unscorable.add(row.id)
+          continue
+        }
         const wrote = yield* store
           .adjudicate(containerId, char, row.id, outcome.dims)
           .pipe(Effect.as(true), Effect.catchAll(() => Effect.succeed(false)))
