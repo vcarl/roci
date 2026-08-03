@@ -302,7 +302,11 @@ const StubDocker = Layer.succeed(
 )
 const fakeMemory = Layer.succeed(
   MemoryGateway,
-  MemoryGateway.of({ remember: () => Effect.void, recall: () => Effect.succeed("") }),
+  MemoryGateway.of({
+    remember: () => Effect.void,
+    recall: () => Effect.succeed(""),
+    recallWithId: () => Effect.succeed({ block: "", recallId: null }),
+  }),
 )
 const fakeRuntimeDeps = Layer.mergeAll(StubCommandExecutor, StubOAuthToken, StubDocker, fakeMemory)
 
@@ -2152,6 +2156,7 @@ describe("runActivation — limbic drives (per-event triage + escalation ladder)
             if ((w as { source?: string }).source === "observe") observeRemembers++
           }),
         recall: () => Effect.succeed(""),
+        recallWithId: () => Effect.succeed({ block: "", recallId: null }),
       }),
     )
     // Non-discard observe with a reason → observeMemories yields one write per event.
@@ -3086,6 +3091,12 @@ describe("identity/context assembly (single seam, honest empty blocks)", () => {
         remember: () => Effect.void,
         recall: (_c, _ch, _q, opts) =>
           Effect.succeed(opts.label === "You recall" ? "\n\n## You recall\n- RECALL_MARKER" : ""),
+        recallWithId: (_c, _ch, _q, opts) =>
+          Effect.succeed(
+            opts.label === "You recall"
+              ? { block: "\n\n## You recall\n- RECALL_MARKER", recallId: "fake-1" }
+              : { block: "", recallId: null },
+          ),
       }),
     )
     const runtimeDeps = Layer.mergeAll(StubCommandExecutor, StubOAuthToken, StubDocker, populatedMemory)

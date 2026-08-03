@@ -209,17 +209,127 @@ export function situational(hit: MemoryHit, state: Record<string, number>): numb
  * a question the type checker answers. Pass `{}` to mean "no mood" explicitly —
  * which yields a situational factor of exactly 1.
  */
+export interface ScoreBreakdown {
+  /** Relevance — the container's `1/(1+distance)`, or 0 when non-finite. */
+  readonly rel: number
+  /** Reputation weight of the provenance tier. */
+  readonly rep: number
+  /** Recency decay at the salience-modulated half-life. */
+  readonly rec: number
+  /** Situational (mood) factor ∈ [0.5, 1.5] — the only factor that can exceed 1. */
+  readonly sit: number
+  /** The MAGNITUDE reading of `dims`; an INPUT to `rec`, not a factor of the product. */
+  readonly salience: number
+  /** `nowMs − Date.parse(hit.ts)`. NaN when the row's ts is unparseable (→ `rec` = 1). */
+  readonly ageMs: number
+  /** `rel × rep × rec × sit`. */
+  readonly composite: number
+}
+
+/**
+ * The same maths as `compositeScore`, with every factor kept instead of
+ * discarded (instrumentation, 2026-08-03). The product is written in the
+ * original left-to-right order so the float result is bit-identical to what the
+ * scalar form returned — this exists to make scoring OBSERVABLE, never to
+ * change it.
+ *
+ * `salience` and `ageMs` are reported as inputs to `rec` rather than as factors:
+ * multiplying the six numbers below would NOT give `composite`.
+ */
+export function scoreBreakdown(
+  hit: MemoryHit,
+  nowMs: number,
+  salience: Record<string, number>,
+  state: Record<string, number>,
+): ScoreBreakdown {
+  const rel = Number.isFinite(hit.score) ? hit.score : 0
+  const s = salienceWeight(hit, salience) // MAGNITUDE reading — decay
+  const ageMs = nowMs - Date.parse(hit.ts)
+  const rec = recency(ageMs, s)
+  const sit = situational(hit, state) // SIGNED reading — 1 + w·match ∈ [0.5, 1.5]
+  const rep = reputationWeight(hit.provenance)
+  return { rel, rep, rec, sit, salience: s, ageMs, composite: rel * rep * rec * sit }
+}
+
 export function compositeScore(
   hit: MemoryHit,
   nowMs: number,
   salience: Record<string, number>,
   state: Record<string, number>,
 ): number {
-  const rel = Number.isFinite(hit.score) ? hit.score : 0
-  const s = salienceWeight(hit, salience) // MAGNITUDE reading — decay
-  const rec = recency(nowMs - Date.parse(hit.ts), s)
-  const sit = situational(hit, state) // SIGNED reading — 1 + w·match ∈ [0.5, 1.5]
-  return rel * reputationWeight(hit.provenance) * rec * sit
+  return scoreBreakdown(hit, nowMs, salience, state).composite
+}
+
+// ---- Scoring-context identity (instrumentation, 2026-08-03) -----------------
+
+/**
+ * ⚠ HAND-MAINTAINED. **Bump this whenever the SHAPE of the maths above changes**
+ * — a new factor, a removed factor, a different combination rule, a changed
+ * fall-through (e.g. `NEUTRAL_SALIENCE` applied under a new condition), or a
+ * change to `halfLife`/`recency`/`moodMatch`/`situational`/`salienceWeight`.
+ *
+ * It is stamped on every recall telemetry record so pooled data can be split by
+ * scoring epoch. NOTHING ENFORCES THE BUMP. Forgetting it silently merges two
+ * scoring regimes into one dataset, which is exactly the failure this stamp
+ * exists to prevent — so treat it as part of the edit, not as bookkeeping after
+ * it.
+ *
+ * The one thing it does NOT need to cover is the *values* of the knobs below:
+ * `scorerConstants()` is hashed alongside it and changes on its own when a
+ * constant moves. This constant is only for changes a value hash cannot see.
+ *
+ * v1 — the state at the instrumentation commit: rel × rep × rec × sit, with
+ *      salience read twice (magnitude → half-life, sign → mood cosine).
+ */
+export const SCORER_VERSION = "rank-v1"
+
+/**
+ * Every tunable that participates in a composite score, by value. Hashed into
+ * the recall telemetry stamp so a knob change is detectable WITHOUT anyone
+ * remembering to bump `SCORER_VERSION`. Derived from the live constants, so it
+ * cannot drift from them.
+ */
+export function scorerConstants(): Record<string, number> {
+  return {
+    RERANK_OVERFETCH,
+    HALF_LIFE_MIN,
+    HALF_LIFE_MAX,
+    NEUTRAL_SALIENCE,
+    SITUATIONAL_WEIGHT,
+    ...Object.fromEntries(
+      Object.entries(REPUTATION_WEIGHT).map(([k, v]) => [`REPUTATION_WEIGHT.${k}`, v]),
+    ),
+  }
+}
+
+/** One scored candidate, in final rank order, with `returned` marking the top `k`. */
+export interface RankedCandidate {
+  readonly hit: MemoryHit
+  readonly score: ScoreBreakdown
+  /** Survived `slice(0, k)` — i.e. reached the prompt. */
+  readonly returned: boolean
+}
+
+/**
+ * The FULL scored pool, sorted desc, with the top `k` flagged `returned`.
+ *
+ * `rerank` used to drop the losers and every score inside one expression; this
+ * keeps them so recall telemetry can record what lost and why. Same comparator,
+ * same (stable) sort, so the returned prefix is exactly what `rerank` yielded.
+ * Pure; input untouched.
+ */
+export function rerankScored(
+  hits: ReadonlyArray<MemoryHit>,
+  k: number,
+  nowMs: number,
+  salience: Record<string, number>,
+  state: Record<string, number>,
+): RankedCandidate[] {
+  const keep = Math.max(0, k)
+  return hits
+    .map((h) => ({ hit: h, score: scoreBreakdown(h, nowMs, salience, state) }))
+    .sort((a, b) => b.score.composite - a.score.composite)
+    .map((c, i) => ({ ...c, returned: i < keep }))
 }
 
 /** Re-order by composite score (desc) and keep the top `k`. Pure; input untouched. */
@@ -230,9 +340,7 @@ export function rerank(
   salience: Record<string, number>,
   state: Record<string, number>,
 ): MemoryHit[] {
-  return hits
-    .map((h) => ({ h, s: compositeScore(h, nowMs, salience, state) }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, Math.max(0, k))
-    .map((x) => x.h)
+  return rerankScored(hits, k, nowMs, salience, state)
+    .filter((c) => c.returned)
+    .map((c) => c.hit)
 }

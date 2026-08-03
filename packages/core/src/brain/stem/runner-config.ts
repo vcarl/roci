@@ -6,6 +6,7 @@ import { DEFAULT_CORTEX_MODELS, type CortexModelConfig } from "../../model/handl
 import { TEMPLATE_PALETTE } from "../../core/palette.js"
 import { buildAxisSpecs, parseVolatility, TEMPLATE_SALIENCE, type AxisSpec } from "../../core/salience.js"
 import { TEMPLATE_DRIVES } from "#brain/limbic/hypothalamus/drives.js"
+import { publishAxisVocabulary } from "#brain/limbic/hippocampus/memory/scoring-context.js"
 import type { Cadence } from "#brain/limbic/hypothalamus/cadence.js"
 import type { ActivationRunnerConfig } from "./tier-config.js"
 
@@ -62,6 +63,13 @@ export const buildRunnerConfig = (opts: {
         ),
       ),
     )
+    // Mirror the resolved vocabulary into the scoring-context registry so recall
+    // telemetry can stamp WHICH axis world produced its numbers. Publication,
+    // not re-derivation: this stays the one derivation site, and the stamp is by
+    // construction the same list every tier was prompted with. A degraded `[]`
+    // publishes as an ABSENCE, so the stamp reads "unpublished" rather than
+    // claiming a real empty vocabulary.
+    publishAxisVocabulary(opts.char.name, axes)
     return {
       char: opts.char,
       cadence: opts.cadence ?? "planned-action",

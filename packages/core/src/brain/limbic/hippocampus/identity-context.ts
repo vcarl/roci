@@ -41,6 +41,14 @@ export interface IdentityContext {
   diary: string
   synthesis: string
   recalledMemories: string
+  /**
+   * Correlation id of the recall that produced `recalledMemories`, for
+   * `recordRecallUsage` once the orient output exists (logging/recall-usage.ts).
+   * Null when nothing was recalled. Threaded explicitly rather than looked up by
+   * character, because deliberation runs on a forked fiber and a "latest recall"
+   * lookup would mis-attribute against a concurrent loop-fiber recall.
+   */
+  recallId: string | null
   workingMemory: string
 }
 
@@ -115,11 +123,11 @@ export const readIdentityContext = (
     // hits, else "\n\n## You recall\n- …" with its own header — and the
     // template renders it with no surrounding header, so an empty recall never
     // leaves a bare header. See the IDENTITY_PLACEHOLDERS doc above.
-    const recalledMemories = yield* memory.recall(
+    const recalled = yield* memory.recallWithId(
       args.containerId,
       char,
       orientQuery(args.accumulatedEvents, args.emotionalWeight),
-      { k: 2, label: "You recall", maxChars: 300 },
+      { k: 2, label: "You recall", maxChars: 300, site: "orient" },
     )
     // Working memory: the capped, tree-rendered open todo list. renderOpenTodoTree
     // already yields "(no open todos)" when the list is empty, so its placeholder
@@ -131,7 +139,8 @@ export const readIdentityContext = (
       values: orPlaceholder(values, IDENTITY_PLACEHOLDERS.values),
       diary: orPlaceholder(diary, IDENTITY_PLACEHOLDERS.diary),
       synthesis: orPlaceholder(synthesis, IDENTITY_PLACEHOLDERS.synthesis),
-      recalledMemories,
+      recalledMemories: recalled.block,
+      recallId: recalled.recallId,
       workingMemory,
     }
   })

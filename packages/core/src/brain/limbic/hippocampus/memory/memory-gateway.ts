@@ -2,9 +2,19 @@ import { Context, Effect, Layer, Clock } from "effect"
 import { CharacterFs, type CharacterConfig } from "../../../../services/CharacterFs.js"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
 import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
-import { rerank, RERANK_OVERFETCH } from "./memory-rank.js"
+import { rerankScored, RERANK_OVERFETCH } from "./memory-rank.js"
 import { readMood } from "../../mood/mood-store.js"
 import { parseSalience, TEMPLATE_SALIENCE } from "../../../../core/salience.js"
+import { appendRecallTelemetry } from "../../../../logging/recall-telemetry.js"
+import { registerRecallForUsage } from "../../../../logging/recall-usage.js"
+import { captureEpisodeAttribution } from "../../../../logging/episodes.js"
+import { buildScoringContext } from "./scoring-context.js"
+import {
+  applyInjection,
+  createRng,
+  decideInjection,
+  resolveInjectionConfig,
+} from "./recall-injection.js"
 
 /** One unit to persist: the source phase, the text, derived tags, and an optional salience signature. */
 export interface MemoryWrite {
@@ -169,14 +179,53 @@ export function formatRecall(
 const normalize = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ")
 const DEDUP_CAP = 512
 
+/**
+ * What a caller asks a recall for. `site` names the harness call site and is the
+ * ONLY reliable way to tell recalls apart in telemetry — `label` is a prompt
+ * heading and decide/evaluate share one ("Relevant memories"). It must be one of
+ * the covered entries in `RECALL_SITES` (logging/recall-telemetry.ts).
+ */
+export interface RecallOpts {
+  readonly k: number
+  readonly label: string
+  readonly maxChars?: number
+  readonly tags?: ReadonlyArray<string>
+  readonly site?: string
+}
+
+/**
+ * A recall plus the id that joins its telemetry record to the usage record the
+ * caller emits once the agent's output for this step exists.
+ *
+ * `recallId` is null exactly when nothing reached the prompt (empty query, or no
+ * hits) — there is then nothing to score and `recordRecallUsage` is a no-op.
+ */
+export interface RecallWithId {
+  readonly block: string
+  readonly recallId: string | null
+}
+
 export interface MemoryGatewayApi {
   readonly remember: (containerId: string, char: CharacterConfig, write: MemoryWrite) => Effect.Effect<void, never>
   readonly recall: (
     containerId: string,
     char: CharacterConfig,
     query: string,
-    opts: { readonly k: number; readonly label: string; readonly maxChars?: number; readonly tags?: ReadonlyArray<string> },
+    opts: RecallOpts,
   ) => Effect.Effect<string, never>
+  /**
+   * `recall`, plus the correlation id. Use this at any call site that will later
+   * record usage (logging/recall-usage.ts): the id must be threaded EXPLICITLY
+   * from the recall to the output it fed, because a "most recent recall for this
+   * character" lookup would mis-attribute whenever the forked deliberation fiber
+   * and the loop fiber recall concurrently.
+   */
+  readonly recallWithId: (
+    containerId: string,
+    char: CharacterConfig,
+    query: string,
+    opts: RecallOpts,
+  ) => Effect.Effect<RecallWithId, never>
 }
 
 export class MemoryGateway extends Context.Tag("MemoryGateway")<MemoryGateway, MemoryGatewayApi>() {}
@@ -200,6 +249,19 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
     // container, but parsing every recall is wasteful (Phase 3 §9). The profile is
     // authored once at scaffold time, so caching for the process lifetime is safe.
     const profileCache = new Map<string, Record<string, number>>()
+    // Randomised candidate injection (recall-injection.ts): the control arm.
+    // ONE generator per layer construction, seeded once, so the whole run's
+    // draws replay from `seed` + the per-recall `drawIndex` recorded on every
+    // record. Off by default under vitest; `rate: 0` disables it completely.
+    const injectionCfg = resolveInjectionConfig()
+    const injectionRng = createRng(injectionCfg.seed)
+    let injectionDraws = 0
+    // Correlation ids. A per-layer nonce keeps ids unique ACROSS process
+    // restarts appending to the same jsonl (tick and epoch alone do not: tick
+    // restarts at 0, and two runs can share an epoch), and the monotonic suffix
+    // keeps them unique within one. Short on purpose — it rides every record.
+    const recallNonce = Math.random().toString(36).slice(2, 8)
+    let recallSeq = 0
     const loadSalience = (containerId: string, char: CharacterConfig) =>
       Effect.gen(function* () {
         const key = `${containerId}:${char.name}`
@@ -211,6 +273,136 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
         const profile = parseSalience(md)
         profileCache.set(key, profile)
         return profile
+      })
+    const recallWithId = (
+      containerId: string,
+      char: CharacterConfig,
+      query: string,
+      opts: RecallOpts,
+    ): Effect.Effect<RecallWithId, never> =>
+      Effect.gen(function* () {
+        const q = query.trim()
+        if (!q) return { block: "", recallId: null }
+        // Over-fetch, then re-rank down to k by relevance × trust × salience-decay.
+        const hits = yield* store
+          .recall(containerId, char, q, { k: opts.k * RERANK_OVERFETCH, tags: opts.tags })
+          .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<MemoryHit>)))
+        const now = yield* Clock.currentTimeMillis
+        const salience = yield* loadSalience(containerId, char)
+        // The character's smoothed emotional state (design 2026-07-31 §5, job
+        // 2). Read per recall rather than cached like the salience profile
+        // above, because unlike the profile it MOVES — the tick loop rewrites
+        // it whenever the mood changes, and a cached copy would pin recall to
+        // whatever the character felt at the first recall of the process.
+        // Never fails: a missing file is `{}`, which makes the situational
+        // factor exactly 1 and leaves ranking as it was.
+        const state = yield* readMood(char)
+        const scored = rerankScored(hits, opts.k, now, salience, state)
+        // Randomised injection swaps ONE uniformly-drawn rejected candidate in
+        // for the lowest-ranked winner, on `rate` of recalls. It runs BEFORE
+        // `ranked` is derived because it genuinely changes what the character
+        // sees — that is what makes the accumulated injections an unbiased
+        // sample of the pool rather than a log annotation. At rate 0 (the
+        // default under vitest) `decideInjection` draws nothing and
+        // `applyInjection` returns the pool verbatim.
+        const decision = decideInjection(
+          scored.length,
+          scored.filter((c) => c.returned).length,
+          injectionCfg,
+          injectionRng,
+          injectionDraws,
+        )
+        injectionDraws += 1
+        const finalPool = applyInjection(scored, decision)
+        const ranked = finalPool.filter((c) => c.returned).map((c) => c.hit)
+        recallSeq += 1
+        const recallId = `${recallNonce}-${recallSeq}`
+        const site = opts.site ?? "unknown"
+        const block = formatRecall(ranked, opts.label, now, opts.maxChars)
+        // `maxChars` can cut the block mid-line (orient: k=2, maxChars=300), so
+        // "returned" is not the same as "the model saw all of it". Recompute
+        // each line exactly as formatRecall renders it and ask whether it
+        // survived intact — otherwise usage would be scored against text that
+        // was never shown.
+        const lineOf = (h: MemoryHit): string =>
+          `- (${h.provenance} · ${formatAge(now - Date.parse(h.ts))}) ${h.text}`
+        // Hold the memories that actually REACHED the prompt (the injected one
+        // included — it is the control arm) so the caller can score them
+        // against the output this recall fed. Text lives only here: the
+        // telemetry record below carries ids and scores, not text. Purely
+        // in-memory and bounded; nothing here can fail.
+        if (ranked.length > 0) {
+          registerRecallForUsage(char.name, {
+            recallId,
+            site,
+            label: opts.label,
+            k: opts.k,
+            poolSize: finalPool.length,
+            ...captureEpisodeAttribution(char.name),
+            candidates: finalPool.flatMap((c, i) =>
+              c.returned
+                ? [
+                    {
+                      id: c.hit.id,
+                      rank: i + 1,
+                      injection:
+                        i === decision.injectedIndex ? ("random" as const) : ("ranked" as const),
+                      text: c.hit.text,
+                      promptLineIntact: block.includes(lineOf(c.hit)),
+                    },
+                  ]
+                : [],
+            ),
+          })
+        }
+        // Telemetry: the WHOLE scored pool, losers included, before it is
+        // thrown away (logging/recall-telemetry.ts). Never fails, so recall
+        // does not depend on the write succeeding.
+        yield* appendRecallTelemetry(char, {
+          recallId,
+          site,
+          label: opts.label,
+          query: q,
+          tags: opts.tags,
+          k: opts.k,
+          overfetch: RERANK_OVERFETCH,
+          nowMs: now,
+          mood: state,
+          salienceProfile: salience,
+          scoringContext: buildScoringContext(char.name),
+          injection: {
+            enabled: decision.enabled,
+            rate: decision.rate,
+            seed: decision.seed,
+            drawIndex: decision.drawIndex,
+            draw: decision.draw,
+            pick: decision.pick,
+            fired: decision.fired,
+            eligibleRejected: decision.eligibleRejected,
+            injectedIndex: decision.injectedIndex,
+            displacedIndex: decision.displacedIndex,
+          },
+          candidates: finalPool.map((c, i) => ({
+            id: c.hit.id,
+            source: c.hit.source,
+            provenance: c.hit.provenance,
+            ts: c.hit.ts,
+            stage: c.hit.stage,
+            dims: c.hit.dims,
+            returned: c.returned,
+            injection: i === decision.injectedIndex ? ("random" as const) : ("ranked" as const),
+            score: {
+              rel: c.score.rel,
+              rep: c.score.rep,
+              rec: c.score.rec,
+              sit: c.score.sit,
+              salience: c.score.salience,
+              ageMs: Number.isFinite(c.score.ageMs) ? c.score.ageMs : null,
+              composite: c.score.composite,
+            },
+          })),
+        })
+        return { block, recallId: ranked.length > 0 ? recallId : null }
       })
     return MemoryGateway.of({
       remember: (containerId, char, write) =>
@@ -229,27 +421,9 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
             .remember(containerId, char, { text, source: write.source, tags: write.tags, dims: write.dims })
             .pipe(Effect.catchAll(() => Effect.void))
         }),
+      recallWithId,
       recall: (containerId, char, query, opts) =>
-        Effect.gen(function* () {
-          const q = query.trim()
-          if (!q) return ""
-          // Over-fetch, then re-rank down to k by relevance × trust × salience-decay.
-          const hits = yield* store
-            .recall(containerId, char, q, { k: opts.k * RERANK_OVERFETCH, tags: opts.tags })
-            .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<MemoryHit>)))
-          const now = yield* Clock.currentTimeMillis
-          const salience = yield* loadSalience(containerId, char)
-          // The character's smoothed emotional state (design 2026-07-31 §5, job
-          // 2). Read per recall rather than cached like the salience profile
-          // above, because unlike the profile it MOVES — the tick loop rewrites
-          // it whenever the mood changes, and a cached copy would pin recall to
-          // whatever the character felt at the first recall of the process.
-          // Never fails: a missing file is `{}`, which makes the situational
-          // factor exactly 1 and leaves ranking as it was.
-          const state = yield* readMood(char)
-          const ranked = rerank(hits, opts.k, now, salience, state)
-          return formatRecall(ranked, opts.label, now, opts.maxChars)
-        }),
+        recallWithId(containerId, char, query, opts).pipe(Effect.map((r) => r.block)),
     })
   }),
 )

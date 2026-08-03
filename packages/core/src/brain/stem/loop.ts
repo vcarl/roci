@@ -20,7 +20,8 @@ import { resolveHandle, type CortexModelConfig } from "../../model/handles.js"
 import { DEFAULT_MODEL_CONFIG, type ModelConfig } from "../../core/model-config.js"
 import type { Cadence } from "#brain/limbic/hypothalamus/cadence.js"
 import type { Alert } from "../../core/types.js"
-import type { ObserveResult, OrientResult, DecideResult } from "../../skills/types.js"
+import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../skills/types.js"
+import { recordRecallUsage } from "../../logging/recall-usage.js"
 import { Docker } from "../../services/Docker.js"
 import {
   MemoryGateway,
@@ -144,6 +145,54 @@ const duplicateAppraisal = (nTimes: number): ObserveResult => ({
 
 const AVAILABLE_ACTIONS =
   "Each plan step is executed by the conscious agent (local LLM in an OpenCode session with full tool access). Plan concrete steps; each step.task names the action and step.goal describes the outcome."
+
+// ---- Recall-usage output extraction (logging/recall-usage.ts) --------------
+//
+// The text a tier actually PRODUCED for the step its recall fed. Only
+// natural-language fields are joined: enums (`decision`, `confidence`,
+// `judgment`) and ids would contribute meaningless shared tokens. These are the
+// exact strings compared against the recalled memories — any field left out here
+// is a place a memory could have been quoted and gone unmeasured, so keep them
+// exhaustive over the free-text surface of each result type.
+
+// These read MODEL OUTPUT, which is only structurally validated at the edges the
+// loop actually branches on — `isWellFormedDiscover` exists precisely because
+// `{"decision":"discover"}` with no `discover` object reaches this code. So every
+// access here is defensive: telemetry must never be the thing that breaks a tick.
+const textParts = (parts: ReadonlyArray<unknown>): string =>
+  parts.filter((s): s is string => typeof s === "string" && s.trim() !== "").join("\n")
+
+export function orientOutputText(o: OrientResult): string {
+  const sections = Array.isArray(o?.sections) ? o.sections : []
+  return textParts([
+    o?.headline,
+    ...sections.map((s) => (s ? `${s.heading}: ${s.body}` : "")),
+    o?.whatChanged,
+  ])
+}
+
+export function decideOutputText(d: DecideResult): string {
+  const parts: unknown[] = [d?.reasoning]
+  if (d?.decision === "plan")
+    for (const s of Array.isArray(d.steps) ? d.steps : [])
+      parts.push(s ? `${s.task}: ${s.goal}` : "", s?.successCondition)
+  if (d?.decision === "wait") parts.push(d.wait?.waitingFor, d.wait?.resolutionSignal)
+  if (d?.decision === "terminate") parts.push(d.summary)
+  if (d?.decision === "discover")
+    parts.push(...(Array.isArray(d.discover?.questions) ? d.discover.questions : []))
+  return textParts(parts)
+}
+
+export function evaluateOutputText(e: EvaluateResult): string {
+  const t = e?.transition
+  return textParts([
+    e?.reasoning,
+    t?.transition === "replan" ? t.reason : "",
+    t?.transition === "wait" ? t.wait?.waitingFor : "",
+    t?.transition === "wait" ? t.wait?.resolutionSignal : "",
+    t?.transition === "terminate" ? t.summary : "",
+  ])
+}
 
 /**
  * The fork-time snapshot the idle deliberation runs over (spec: non-blocking
@@ -385,19 +434,28 @@ export const runActivation = (config: ActivationConfig) =>
           snap.attribution,
         )
         yield* logBehavior(config.char.name, "cortex", "forebrain", { type: "orient", headline: orient.headline })
+        // Recall-usage label for the ORIENT recall: this is the first moment the
+        // output that recall fed exists. Emitted BEFORE orientMemories writes the
+        // orient text back into the store, which is irrelevant to the score (the
+        // comparison is against the in-memory candidates) but keeps the ordering
+        // obvious.
+        yield* recordRecallUsage(config.char, identity.recallId, {
+          outputKind: "orient",
+          output: orientOutputText(orient),
+        })
         for (const w of orientMemories(orient)) yield* memory.remember(config.containerId, config.char, w)
-        const decideRecall = yield* memory.recall(
+        const decideRecall = yield* memory.recallWithId(
           config.containerId,
           config.char,
           decideQuery(orient),
-          { k: 5, label: "Relevant memories" },
+          { k: 5, label: "Relevant memories", site: "decide" },
         )
         const decide = yield* runConsciousDecide(
           runnerConfig,
           orient,
           "No active plan.",
           AVAILABLE_ACTIONS,
-          decideRecall,
+          decideRecall.block,
           identity.workingMemory,
           skillIndex,
           snap.attribution,
@@ -405,6 +463,10 @@ export const runActivation = (config: ActivationConfig) =>
           // grounds its choice in the live world, not the synthesis's narrative.
           snap.summaryJson,
         )
+        yield* recordRecallUsage(config.char, decideRecall.recallId, {
+          outputKind: "decide",
+          output: decideOutputText(decide),
+        })
         for (const w of decideMemories(decide)) yield* memory.remember(config.containerId, config.char, w)
         yield* (decide.decision === "plan" || decide.decision === "wait" || decide.decision === "terminate"
           ? logBehavior(config.char.name, "cortex", "conscious", { type: "decision", disposition: decide.decision })
@@ -988,11 +1050,11 @@ export const runActivation = (config: ActivationConfig) =>
             const conditionCheck = doneSignaled
               ? `Agent signaled completion (${STEP_DONE_MARKER}) after ${ticksConsumed} ticks`
               : `Tick budget elapsed: ${ticksConsumed} ticks consumed of ${step.timeoutTicks} budgeted; no completion signal`
-            const evalRecall = yield* memory.recall(
+            const evalRecall = yield* memory.recallWithId(
               config.containerId,
               config.char,
               evaluateQuery(step.task, step.goal),
-              { k: 5, label: "Relevant memories" },
+              { k: 5, label: "Relevant memories", site: "evaluate" },
             )
             // Model call behind the session owner; it fills executionReport from
             // its own accumulated step report (the loop never touches the transcript).
@@ -1010,7 +1072,11 @@ export const runActivation = (config: ActivationConfig) =>
                   .slice(stepIdx + 1)
                   .map((s) => `${s.task}: ${s.goal}`)
                   .join("\n") || "None.",
-              recalledMemories: evalRecall,
+              recalledMemories: evalRecall.block,
+            })
+            yield* recordRecallUsage(config.char, evalRecall.recallId, {
+              outputKind: "evaluate",
+              output: evaluateOutputText(evalResult),
             })
             yield* logBehavior(config.char.name, "cortex", "conscious", {
               type: "note",

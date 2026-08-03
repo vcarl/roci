@@ -5,6 +5,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { CharacterLog, logToConsole, logError, logBehavior } from "@roci/core/logging/log-writer.js"
 import { LLM_ENV_VAR, DEFAULT_LLM_ENV_DIRNAME } from "@roci/core/services/mlx-backend.js"
+import { EMBED_MODEL_ENV } from "@roci/core/brain/limbic/hippocampus/memory/embed-endpoint.js"
 
 /**
  * Resilient sibling launcher for the host long-term-memory embeddings server
@@ -302,6 +303,14 @@ export function launchEmbedServer(
     if (typeof child.pid === "number") {
       registerEmbedServer(child.pid, child.pid)
     }
+    // Publish WHICH model we just spawned so host-side instrumentation can stamp
+    // the embedder identity on recall telemetry (embed-endpoint.ts:EMBED_MODEL_ENV).
+    // Deliberately set only after a spawn actually happened: every early return
+    // above leaves it unset, and an unset var is recorded as "unknown" rather
+    // than asserting a model that is not serving.
+    yield* Effect.sync(() => {
+      process.env[EMBED_MODEL_ENV] = EMBED_MODEL
+    })
 
     const ready = yield* probeReady(EMBED_PORT, fetchImpl)
     if (ready) {

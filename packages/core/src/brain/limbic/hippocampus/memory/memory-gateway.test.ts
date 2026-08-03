@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { Context, Effect, Layer } from "effect"
@@ -6,8 +6,20 @@ import { describe, it, expect } from "vitest"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
 import { CharacterFs, type CharacterConfig } from "../../../../services/CharacterFs.js"
 import type { OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
-import { RERANK_OVERFETCH } from "./memory-rank.js"
+import { RERANK_OVERFETCH, SCORER_VERSION } from "./memory-rank.js"
+import { clearAxisVocabulary, publishAxisVocabulary } from "./scoring-context.js"
 import { TEMPLATE_SALIENCE } from "../../../../core/salience.js"
+import {
+  RECALL_SITES,
+  RECALL_TELEMETRY_FILE,
+  type RecallTelemetryRecord,
+} from "../../../../logging/recall-telemetry.js"
+import {
+  RECALL_USAGE_FILE,
+  recordRecallUsage,
+  resetPendingRecalls,
+  type RecallUsageRecord,
+} from "../../../../logging/recall-usage.js"
 import {
   observeMemories,
   orientMemories,
@@ -20,7 +32,11 @@ import {
   MemoryGatewayLive,
 } from "./memory-gateway.js"
 
-const char = { name: "ada" } as CharacterConfig
+// A real (empty) root: recall now appends telemetry under logsDir(char), and a
+// character with no root would make every recall test log a swallowed write
+// failure. No mood.json is written here, so readMood still degrades to `{}`.
+const SUITE_ROOT = mkdtempSync(path.join(tmpdir(), "roci-gw-"))
+const char = { name: "ada", root: path.join(SUITE_ROOT, "ada") } as CharacterConfig
 
 function fakeStore(opts: { hits?: MemoryHit[]; fail?: boolean } = {}) {
   const remembered: Array<{ text: string; source: string; tags: ReadonlyArray<string> }> = []
@@ -361,9 +377,9 @@ describe("MemoryGateway", () => {
   })
 
   it("degrades to an inert situational factor when there is no mood file", async () => {
-    // Every other test in this file uses a character with no `root` at all, so
-    // this is also the assertion that they keep passing: no mood → factor 1 →
-    // ranking is exactly what it was before the situational term existed.
+    // Every other test in this file uses a character whose root holds no
+    // mood.json, so this is also the assertion that they keep passing: no mood →
+    // factor 1 → ranking is exactly what it was before the situational term existed.
     const ts = new Date().toISOString()
     const store = fakeStore({
       hits: [
@@ -376,5 +392,266 @@ describe("MemoryGateway", () => {
       Effect.flatMap(MemoryGateway, (g) => g.recall("cid", char, "q", { k: 2, label: "Relevant memories" })),
     )
     expect(block.indexOf("HIGHTRUST")).toBeLessThan(block.indexOf("LOWTRUST"))
+  })
+})
+
+describe("recall telemetry", () => {
+  const poolHits = (n: number): MemoryHit[] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: i + 1,
+      ts: new Date().toISOString(),
+      source: "orient",
+      provenance: "grounded" as const,
+      tags: [],
+      text: `hit-${i + 1}`,
+      score: 1 - i / 100,
+      dims: {},
+      stage: "base" as const,
+    }))
+
+  it("emits one record carrying the WHOLE scored pool, k of it flagged returned", async () => {
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-tel-"))
+    const telChar = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    const store = fakeStore({ hits: poolHits(7) })
+    const block = await run(
+      store,
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", telChar, "why did the hull scrape", { k: 3, label: "Relevant memories" }),
+      ),
+    )
+    const lines = readFileSync(
+      path.join(telChar.root, "logs", RECALL_TELEMETRY_FILE),
+      "utf8",
+    ).trim().split("\n")
+    expect(lines).toHaveLength(1)
+    const rec = JSON.parse(lines[0]) as RecallTelemetryRecord
+
+    // The losers survive: every scored candidate is present, not just the top k.
+    expect(rec.poolSize).toBe(7)
+    expect(rec.candidates).toHaveLength(7)
+    expect(rec.returnedCount).toBe(3)
+    expect(rec.candidates.filter((c) => c.returned)).toHaveLength(3)
+    // …and exactly the ones that reached the prompt.
+    for (const c of rec.candidates) {
+      expect(block.includes(`hit-${c.id}`)).toBe(c.returned)
+    }
+    // The pool is NOT the character's memories — the record must say so itself.
+    expect(rec.poolTruncatedUpstream).toBe(true)
+    expect(rec.fetchLimit).toBe(3 * RERANK_OVERFETCH)
+    // Every factor recorded, and the product is the score that was sorted on.
+    const top = rec.candidates[0]
+    expect(top.score.rel * top.score.rep * top.score.rec * top.score.sit)
+      .toBeCloseTo(top.score.composite, 12)
+    // Mood diagnostics: distinguishable "no mood" rather than an absent field.
+    expect(rec.mood).toMatchObject({ norm: 0, nonZeroAxes: 0, empty: true })
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it("stamps WHICH scoring world produced the numbers, and marks its absences as absences", async () => {
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-ctx-"))
+    const telChar = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    // Exactly what buildRunnerConfig publishes at the ONE derivation site.
+    publishAxisVocabulary("ada", [
+      { name: "safety", polarity: "unipolar", positiveGloss: "safety: staying intact", negativeGloss: "" },
+      { name: "grumbling-tender", polarity: "bipolar", positiveGloss: "tender", negativeGloss: "grumbling" },
+    ])
+    try {
+      await run(
+        fakeStore({ hits: poolHits(4) }),
+        Effect.flatMap(MemoryGateway, (g) =>
+          g.recall("cid", telChar, "q", { k: 2, label: "Relevant memories" }),
+        ),
+      )
+      const rec = JSON.parse(
+        readFileSync(path.join(telChar.root, "logs", RECALL_TELEMETRY_FILE), "utf8").trim(),
+      ) as RecallTelemetryRecord
+      const ctx = rec.scoringContext
+      expect(ctx.axisNames).toEqual(["safety", "grumbling-tender"])
+      expect(ctx.axisVocabHash).toMatch(/^[0-9a-f]{16}$/)
+      expect(ctx.axisGlossHash).toMatch(/^[0-9a-f]{16}$/)
+      expect(ctx.axisSource).toBe("runner-config")
+      expect(ctx.glossAvailability).toBe("host-resolved")
+      expect(ctx.constants.RERANK_OVERFETCH).toBe(RERANK_OVERFETCH)
+      expect(ctx.scorerVersion).toBe(SCORER_VERSION)
+      // No launcher published a model here, so the record says so rather than guessing.
+      expect(ctx.embedder).toMatchObject({ model: null, modelSource: "unknown" })
+    } finally {
+      clearAxisVocabulary()
+      rmSync(tmpRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("injection is off by default under vitest, and swaps a REJECTED candidate into the prompt when forced on", async () => {
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-inj-"))
+    const offChar = { name: "ada", root: path.join(tmpRoot, "off") } as CharacterConfig
+    const onChar = { name: "ada", root: path.join(tmpRoot, "on") } as CharacterConfig
+    const readRec = (c: CharacterConfig): RecallTelemetryRecord =>
+      JSON.parse(readFileSync(path.join(c.root, "logs", RECALL_TELEMETRY_FILE), "utf8").trim())
+
+    await run(
+      fakeStore({ hits: poolHits(8) }),
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", offChar, "q", { k: 2, label: "Relevant memories" }),
+      ),
+    )
+    const off = readRec(offChar)
+    expect(off.injection).toMatchObject({ enabled: false, rate: 0, fired: false })
+    expect(off.candidates.every((c) => c.injection === "ranked")).toBe(true)
+
+    process.env.ROCI_RECALL_INJECTION_RATE = "1"
+    process.env.ROCI_RECALL_INJECTION_SEED = "gateway-test"
+    let block: string
+    try {
+      block = await run(
+        fakeStore({ hits: poolHits(8) }),
+        Effect.flatMap(MemoryGateway, (g) =>
+          g.recall("cid", onChar, "q", { k: 2, label: "Relevant memories" }),
+        ),
+      )
+    } finally {
+      delete process.env.ROCI_RECALL_INJECTION_RATE
+      delete process.env.ROCI_RECALL_INJECTION_SEED
+    }
+    const on = readRec(onChar)
+    expect(on.injection).toMatchObject({ enabled: true, rate: 1, fired: true, seed: "gateway-test" })
+    // The injected candidate came from OUTSIDE the ranker's top k…
+    expect(on.injection.injectedRank as number).toBeGreaterThan(2)
+    // …and it is the one, and only one, flagged random.
+    const random = on.candidates.filter((c) => c.injection === "random")
+    expect(random).toHaveLength(1)
+    expect(random[0].id).toBe(on.injection.injectedId)
+    // The prompt reflects the swap: injected in, displaced out, count unchanged.
+    expect(on.returnedCount).toBe(2)
+    expect(block).toContain(`hit-${on.injection.injectedId}`)
+    expect(block).not.toContain(`hit-${on.injection.displacedId}`)
+    // …and the displaced one is still recognisable: top-k rank, but not returned.
+    const displaced = on.candidates.find((c) => c.id === on.injection.displacedId)
+    expect(displaced).toMatchObject({ rank: 2, returned: false, injection: "ranked" })
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it("declares its own partial coverage on every record", async () => {
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-cov-"))
+    const c = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    await run(
+      fakeStore({ hits: poolHits(2) }),
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", c, "q", { k: 1, label: "Relevant memories", site: "decide" }),
+      ),
+    )
+    const rec = JSON.parse(
+      readFileSync(path.join(c.root, "logs", RECALL_TELEMETRY_FILE), "utf8").trim(),
+    ) as RecallTelemetryRecord
+    expect(rec.coverage.site).toBe("decide")
+    // macro.ts calls LongtermStore.recall directly and the agent can search in
+    // the container: three of five known paths reach this stream, and the record
+    // NAMES the two that do not rather than leaving the gap silent.
+    expect(rec.coverage.uncovered).toEqual(["macro-synthesis", "agent-container-search"])
+    expect(rec.coverage.knownSites).toBe(RECALL_SITES.length)
+    expect(rec.coverage.coveredSites).toBe(3)
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it("the usage record joins its recall record by recallId, and scores the injected control like any other candidate", async () => {
+    resetPendingRecalls()
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-usage-"))
+    const c = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    // Real prose, so textual overlap means something.
+    const texts = [
+      "The jump to Horizon failed because the drive coil overheated at 3.5 AU.",
+      "Pilots from Famine and Pedro Vaz were docked at Altais when I arrived.",
+      "The broker at Altais pays 41 credits per unit of raw iridium ore.",
+      "A scan of the Horizon gate returned coordinates 3.5 and minus 0.8.",
+      "Refuelling costs twice as much at Famine as it does at Altais.",
+      "The cargo bay seal has been leaking since the second mining run.",
+    ]
+    const hits: MemoryHit[] = texts.map((text, i) => ({
+      id: 100 + i,
+      ts: new Date().toISOString(),
+      source: "orient",
+      provenance: "grounded" as const,
+      tags: [],
+      text,
+      score: 1 - i / 100,
+      dims: {},
+      stage: "base" as const,
+    }))
+
+    process.env.ROCI_RECALL_INJECTION_RATE = "1"
+    process.env.ROCI_RECALL_INJECTION_SEED = "usage-join-test"
+    let recallId: string | null
+    try {
+      recallId = await run(
+        fakeStore({ hits }),
+        Effect.flatMap(MemoryGateway, (g) =>
+          g
+            .recallWithId("cid", c, "why did the jump fail", {
+              k: 2,
+              label: "Relevant memories",
+              site: "decide",
+            })
+            .pipe(Effect.map((r) => r.recallId)),
+        ),
+      )
+    } finally {
+      delete process.env.ROCI_RECALL_INJECTION_RATE
+      delete process.env.ROCI_RECALL_INJECTION_SEED
+    }
+    const recall = JSON.parse(
+      readFileSync(path.join(c.root, "logs", RECALL_TELEMETRY_FILE), "utf8").trim(),
+    ) as RecallTelemetryRecord
+    expect(recallId).toBe(recall.recallId)
+    expect(recall.injection.fired).toBe(true)
+
+    // The agent's output for the step quotes the INJECTED (control) memory
+    // verbatim and never mentions the ranked winners.
+    const injected = recall.candidates.find((x) => x.id === recall.injection.injectedId)
+    if (!injected) throw new Error("no injected candidate")
+    const injectedText = texts[injected.id - 100]
+    await Effect.runPromise(
+      recordRecallUsage(c, recallId, {
+        outputKind: "decide",
+        output: `Replanning. ${injectedText} I will vent heat before re-attempting.`,
+      }),
+    )
+
+    const usage = JSON.parse(
+      readFileSync(path.join(c.root, "logs", RECALL_USAGE_FILE), "utf8").trim(),
+    ) as RecallUsageRecord
+    // THE JOIN: same id, and the usage candidates are exactly the recall
+    // record's returned set.
+    expect(usage.recallId).toBe(recall.recallId)
+    expect(usage.site).toBe("decide")
+    expect(usage.candidates.map((x) => x.memoryId).sort()).toEqual(
+      recall.candidates.filter((x) => x.returned).map((x) => x.id).sort(),
+    )
+    // The control arm is scored, not skipped — excluding it would destroy it.
+    const control = usage.candidates.find((x) => x.injection === "random")
+    if (!control) throw new Error("injected candidate missing from usage record")
+    expect(control.memoryId).toBe(recall.injection.injectedId)
+    expect(control.contentContainment).toBe(1)
+    expect(control.longestMatchedNgram).toBe(8)
+    // …and the ranked candidate the agent did not quote scores near zero, so the
+    // signal discriminates rather than firing on everything.
+    const ranked = usage.candidates.filter((x) => x.injection === "ranked")
+    expect(ranked.length).toBeGreaterThan(0)
+    for (const r of ranked) expect(r.contentContainment as number).toBeLessThan(0.5)
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it("a telemetry write failure cannot break a recall", async () => {
+    // Root whose parent is a FILE: mkdir(logsDir) fails with ENOTDIR.
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-tel-fail-"))
+    writeFileSync(path.join(tmpRoot, "blocked"), "not a directory")
+    const brokenChar = { name: "ada", root: path.join(tmpRoot, "blocked", "ada") } as CharacterConfig
+    const store = fakeStore({ hits: poolHits(2) })
+    const block = await run(
+      store,
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", brokenChar, "q", { k: 1, label: "Relevant memories" }),
+      ),
+    )
+    expect(block).toContain("hit-1")
+    rmSync(tmpRoot, { recursive: true, force: true })
   })
 })

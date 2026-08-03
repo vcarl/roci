@@ -17,6 +17,22 @@ import { hostInternalBaseUrl } from "../../../../services/host-url.js"
 /** Default host embed server base URL (standalone host process; port 8084). */
 export const DEFAULT_EMBED_BASE_URL = "http://127.0.0.1:8084/v1"
 
+/**
+ * Process-env var by which the launcher publishes WHICH embedding model it
+ * actually spawned, so instrumentation can stamp it (scoring-context.ts).
+ *
+ * The model id lives in `apps/roci/src/embed-server.ts` and in the python
+ * server's own default — neither of which `packages/core` can import (apps
+ * depend on core, not the reverse). Without this hand-off the host's honest
+ * answer to "which embedder produced these vectors" is only a URL, and a
+ * SAME-DIMENSION model swap is invisible to every guard in the system (see
+ * `axis-score.ts`'s `cosine`, which returns 0 only on a dimension mismatch).
+ *
+ * Set by the launcher AFTER it has actually spawned the server; unset means
+ * "nobody told us", which the stamp records as such rather than guessing.
+ */
+export const EMBED_MODEL_ENV = "ROCI_EMBED_MODEL"
+
 /** Resolve the concrete embeddings endpoint: host-rewrite the base URL + `/embeddings`. */
 export function embedEndpoint(baseUrl: string): string {
   const base = hostInternalBaseUrl(baseUrl).replace(/\/+$/, "")

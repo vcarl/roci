@@ -4,7 +4,9 @@ import {
   RERANK_OVERFETCH,
   reputationWeight,
   compositeScore,
+  scoreBreakdown,
   rerank,
+  rerankScored,
   salienceWeight,
   halfLife,
   recency,
@@ -230,5 +232,41 @@ describe("rerank", () => {
   it("over-fetch factor is a positive integer > 1", () => {
     expect(Number.isInteger(RERANK_OVERFETCH)).toBe(true)
     expect(RERANK_OVERFETCH).toBeGreaterThan(1)
+  })
+})
+
+describe("scoreBreakdown / rerankScored (instrumentation — must not move the maths)", () => {
+  const salience = { safety: 1.0 }
+  const mood = { safety: 1.0 }
+  const cases: MemoryHit[] = [
+    hit({ id: 1, provenance: "grounded", score: 0.6, dims: { safety: 1.0 } }),
+    hit({ id: 2, provenance: "asserted", score: 0.9, dims: { safety: -0.8 } }),
+    hit({ id: 3, provenance: "episodic", score: 0.5, ts: new Date(NOW - 3 * 86_400_000).toISOString() }),
+    hit({ id: 4, provenance: "inferred", score: Number.NaN }),
+    hit({ id: 5, provenance: "grounded", score: 0.4, ts: "not-a-date" }),
+  ]
+
+  it("the named components multiply back to EXACTLY the scalar the old code returned", () => {
+    for (const h of cases) {
+      const b = scoreBreakdown(h, NOW, salience, mood)
+      // Bit-identical, not close-to: this change is observability only.
+      expect(b.rel * b.rep * b.rec * b.sit).toBe(b.composite)
+      expect(compositeScore(h, NOW, salience, mood)).toBe(b.composite)
+      // The two reported INPUTS to `rec` (they are not factors of the product).
+      expect(b.salience).toBe(salienceWeight(h, salience))
+      expect(b.rec).toBe(recency(b.ageMs, b.salience))
+    }
+  })
+
+  it("rerankScored keeps the losers, and its returned prefix IS rerank's output", () => {
+    const scored = rerankScored(cases, 2, NOW, salience, mood)
+    expect(scored).toHaveLength(cases.length)
+    expect(scored.filter((c) => c.returned)).toHaveLength(2)
+    expect(scored.filter((c) => c.returned).map((c) => c.hit.id))
+      .toEqual(rerank(cases, 2, NOW, salience, mood).map((h) => h.id))
+    // Sorted descending, losers included.
+    for (let i = 1; i < scored.length; i++) {
+      expect(scored[i - 1].score.composite).toBeGreaterThanOrEqual(scored[i].score.composite)
+    }
   })
 })

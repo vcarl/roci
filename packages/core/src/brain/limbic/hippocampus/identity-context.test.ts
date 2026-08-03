@@ -39,7 +39,11 @@ const fsWith = (vals: { background?: string; values?: string; diary?: string; sy
 const memoryWith = (recall: string) =>
   Layer.succeed(
     MemoryGateway,
-    MemoryGateway.of({ remember: () => Effect.void, recall: () => Effect.succeed(recall) }),
+    MemoryGateway.of({
+      remember: () => Effect.void,
+      recall: () => Effect.succeed(recall),
+      recallWithId: () => Effect.succeed({ block: recall, recallId: recall ? "fake-1" : null }),
+    }),
   )
 
 // char.root points at a non-existent path → readWm degrades to an empty wm file.
