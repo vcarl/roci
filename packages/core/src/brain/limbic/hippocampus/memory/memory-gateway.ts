@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Clock } from "effect"
 import { CharacterFs, type CharacterConfig } from "../../../../services/CharacterFs.js"
 import { LongtermStore, type MemoryHit } from "./longterm-store.js"
+import { RECALL_WIRE_VERSION } from "@roci/player-tools/memory-format"
 import type { ObserveResult, OrientResult, DecideResult, EvaluateResult } from "../../../../skills/types.js"
 import { rerankScored, RERANK_OVERFETCH } from "./memory-rank.js"
 import { readMood } from "../../mood/mood-store.js"
@@ -367,6 +368,7 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
           k: opts.k,
           overfetch: RERANK_OVERFETCH,
           nowMs: now,
+          expectedWire: RECALL_WIRE_VERSION,
           mood: state,
           salienceProfile: salience,
           scoringContext: buildScoringContext(char.name),
@@ -389,6 +391,18 @@ export const MemoryGatewayLive: Layer.Layer<MemoryGateway, never, LongtermStore 
             ts: c.hit.ts,
             stage: c.hit.stage,
             dims: c.hit.dims,
+            // The per-stage vectors, carried through UNTOUCHED — no `?? {}`, no
+            // defaulting of `wire`. Every fallback here would convert "the CLI
+            // never sent it" into "the stage was empty", and those are the two
+            // readings the wire stamp exists to keep apart.
+            wire: c.hit.wire,
+            dimsA: c.hit.dims_a,
+            dimsC: c.hit.dims_c,
+            dimsParseErrors: c.hit.dims_parse_errors,
+            // Wire v3, carried through with the same no-defaulting rule: an
+            // absent block must stay absent so the record can say "a pre-v3
+            // bundle sent none" rather than "this memory restated nothing".
+            lineage: c.hit.lineage,
             returned: c.returned,
             injection: i === decision.injectedIndex ? ("random" as const) : ("ranked" as const),
             score: {

@@ -15,7 +15,7 @@ import {
   encodePendingArgs,
   encodeAdjudicateArgs,
 } from "@roci/player-tools/command-codec"
-import { parseResults } from "@roci/player-tools/memory-format"
+import { parseResults, type ParsedLineage } from "@roci/player-tools/memory-format"
 
 export { MEMORY_CLI_PATH }
 
@@ -96,7 +96,48 @@ export interface MemoryHit {
    * is answerable from a recall; nothing in Phase 2 ranks on it.
    */
   readonly stage?: "base" | "adjudicated" | "legacy"
+  /**
+   * The line-shape version the in-container CLI stamped (`RECALL_WIRE_VERSION`).
+   *
+   * **Absent means a PRE-v2 provisioned bundle**, and that is the only reading
+   * that is ever correct: on a v2 line a null `dims_a`/`dims_c` means the CLI
+   * looked and the column was empty; on an unstamped line it means the fields
+   * were never transmitted. Nothing downstream may default this — the absence
+   * IS the signal.
+   */
+  readonly wire?: number
+  /**
+   * The MECHANICAL (A) vector — cosine of the memory's embedding against the
+   * axis glosses, computed in-container at insert.
+   */
+  readonly dims_a?: Record<string, number> | null
+  /**
+   * The PRODUCER (C) vector — the authoring tier's OWN reading, stored verbatim.
+   * `null`, never `{}`, when the pathway had no producer at all (the agent's own
+   * `memory remember`, and reflection promotion).
+   */
+  readonly dims_c?: Record<string, number> | null
+  /** dims columns the CLI could not parse. Present only when something was torn. */
+  readonly dims_parse_errors?: ReadonlyArray<string>
+  /**
+   * What this memory RESTATED at the moment it was written — the nearest memory
+   * that already existed, and the similarity to it (wire v3).
+   *
+   * **Absent means a PRE-v3 provisioned bundle.** Same reading rule as `wire`
+   * itself: on a v3 line `state: "legacy"` or `"unknown"` means the CLI looked
+   * and genuinely does not know; an absent block means nothing was ever asked.
+   * Neither of those is "this memory restated nothing" — that is `state:
+   * "first"`, and only that.
+   */
+  readonly lineage?: ParsedLineage
 }
+
+// NOTE ON NAMING. `wire`/`dims_a`/`dims_c`/`lineage` keep the WIRE spelling rather than
+// being camelCased, because `recall` casts `parseResults`' output straight to
+// `MemoryHit` with no field mapping (see `LongtermStoreLive.recall` below). A
+// rename here without a matching mapping there would leave every hit's field
+// `undefined` — silently, with both sides' tests green. That is exactly the bug
+// `buildKnnSql`'s header documents from the retired `AS stage` alias.
 
 /**
  * One row awaiting adjudication — the adjudicator's input (design §3, stage B):

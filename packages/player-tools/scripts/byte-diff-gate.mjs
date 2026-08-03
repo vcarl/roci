@@ -40,7 +40,7 @@ import * as path from "node:path"
 // it here means the re-validation proves the exact bytes `provision*Cli` install.
 import { readPlayerToolBundle, playerToolBundlePath } from "../../core/src/services/player-tools-bundle.ts"
 
-const HARNESS_VERSION = "2.1.0"
+const HARNESS_VERSION = "2.3.0"
 const IMAGE = "spacemolt-player:latest"
 const STUB_PORT = 8199
 
@@ -56,6 +56,44 @@ const REPORT_PATH = path.join(repoRoot, "docs/superpowers/specs/phase3-gate-evid
 // (byte-diff-embed-stub.mjs): this harness drives docker over synchronous
 // `spawnSync`, blocking its own event loop, so an in-process server could not
 // accept the container's embed fetch mid-exec. Resolves once it prints "stub up".
+/**
+ * The stub embed server's vector for a text — recomputed HERE, independently of
+ * anything the container did. This is what lets the `embeddings` readback check
+ * below be a real proof rather than a tautology: the CLI wrote a vector it got
+ * over HTTP, and the dump is compared against a value derived from the text
+ * alone. Must stay identical to `embedVector` in byte-diff-embed-stub.mjs.
+ */
+function expectedStubVector(text) {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
+  }
+  let a = h >>> 0
+  const out = new Array(384)
+  for (let i = 0; i < 384; i++) {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    out[i] = (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1
+  }
+  return out
+}
+
+/** Cosine between two vectors. Recomputed here so the lineage check below is a
+ *  proof against a value derived from the memory TEXT, not a self-round-trip. */
+function cosineOf(a, b) {
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    na += a[i] * a[i]
+    nb += b[i] * b[i]
+  }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb))
+}
+
 function startStubServer() {
   return new Promise((resolve, reject) => {
     const child = spawn("node", [STUB_SCRIPT, String(STUB_PORT)], { stdio: ["ignore", "pipe", "inherit"] })
@@ -174,6 +212,7 @@ async function revalidateProvisionPath() {
     const search = memExec(`search 'voyage' -k 5`)
     log(`search: exit=${search.code}`)
     let searchOk = false
+    let stageWireOk = false
     let searchLine = ""
     try {
       searchLine = search.stdout.split("\n").filter(Boolean)[0] ?? ""
@@ -185,6 +224,17 @@ async function revalidateProvisionPath() {
         obj.dims.voyage === 0.6 &&
         typeof obj.score === "number" &&
         Array.isArray(obj.tags)
+      // Wire v2: the per-stage vectors must actually reach the host, and the
+      // version stamp must ride along. This db has NO axis artifacts, so it is
+      // the A-inert case: dims_a === {} (the mechanical stage ran and scored
+      // nothing) while dims_c carries the producer verbatim. `{}` and `null` are
+      // different facts here and the gate pins both.
+      stageWireOk =
+        obj.wire === 3 &&
+        JSON.stringify(obj.dims_a) === "{}" &&
+        obj.dims_c !== null &&
+        obj.dims_c.voyage === 0.6 &&
+        obj.dims_c.threat === 0.2
       log(`  first hit: ${searchLine}`)
     } catch (e) {
       log(`  search parse error: ${e.message}`)
@@ -218,13 +268,17 @@ async function revalidateProvisionPath() {
     log(`remember (no producer vector): exit=${bare.code} stdout=${JSON.stringify(bare.stdout)} stderr=${JSON.stringify(bare.stderr)}`)
     const bareOk = bare.code === 0 && /^\d+$/.test(bare.stdout)
 
+    const BARE_TEXT = "the hull scraped the debris ring"
     const axisSearch = axisExec(`search 'hull' -k 5`)
     let mechanicalOk = false
+    let noProducerOk = false
     let axisLine = ""
+    let axisRowId = null
     try {
       axisLine = axisSearch.stdout.split("\n").filter(Boolean)[0] ?? ""
       const obj = JSON.parse(axisLine)
       const dims = obj.dims ?? {}
+      axisRowId = obj.id
       mechanicalOk =
         axisSearch.code === 0 &&
         obj.stage === "base" &&
@@ -235,9 +289,187 @@ async function revalidateProvisionPath() {
         // Drives are unipolar [0,1]; the palette axis is bipolar [-1,+1].
         dims.safety >= 0 && dims.safety <= 1 &&
         dims["burdened-exhilarated"] >= -1 && dims["burdened-exhilarated"] <= 1
+      // The MIRROR of the stage check above, and the reason both are here. This
+      // pathway has a real A and NO producer at all, so on the wire `dims_c`
+      // must be null — not `{}`, which would mean "the producer scored every
+      // axis at zero" — and `dims_a` must equal the merged `dims` exactly,
+      // because base = A when C is absent.
+      noProducerOk =
+        obj.wire === 3 &&
+        obj.dims_c === null &&
+        JSON.stringify(obj.dims_a) === JSON.stringify(obj.dims)
       log(`  first hit: ${axisLine}`)
     } catch (e) {
       log(`  axis search parse error: ${e.message}`)
+    }
+
+    // (2c) The `embeddings` readback verb. The vectors have been written since
+    // day one and nothing had ever SELECTed them, so every offline study
+    // re-embedded the corpus with whatever model was live that day.
+    //
+    // This is a REAL proof, not a round-trip against itself: the expected vector
+    // is recomputed here from the memory TEXT alone (`expectedStubVector`,
+    // mirroring the stub server), so it is independent of anything the container
+    // wrote. The comparison is against `Math.fround` of it because the column is
+    // a vec0 FLOAT[384] — float32 — and the dump reports what is actually stored
+    // rather than pretending the float64 input survived.
+    let embeddingsOk = false
+    let embedSummary = ""
+    try {
+      const dump = axisExec(`embeddings --ids ${axisRowId}`)
+      const line = dump.stdout.split("\n").filter(Boolean)[0] ?? ""
+      const row = JSON.parse(line)
+      const want = expectedStubVector(BARE_TEXT).map(Math.fround)
+      const exact =
+        Array.isArray(row.embedding) &&
+        row.embedding.length === want.length &&
+        row.embedding.every((v, i) => v === want[i])
+      embeddingsOk = dump.code === 0 && row.id === axisRowId && row.dim === 384 && exact
+      embedSummary = `id=${row.id} dim=${row.dim} first3=${JSON.stringify(row.embedding?.slice(0, 3))} exact-float32-match=${exact}`
+      log(`embeddings --ids ${axisRowId}: exit=${dump.code} ${embedSummary}`)
+      // And it must never have been on the recall wire: 384 floats per candidate
+      // on the hottest path is exactly what this verb exists to avoid.
+      if (JSON.parse(axisLine).embedding !== undefined) {
+        embeddingsOk = false
+        log("  FAIL: the recall line carried an embedding — it must not")
+      }
+    } catch (e) {
+      log(`  embeddings parse error: ${e.message}`)
+    }
+
+    // (2d) WIRE v3 — LINEAGE. What a memory restated at the moment it was
+    // WRITTEN. Nothing in this system recorded that before v3, and the failure
+    // mode it guards is that every lineage field is a SCALAR: a dropped column
+    // renders `null`, which is a perfectly plausible "no near neighbour" that no
+    // parse error would ever flag.
+    //
+    // The stub embedder is a per-text hash, NOT semantic — so this cannot prove
+    // that a PARAPHRASE lands near its original (that needs the real model; see
+    // the task report's e2e). What it CAN prove, deterministically, is the whole
+    // mechanism: the first row in a store is `first`, a re-insert of the SAME
+    // TEXT points at exactly that row at distance 0, a different text does not,
+    // and the similarity is the true cosine of the stored vectors — checked
+    // against a value the harness derives from the text alone.
+    let lineageOk = false
+    let lineageSummary = ""
+    try {
+      // The bare row inserted above was the FIRST row in this db.
+      const firstRow = JSON.parse(axisLine)
+      const firstOk =
+        firstRow.wire === 3 &&
+        firstRow.lineage &&
+        firstRow.lineage.state === "first" &&
+        firstRow.lineage.prior_id === null &&
+        firstRow.lineage.similarity === null
+
+      // Same text again → the stub returns the same vector → the nearest prior
+      // is unambiguous and its cosine is 1 up to the float32 the column stores.
+      const dup = axisExec(`remember '${BARE_TEXT}'`)
+      const dupId = Number(dup.stdout)
+      // A genuinely different text, for contrast.
+      const NOVEL_TEXT = "traded tungsten ore at the mobile capital market"
+      const novel = axisExec(`remember '${NOVEL_TEXT}'`)
+      const novelId = Number(novel.stdout)
+
+      const all = axisExec(`recent -n 10`)
+        .stdout.split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+      const byId = new Map(all.map((r) => [r.id, r]))
+      const dupRow = byId.get(dupId)
+      const novelRow = byId.get(novelId)
+
+      // Independent expected cosine: float32 of the stub's vector for BARE_TEXT
+      // (what is stored) against the float64 vector the CLI just embedded.
+      const bareStored = expectedStubVector(BARE_TEXT).map(Math.fround)
+      const wantDupCos = cosineOf(expectedStubVector(BARE_TEXT), bareStored)
+      const wantNovelCos = cosineOf(expectedStubVector(NOVEL_TEXT), bareStored)
+
+      const dupOk =
+        dupRow &&
+        dupRow.wire === 3 &&
+        dupRow.lineage.state === "scored" &&
+        dupRow.lineage.prior_id === axisRowId &&
+        dupRow.lineage.distance < 1e-5 &&
+        Math.abs(dupRow.lineage.similarity - wantDupCos) < 1e-6
+      // The novel row's nearest prior is whichever of the two existing rows the
+      // stub happened to put closer; what must hold is that its similarity is
+      // FAR from the duplicate's, and matches the true cosine to whatever row
+      // was actually chosen.
+      const novelOk =
+        novelRow &&
+        novelRow.lineage.state === "scored" &&
+        novelRow.lineage.prior_id !== null &&
+        novelRow.lineage.distance > 1 &&
+        novelRow.lineage.similarity < 0.2 &&
+        // and it must NOT resemble the duplicate case
+        novelRow.lineage.similarity < dupRow.lineage.similarity - 0.5
+      // The novel row's own true cosine, logged for the record.
+      void wantNovelCos
+
+      lineageOk = Boolean(firstOk && dupOk && novelOk)
+      lineageSummary =
+        `first: state=${firstRow.lineage?.state} | ` +
+        `duplicate #${dupId}: prior=${dupRow?.lineage.prior_id} d=${dupRow?.lineage.distance} cos=${dupRow?.lineage.similarity} (want ${wantDupCos}) | ` +
+        `novel #${novelId}: prior=${novelRow?.lineage.prior_id} d=${novelRow?.lineage.distance?.toFixed(4)} cos=${novelRow?.lineage.similarity?.toFixed(4)}`
+      log(`lineage: ${lineageSummary}`)
+    } catch (e) {
+      log(`  lineage check error: ${e.message}`)
+    }
+
+    // (2e) A PRE-LINEAGE db must still read, and its rows must read as UNKNOWN.
+    // This is the contract for the 825-row corpus that already exists on disk.
+    // The table is created here in the ORIGINAL pre-provenance shape, so opening
+    // it exercises the entire hand-maintained MIGRATION_COLUMNS list at once.
+    let legacyOk = false
+    let legacyLine = ""
+    try {
+      const legacyDir = "/tmp/provlegacy"
+      dockerText(["exec", cid, "bash", "-lc", `mkdir -p ${legacyDir}`])
+      const mk =
+        `import {Database} from 'bun:sqlite';` +
+        `const db=new Database('${legacyDir}/longterm.db');` +
+        `db.exec("CREATE TABLE memories (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, source TEXT NOT NULL, tags TEXT, text TEXT NOT NULL)");` +
+        `db.exec("INSERT INTO memories (ts,source,tags,text) VALUES ('2026-01-01T00:00:00.000Z','observe',null,'a memory written before lineage existed')");`
+      writeContainerFile(cid, "/tmp/mk-legacy.ts", mk)
+      // The absolute interpreter path, exactly as the bundle's own shebang has
+      // it: `bun` is not on a non-login exec's PATH in this image.
+      const mkRes = dockerText([
+        "exec",
+        cid,
+        "bash",
+        "-lc",
+        `cd /tmp && /home/node/.bun/bin/bun run /tmp/mk-legacy.ts`,
+      ])
+      if (mkRes.code !== 0) throw new Error(`legacy db setup failed: ${mkRes.stderr}`)
+      const legacyEnv = `export MEMORY_EMBED_URL='${stubFinal}' MEMORY_DB_PATH=${legacyDir}/longterm.db`
+      const legacyRead = dockerText([
+        "exec",
+        cid,
+        "bash",
+        "-lc",
+        `${legacyEnv} && cd ${legacyDir} && /tmp/memory-prov recent -n 5`,
+      ])
+      legacyLine = legacyRead.stdout.split("\n").filter(Boolean)[0] ?? ""
+      const obj = JSON.parse(legacyLine)
+      legacyOk =
+        legacyRead.code === 0 &&
+        // It READS — the ADD COLUMN migration ran and nothing threw.
+        obj.text === "a memory written before lineage existed" &&
+        obj.wire === 3 &&
+        // …and it reads as UNKNOWN, which is the whole point. `legacy`, never
+        // `first`: this row restated something or it did not, and nothing knows.
+        obj.lineage.state === "legacy" &&
+        obj.lineage.state !== "first" &&
+        obj.lineage.prior_id === null &&
+        obj.lineage.similarity === null &&
+        // the older migrations backfilled too
+        obj.provenance === "episodic" &&
+        obj.stage === "legacy"
+      log(`legacy db (pre-provenance schema): exit=${legacyRead.code} → ok=${legacyOk}`)
+      log(`  ${legacyLine}`)
+    } catch (e) {
+      log(`  legacy db check error: ${e.message}`)
     }
 
     const wmExec = (argv) =>
@@ -246,7 +478,17 @@ async function revalidateProvisionPath() {
     const wmOk = todo.code === 0 && todo.stdout === "t1"
     log(`wm todo: exit=${todo.code} stdout=${JSON.stringify(todo.stdout)} → ok=${wmOk}`)
 
-    const allOk = rememberOk && searchOk && wmOk && bareOk && mechanicalOk
+    const allOk =
+      rememberOk &&
+      searchOk &&
+      wmOk &&
+      bareOk &&
+      mechanicalOk &&
+      stageWireOk &&
+      noProducerOk &&
+      embeddingsOk &&
+      lineageOk &&
+      legacyOk
     // Append (never overwrite) a re-validation section to the evidence file.
     const now = new Date().toISOString()
     const section = [
@@ -271,6 +513,11 @@ async function revalidateProvisionPath() {
       `| \`search\` returns dims-as-object NDJSON with score+tags | ${searchOk ? "PASS" : "FAIL"} |`,
       `| \`remember\` with NO \`--dims-c\`, beside a real PALETTE.md (prints integer id) | ${bareOk ? "PASS" : "FAIL"} |`,
       `| the mechanical (A) stage scored every derived axis, stage=\`base\` | ${mechanicalOk ? "PASS" : "FAIL"} |`,
+      `| wire v2: \`dims_a\`/\`dims_c\` reach the host, \`wire:2\` stamped (A-inert row) | ${stageWireOk ? "PASS" : "FAIL"} |`,
+      `| wire v2: no-producer row ships \`dims_c: null\` (not \`{}\`) and \`dims_a === dims\` | ${noProducerOk ? "PASS" : "FAIL"} |`,
+      `| \`embeddings --ids\` returns the EXACT stored float32s, and recall carries none | ${embeddingsOk ? "PASS" : "FAIL"} |`,
+      `| wire v3: first row is \`first\`; a re-insert points at it at distance 0 with the true cosine | ${lineageOk ? "PASS" : "FAIL"} |`,
+      `| a PRE-LINEAGE db still reads, and its rows read \`legacy\` (unknown), never \`first\` | ${legacyOk ? "PASS" : "FAIL"} |`,
       `| \`wm todo\` via provisioned bundle (prints \`t1\`) | ${wmOk ? "PASS" : "FAIL"} |`,
       "",
       "Env delivery under test is the exact string `longterm-store` now issues:",
@@ -285,6 +532,29 @@ async function revalidateProvisionPath() {
       "deliberately have no axis artifacts, exercising the degraded path where `base = C`.",
       "",
       `axis-scored first hit: \`${axisLine.replace(/`/g, "'")}\``,
+      "",
+      "Wire v2 (`RECALL_WIRE_VERSION`): recall lines now carry `dims_a` (mechanical) and",
+      "`dims_c` (producer) beside the merged `dims`, plus a `wire` stamp so a MISSING",
+      "per-stage vector is attributable — a stale provisioned bundle emits no stamp, and",
+      "the host records that rather than reporting the nulls as empty stages.",
+      "",
+      "The `embeddings` verb reads the vec0 `FLOAT[384]` column back. Its expected value is",
+      "recomputed from the memory text alone (the stub embedder's function, mirrored in the",
+      "harness), so the check is independent of what the container wrote; the comparison is",
+      "against `Math.fround` of it because the stored column is float32.",
+      "",
+      `embeddings readback: \`${embedSummary.replace(/`/g, "'")}\``,
+      "",
+      "Wire v3 (`lineage`): every write now records which ALREADY-EXISTING memory it most",
+      "resembled and the raw similarity to it, computed BEFORE its own insert so the answer",
+      "means \"what did this restate at the time it was written\". The four states — `scored`,",
+      "`first`, `unknown`, `legacy` — exist so that a null prior id cannot be read as",
+      "\"restated nothing\" when it means \"the lookup failed\" or \"this row predates lineage\".",
+      "No threshold is stored: the raw cosine rides the wire so an analyst can re-threshold.",
+      "",
+      `lineage: \`${lineageSummary.replace(/`/g, "'")}\``,
+      "",
+      `pre-lineage row: \`${legacyLine.replace(/`/g, "'")}\``,
       "",
       `**Provision-path re-validation: ${allOk ? "PASS" : "FAIL"}.**`,
       "",

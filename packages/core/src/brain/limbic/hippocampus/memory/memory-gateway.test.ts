@@ -9,6 +9,7 @@ import type { OrientResult, DecideResult, EvaluateResult } from "../../../../ski
 import { RERANK_OVERFETCH, SCORER_VERSION } from "./memory-rank.js"
 import { clearAxisVocabulary, publishAxisVocabulary } from "./scoring-context.js"
 import { TEMPLATE_SALIENCE } from "../../../../core/salience.js"
+import { RECALL_WIRE_VERSION } from "@roci/player-tools/memory-format"
 import {
   RECALL_SITES,
   RECALL_TELEMETRY_FILE,
@@ -444,6 +445,183 @@ describe("recall telemetry", () => {
       .toBeCloseTo(top.score.composite, 12)
     // Mood diagnostics: distinguishable "no mood" rather than an absent field.
     expect(rec.mood).toMatchObject({ norm: 0, nonZeroAxes: 0, empty: true })
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  /**
+   * The per-stage vectors, host side. The single fact worth pinning is that a
+   * NULL is attributable: a stale in-container bundle (no `wire` stamp) and a
+   * genuinely unscored stage produce the same nulls and opposite conclusions,
+   * and the record must tell them apart without an analyst knowing to ask.
+   */
+  it("carries A, C and the merged vector per candidate — and says whether they were TRANSMITTED", async () => {
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-stage-"))
+    const c = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    const now = new Date().toISOString()
+    const base = { ts: now, source: "orient", provenance: "grounded" as const, tags: [], score: 0.9 }
+    const store = fakeStore({
+      hits: [
+        // A v2 line with three DISTINCT vectors.
+        {
+          ...base,
+          id: 1,
+          text: "scored",
+          dims: { safety: 0.6 },
+          dims_a: { safety: 0.4 },
+          dims_c: { safety: 0.8 },
+          stage: "base",
+          wire: 2,
+        },
+        // A v2 line from a pathway with NO producer at all (agent-authored).
+        { ...base, id: 2, text: "no producer", dims: { safety: 0.4 }, dims_a: { safety: 0.4 }, dims_c: null, stage: "base", wire: 2 },
+        // A PRE-v2 line: a stale provisioned bundle. Same nulls, opposite meaning.
+        { ...base, id: 3, text: "stale bundle", dims: { safety: 0.5 }, stage: "base" },
+      ] as MemoryHit[],
+    })
+    await run(
+      store,
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", c, "why", { k: 3, label: "Relevant memories", site: "orient" }),
+      ),
+    )
+    const rec = JSON.parse(
+      readFileSync(path.join(c.root, "logs", RECALL_TELEMETRY_FILE), "utf8").trim(),
+    ) as RecallTelemetryRecord
+    const stageOf = (id: number) => {
+      const found = rec.candidates.find((x) => x.id === id)
+      if (!found) throw new Error(`candidate ${id} missing from the record`)
+      return found.stageVectors
+    }
+
+    const scored = stageOf(1)
+    expect(scored.transmitted).toBe(true)
+    expect(scored.a).toEqual({ safety: 0.4 })
+    expect(scored.c).toEqual({ safety: 0.8 })
+    expect(scored.merged).toEqual({ safety: 0.6 })
+    expect([scored.aAxes, scored.cAxes]).toEqual([1, 1])
+
+    // Transmitted + null C is a REAL fact: nobody scored it. Not the same as {}.
+    const noProducer = stageOf(2)
+    expect(noProducer.transmitted).toBe(true)
+    expect(noProducer.c).toBeNull()
+    expect(noProducer.cAxes).toBeNull()
+    expect(noProducer.a).toEqual({ safety: 0.4 })
+
+    // Pre-v2: identical nulls, but the record REFUSES to present them as data.
+    const stale = stageOf(3)
+    expect(stale.wire).toBeNull()
+    expect(stale.transmitted).toBe(false)
+    expect(stale.a).toBeNull()
+    expect(stale.c).toBeNull()
+    expect(stale.aAxes).toBeNull()
+    // The merged vector still rode a v1 line, so it is still real.
+    expect(stale.merged).toEqual({ safety: 0.5 })
+
+    // Record-level rollup takes the MINIMUM, so one stale line disqualifies the
+    // whole record from a stage study rather than the luckiest line saving it.
+    expect(rec.wire.expected).toBe(RECALL_WIRE_VERSION)
+    expect(rec.wire.observed).toBeNull()
+    expect(rec.wire.stageVectorsTransmitted).toBe(false)
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  /**
+   * LINEAGE, host side. Same failure mode as the stage vectors and one step
+   * worse, because every lineage field is a scalar: a missing block and a real
+   * "no prior" both produce `priorId: null`, and only one of them means the
+   * memory restated nothing.
+   *
+   * The extra hazard this pins is the v2/v3 threshold split. A container running
+   * a v2 bundle satisfies `stageVectorsTransmitted` and MUST NOT satisfy
+   * `lineageTransmitted` — one shared flag would report its absent lineage as
+   * measured absence of ancestry.
+   */
+  it("distinguishes 'restated nothing' from 'we never asked' — across four states and two wire versions", async () => {
+    const tmpRoot = mkdtempSync(path.join(tmpdir(), "roci-gw-lineage-"))
+    const c = { name: "ada", root: path.join(tmpRoot, "ada") } as CharacterConfig
+    const now = new Date().toISOString()
+    const base = {
+      ts: now,
+      source: "orient",
+      provenance: "grounded" as const,
+      tags: [],
+      score: 0.9,
+      dims: { safety: 0.5 },
+      stage: "base" as const,
+      wire: 3,
+    }
+    const store = fakeStore({
+      hits: [
+        // A real restatement, measured at write time.
+        {
+          ...base,
+          id: 1,
+          text: "restated",
+          lineage: { state: "scored", prior_id: 234, distance: 0.5678, similarity: 0.83879 },
+        },
+        // The first memory in the store. The ONLY "restated nothing".
+        { ...base, id: 2, text: "the first", lineage: { state: "first", prior_id: null, distance: null, similarity: null } },
+        // The lookup failed at write time.
+        { ...base, id: 3, text: "lookup failed", lineage: { state: "unknown", prior_id: null, distance: null, similarity: null } },
+        // A row from the 825-row corpus that predates lineage entirely.
+        { ...base, id: 4, text: "pre-lineage", lineage: { state: "legacy", prior_id: null, distance: null, similarity: null } },
+        // A v2 bundle: stage vectors yes, lineage never sent.
+        { ...base, id: 5, text: "v2 bundle", wire: 2, dims_a: { safety: 0.5 }, dims_c: null },
+      ] as MemoryHit[],
+    })
+    await run(
+      store,
+      Effect.flatMap(MemoryGateway, (g) =>
+        g.recall("cid", c, "why", { k: 5, label: "Relevant memories", site: "orient" }),
+      ),
+    )
+    const rec = JSON.parse(
+      readFileSync(path.join(c.root, "logs", RECALL_TELEMETRY_FILE), "utf8").trim(),
+    ) as RecallTelemetryRecord
+    const lineageOf = (id: number) => {
+      const found = rec.candidates.find((x) => x.id === id)
+      if (!found) throw new Error(`candidate ${id} missing from the record`)
+      return found.lineage
+    }
+
+    const scored = lineageOf(1)
+    expect(scored).toEqual({
+      transmitted: true,
+      state: "scored",
+      priorId: 234,
+      // Raw and unrounded on both counts — a re-thresholding analyst needs the
+      // number the CLI measured, not a presentation of it.
+      distance: 0.5678,
+      similarity: 0.83879,
+      known: true,
+    })
+
+    // `first` is a POSITIVE fact and the only one that means "restated nothing".
+    expect(lineageOf(2)).toMatchObject({ transmitted: true, state: "first", priorId: null, known: true })
+
+    // Both unknowns: transmitted, null prior, and explicitly NOT known.
+    for (const [id, state] of [[3, "unknown"], [4, "legacy"]] as const) {
+      expect(lineageOf(id), state).toMatchObject({ transmitted: true, state, priorId: null, known: false })
+    }
+    // Three different states, three identical null priors. The state carries it.
+    expect(new Set([2, 3, 4].map((id) => lineageOf(id).state)).size).toBe(3)
+
+    // The v2 bundle: nothing was ever asked, and the record refuses to present
+    // its nulls as an answer.
+    expect(lineageOf(5)).toEqual({
+      transmitted: false,
+      state: null,
+      priorId: null,
+      distance: null,
+      similarity: null,
+      known: false,
+    })
+
+    // The two flags have SEPARATE thresholds, and the v2 line proves it: the
+    // pool minimum is 2, which satisfies the stage-vector flag and not this one.
+    expect(rec.wire.observed).toBe(2)
+    expect(rec.wire.stageVectorsTransmitted).toBe(true)
+    expect(rec.wire.lineageTransmitted).toBe(false)
     rmSync(tmpRoot, { recursive: true, force: true })
   })
 

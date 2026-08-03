@@ -136,6 +136,112 @@ export interface RecallScoreComponents {
   readonly composite: number
 }
 
+/**
+ * The three salience vectors for one candidate, side by side — the reason this
+ * block exists at all.
+ *
+ * `dims` (here `merged`) is the ADJUDICATED-or-base ⊕ of A and C. With only that
+ * on the wire, the stages are algebraically unrecoverable: you cannot tell a
+ * confident A from a confident C, or either from their mean. **The C stage — the
+ * authoring model's own reading of what it just wrote — has never once been
+ * measured in this project.** These fields are what makes measuring it possible.
+ *
+ * ── HOW TO READ A NULL (this is the whole point of `wire`) ───────────────────
+ *
+ * `transmitted: false` ⇒ the in-container CLI predates wire v2 and **never sent
+ * these fields**. `a`/`c` are then null because nothing was asked, not because
+ * the stage was empty. Filter those rows OUT before concluding anything about
+ * stage coverage; a run of them means a stale provisioned bundle in a
+ * long-lived container, and the fix is re-provisioning, not a study.
+ *
+ * `transmitted: true` with `c: null` is a REAL fact: that pathway had no
+ * producer (the agent's own `memory remember`, or reflection promotion). `c: {}`
+ * is a different real fact — a producer that scored every axis at zero. The
+ * store has always distinguished them and so does this.
+ *
+ * `a: {}` on a transmitted row is also real and specific: the mechanical stage
+ * was INERT for that write — the axis artifacts were unreadable, or the gloss
+ * embed failed — which is a durable defect worth counting, not noise.
+ *
+ * These are per-AXIS vectors (one float per axis, order-of-ten keys), not the
+ * 384-float embedding. The embedding is not on this path at all; it is
+ * retrievable only via the CLI's `embeddings` verb, offline.
+ */
+export interface RecallStageVectors {
+  /** The CLI's line-shape version; null ⇒ pre-v2 bundle. Never defaulted. */
+  readonly wire: number | null
+  /** Did the CLI actually send the per-stage vectors on this line? */
+  readonly transmitted: boolean
+  /** MECHANICAL (A) — cosine against the axis glosses, computed at insert. */
+  readonly a: Record<string, number> | null
+  /** PRODUCER (C) — the authoring tier's own reading. null ⇒ no producer at all. */
+  readonly c: Record<string, number> | null
+  /** The merged vector recall actually RANKED on (the `dims` column). */
+  readonly merged: Record<string, number> | null
+  /** Axis counts, so a study can filter on coverage without walking the vectors. */
+  readonly aAxes: number | null
+  readonly cAxes: number | null
+  /** dims columns the CLI could not parse — corruption, reported rather than shown as absence. */
+  readonly parseErrors?: ReadonlyArray<string>
+}
+
+/**
+ * What this memory RESTATED at the moment it was written — the answer to
+ * "is memory 486 a restatement of memory 234", which nothing in this system
+ * recorded before wire v3.
+ *
+ * ── HOW TO READ IT ──────────────────────────────────────────────────────────
+ *
+ * `transmitted: false` ⇒ the in-container CLI predates wire v3 and never sent a
+ * lineage block. Everything below is null because nothing was asked. Filter
+ * these out; the fix is re-provisioning, not a study.
+ *
+ * `transmitted: true` and then `state`:
+ *  - `"scored"`  — real. `priorId`/`distance`/`similarity` describe the nearest
+ *                  memory that already existed when this one was written.
+ *  - `"first"`   — the store was EMPTY. A positive fact, not an absence.
+ *  - `"unknown"` — the lookup was attempted and failed.
+ *  - `"legacy"`  — the row predates lineage; no lookup was ever attempted.
+ *  - `null`      — a SELECT list dropped the column. A bug, surfaced not hidden.
+ *
+ * **`unknown` and `legacy` are NOT `first`.** A study that treats a null
+ * `priorId` as "this memory restated nothing" will read a pre-lineage corpus as
+ * entirely novel, which is the precise opposite of the truth about it.
+ *
+ * ── ON `similarity`, AND WHY THERE IS NO `isRestatement` ────────────────────
+ *
+ * `similarity` is the RAW cosine, stored unrounded and unthresholded, so an
+ * analyst can re-threshold without re-running anything. There is deliberately no
+ * boolean: measured over the live 825-row corpus, nearest-prior cosine ranks
+ * restatements well (AUC 0.94 against an independent lexical-overlap label) but
+ * the distribution has no valley — a single mode at 0.84 with 70% of rows above
+ * 0.80. Any cut is one corpus's arbitrary choice, and baking it into every
+ * future row would destroy the only property that makes this data worth having.
+ *
+ * `distance` is the raw vec0 (L2) metric the index actually ranked on;
+ * `similarity` is the cosine to that same row. They agree in ordering for
+ * unit-normalised embeddings and may not for others — both are kept so the
+ * disagreement is visible rather than assumed away.
+ */
+export interface RecallLineage {
+  /** Did the CLI actually send a lineage block on this line? Keys off `wire >= 3`. */
+  readonly transmitted: boolean
+  /** `scored` | `first` | `unknown` | `legacy`; null ⇒ not transmitted, or a dropped column. */
+  readonly state: string | null
+  /** The memory this one most resembled among those that already existed. */
+  readonly priorId: number | null
+  /** Raw vec0 (L2) distance to `priorId`. */
+  readonly distance: number | null
+  /** Cosine to `priorId`. Raw and unthresholded — see above. */
+  readonly similarity: number | null
+  /**
+   * Convenience: is the lineage of this row actually KNOWN? True only for
+   * `scored` and `first`. Exists so the commonest filter in any lineage study
+   * cannot be got wrong by forgetting one of the two unknown states.
+   */
+  readonly known: boolean
+}
+
 /** One candidate the host scored, in final rank order. */
 export interface RecallCandidateRecord {
   readonly id: number
@@ -163,6 +269,10 @@ export interface RecallCandidateRecord {
   readonly ts: string
   /** How many axes the row's `dims` carries (0 = unscored/legacy row). */
   readonly dimsAxes: number
+  /** A, C and the merged vector side by side. See `RecallStageVectors`. */
+  readonly stageVectors: RecallStageVectors
+  /** What this memory restated at write time. See `RecallLineage`. */
+  readonly lineage: RecallLineage
   readonly score: RecallScoreComponents
 }
 
@@ -285,6 +395,32 @@ export interface RecallTelemetryRecord {
   readonly poolSize: number
   /** Candidates that reached the prompt (= min(k, poolSize)). */
   readonly returnedCount: number
+  /**
+   * The CLI wire contract this recall actually ran against — a RECORD-level
+   * rollup of the per-candidate `stageVectors.wire`, because "is this record
+   * usable for a stage study" must be answerable without walking the pool (and
+   * must still be answerable when the pool is empty).
+   *
+   * `observed < expected` or `null` means the container is running a stale
+   * provisioned bundle. Every `stageVectors.a`/`.c` in the record is then null
+   * for a transport reason, and the record must be EXCLUDED from any stage
+   * analysis rather than counted as evidence of empty stages.
+   */
+  readonly wire: {
+    /** What the host build expects (`RECALL_WIRE_VERSION`). */
+    readonly expected: number
+    /** What the CLI stamped. null ⇒ pre-v2 CLI, or an empty pool. */
+    readonly observed: number | null
+    /** Did the per-stage vectors (v2) actually cross the wire on this recall? */
+    readonly stageVectorsTransmitted: boolean
+    /**
+     * Did the lineage block (v3) cross the wire? A SEPARATE flag with a
+     * separate threshold — a v2 bundle satisfies the one above and not this
+     * one, and one flag serving both would make a stale bundle's absent
+     * lineage look like genuinely absent ancestry.
+     */
+    readonly lineageTransmitted: boolean
+  }
   /** ALWAYS true — see the honesty clause in this module's header. */
   readonly poolTruncatedUpstream: true
   /** What did the upstream truncation rank by. */
@@ -309,7 +445,23 @@ export interface RecallCandidateInput {
   readonly provenance: string
   readonly ts: string
   readonly stage?: string
-  readonly dims?: Record<string, number>
+  readonly dims?: Record<string, number> | null
+  /** Wire version the CLI stamped; undefined ⇒ pre-v2, fields never transmitted. */
+  readonly wire?: number
+  readonly dimsA?: Record<string, number> | null
+  readonly dimsC?: Record<string, number> | null
+  readonly dimsParseErrors?: ReadonlyArray<string>
+  /**
+   * The CLI's wire-v3 lineage block, verbatim (wire spelling). Undefined ⇒ a
+   * pre-v3 bundle sent none. Structural, so this module still imports nothing
+   * from brain/ or player-tools.
+   */
+  readonly lineage?: {
+    readonly state?: string | null
+    readonly prior_id?: number | null
+    readonly distance?: number | null
+    readonly similarity?: number | null
+  } | null
   /** POST-injection: did this candidate reach the prompt? */
   readonly returned: boolean
   /** `"random"` on the injected candidate only. */
@@ -329,6 +481,13 @@ export interface RecallTelemetryInput {
   readonly k: number
   readonly overfetch: number
   readonly nowMs: number
+  /**
+   * `RECALL_WIRE_VERSION` as the HOST build knows it. Passed in rather than
+   * imported so this module keeps importing nothing but node/effect/services —
+   * and so there is exactly one definition of the constant (the CLI's), never a
+   * restated copy here that could drift from it.
+   */
+  readonly expectedWire: number
   readonly mood: Record<string, number>
   readonly salienceProfile: Record<string, number>
   readonly scoringContext: RecallScoringContext
@@ -363,6 +522,69 @@ export function moodDiagnostics(state: Record<string, number>): MoodDiagnostics 
     state,
   }
 }
+
+/** Key count of a vector, or null when the vector itself is absent. */
+const axesOf = (v: Record<string, number> | null | undefined): number | null =>
+  v === null || v === undefined ? null : Object.keys(v).length
+
+/**
+ * Build one candidate's stage-vector block. The ONE decision encoded here is
+ * that `transmitted` keys off the presence of the CLI's `wire` stamp — NOT off
+ * whether `a`/`c` happen to be non-null. Keying off the values would collapse
+ * "a stale bundle sent nothing" into "the stage is empty", which are opposite
+ * conclusions about the same nulls.
+ */
+function stageVectorsOf(c: RecallCandidateInput): RecallStageVectors {
+  const transmitted = typeof c.wire === "number" && c.wire >= 2
+  return {
+    wire: typeof c.wire === "number" ? c.wire : null,
+    transmitted,
+    a: transmitted ? (c.dimsA ?? null) : null,
+    c: transmitted ? (c.dimsC ?? null) : null,
+    merged: c.dims ?? null,
+    aAxes: transmitted ? axesOf(c.dimsA) : null,
+    cAxes: transmitted ? axesOf(c.dimsC) : null,
+    ...(c.dimsParseErrors && c.dimsParseErrors.length > 0
+      ? { parseErrors: [...c.dimsParseErrors] }
+      : {}),
+  }
+}
+
+/**
+ * The two lineage states that mean "we actually know". `unknown` and `legacy`
+ * are both real answers to a different question — "why don't we know" — and
+ * neither is `first`.
+ */
+const KNOWN_LINEAGE_STATES = new Set(["scored", "first"])
+
+/**
+ * Build one candidate's lineage block.
+ *
+ * `transmitted` keys off `wire >= 3` — its OWN threshold, deliberately not the
+ * `>= 2` the stage vectors use. A v2 bundle sends `dims_a`/`dims_c` and no
+ * lineage at all; sharing one flag would report its nulls as real emptiness,
+ * which is the entire failure mode the wire stamp exists to prevent, arriving
+ * one version later through the back door.
+ */
+function lineageOf(c: RecallCandidateInput): RecallLineage {
+  const transmitted = typeof c.wire === "number" && c.wire >= 3
+  if (!transmitted || !c.lineage) {
+    return { transmitted, state: null, priorId: null, distance: null, similarity: null, known: false }
+  }
+  const state = c.lineage.state ?? null
+  return {
+    transmitted,
+    state,
+    priorId: numOrNull(c.lineage.prior_id),
+    distance: numOrNull(c.lineage.distance),
+    similarity: numOrNull(c.lineage.similarity),
+    known: state !== null && KNOWN_LINEAGE_STATES.has(state),
+  }
+}
+
+/** A finite number, or null. Never coerces a missing value into a real one. */
+const numOrNull = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null
 
 /** The id at `i`, or null when `i` is null / out of range. Never throws. */
 function atIndex(
@@ -409,6 +631,19 @@ export function buildRecallRecord(
     fetchLimit: input.k * input.overfetch,
     poolSize: input.candidates.length,
     returnedCount: input.candidates.filter((c) => c.returned).length,
+    wire: (() => {
+      // One CLI invocation produced every candidate, so the pool is homogeneous;
+      // take the MINIMUM anyway so a future mixed pool degrades to the weakest
+      // line rather than the luckiest one.
+      const seen = input.candidates.map((c) => (typeof c.wire === "number" ? c.wire : 0))
+      const observed = seen.length === 0 ? null : Math.min(...seen)
+      return {
+        expected: input.expectedWire,
+        observed: observed === 0 ? null : observed,
+        stageVectorsTransmitted: observed !== null && observed >= 2,
+        lineageTransmitted: observed !== null && observed >= 3,
+      }
+    })(),
     poolTruncatedUpstream: true,
     poolTruncationBasis: "l2_distance_knn",
     mood: moodDiagnostics(input.mood),
@@ -438,6 +673,8 @@ export function buildRecallRecord(
       ...(c.stage !== undefined ? { stage: c.stage } : {}),
       ts: c.ts,
       dimsAxes: c.dims ? Object.keys(c.dims).length : 0,
+      stageVectors: stageVectorsOf(c),
+      lineage: lineageOf(c),
       score: c.score,
     })),
   }

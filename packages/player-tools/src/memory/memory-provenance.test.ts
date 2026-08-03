@@ -43,7 +43,17 @@ describe("MIGRATION_COLUMNS — dims", () => {
 describe("phase 2 migration columns", () => {
   it("adds the three salience columns, idempotently and after dims", () => {
     const names = MIGRATION_COLUMNS.map((c) => c.name)
-    expect(names).toEqual(["provenance", "dims", "dims_a", "dims_c", "dims_stage"])
+    expect(names).toEqual([
+      "provenance",
+      "dims",
+      "dims_a",
+      "dims_c",
+      "dims_stage",
+      "lineage_state",
+      "lineage_prior_id",
+      "lineage_distance",
+      "lineage_similarity",
+    ])
   })
 
   it("dims_a and dims_c are nullable with no default — an unscored old row has no A or C", () => {
@@ -57,5 +67,45 @@ describe("phase 2 migration columns", () => {
     expect(byName.get("dims_stage")).toBe(
       "ALTER TABLE memories ADD COLUMN dims_stage TEXT NOT NULL DEFAULT 'legacy'",
     )
+  })
+
+  it("every migration statement is an ADD COLUMN — the mechanism expresses nothing else", () => {
+    // main.ts guards each of these with a PRAGMA table_info presence check and
+    // nothing more: there is no version number, no applied-table, no ordering
+    // beyond this array. A statement that is not an idempotent ADD COLUMN would
+    // re-run on every single CLI invocation.
+    for (const c of MIGRATION_COLUMNS) {
+      expect(c.ddl.startsWith(`ALTER TABLE memories ADD COLUMN ${c.name} `)).toBe(true)
+    }
+  })
+})
+
+describe("lineage migration columns", () => {
+  const byName = new Map(MIGRATION_COLUMNS.map((c) => [c.name, c.ddl]))
+
+  it("backfills pre-existing rows to 'legacy' — LINEAGE UNKNOWN, never 'nothing restated'", () => {
+    // This is the whole contract for the 825-row corpus that already exists.
+    // A default of 'first' (or a nullable state read as "no prior found") would
+    // present an entire historical corpus of heavy restatement as novel.
+    expect(byName.get("lineage_state")).toBe(
+      "ALTER TABLE memories ADD COLUMN lineage_state TEXT NOT NULL DEFAULT 'legacy'",
+    )
+    expect(byName.get("lineage_state")).not.toContain("'first'")
+  })
+
+  it("the three value columns are nullable with NO default — an old row has no measured prior", () => {
+    expect(byName.get("lineage_prior_id")).toBe(
+      "ALTER TABLE memories ADD COLUMN lineage_prior_id INTEGER",
+    )
+    expect(byName.get("lineage_distance")).toBe(
+      "ALTER TABLE memories ADD COLUMN lineage_distance REAL",
+    )
+    expect(byName.get("lineage_similarity")).toBe(
+      "ALTER TABLE memories ADD COLUMN lineage_similarity REAL",
+    )
+    // A DEFAULT here would fabricate a similarity for rows nothing ever measured.
+    for (const n of ["lineage_prior_id", "lineage_distance", "lineage_similarity"]) {
+      expect(byName.get(n)).not.toContain("DEFAULT")
+    }
   })
 })

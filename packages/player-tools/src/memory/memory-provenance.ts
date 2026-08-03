@@ -56,4 +56,30 @@ export const MIGRATION_COLUMNS: ReadonlyArray<{ name: string; ddl: string }> = [
     name: "dims_stage",
     ddl: "ALTER TABLE memories ADD COLUMN dims_stage TEXT NOT NULL DEFAULT 'legacy'",
   },
+  // Lineage (2026-08-03): what a memory restated at the moment it was written.
+  //
+  // The state backfills to 'legacy', which reads as LINEAGE UNKNOWN — never as
+  // "this memory restated nothing". The distinction is the entire point of the
+  // column: a pre-existing store (825 rows in the live corpus) has no lineage,
+  // and a study that read those rows as un-restated would conclude the corpus is
+  // full of novel first-statements when the opposite is true.
+  //
+  // There is deliberately NO BACKFILL of the three value columns. Lineage means
+  // "nearest memory that already existed"; running the KNN today would search a
+  // store that has since grown by everything those rows do not know about, and
+  // would answer a different question while looking like the same one. A study
+  // that wants historical lineage must replay it OFFLINE in id order from the
+  // `embeddings` dump, where the as-of-then prefix is reconstructible and the
+  // reconstruction is visible in the analysis code rather than hidden in a row.
+  {
+    name: "lineage_state",
+    ddl: "ALTER TABLE memories ADD COLUMN lineage_state TEXT NOT NULL DEFAULT 'legacy'",
+  },
+  { name: "lineage_prior_id", ddl: "ALTER TABLE memories ADD COLUMN lineage_prior_id INTEGER" },
+  // Raw vec0 distance (L2) to the prior — the primitive the index returned.
+  { name: "lineage_distance", ddl: "ALTER TABLE memories ADD COLUMN lineage_distance REAL" },
+  // Cosine to that same prior, computed from both STORED vectors. Kept beside
+  // the distance rather than derived from it: cos = 1 − d²/2 holds only for
+  // unit-normalised embeddings, and nothing in this store enforces that.
+  { name: "lineage_similarity", ddl: "ALTER TABLE memories ADD COLUMN lineage_similarity REAL" },
 ]

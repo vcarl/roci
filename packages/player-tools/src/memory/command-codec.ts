@@ -12,10 +12,11 @@
  * Grammar (container contract, spec §4): `remember <text> [--tags a,b]
  * --source <s> [--dims-c <json>]`, `search <query> -k <k> [--tags a,b]`,
  * `recent [-n <n>]`, `mark-get`, `mark-set <json>`, `promote` (stdin),
- * `pending [-n <n>]`, `adjudicate <id> <json>`. Defaults: `--source` →
- * "conscious", `-k` → 5, `-n` → 10 (recent) / 25 (pending). A
- * present-but-malformed `--dims-c` or `adjudicate` JSON value is a HARD parse
- * error (loud, not silent).
+ * `pending [-n <n>]`, `adjudicate <id> <json>`,
+ * `embeddings [--ids a,b,c] [-n <n>]`. Defaults: `--source` →
+ * "conscious", `-k` → 5, `-n` → 10 (recent) / 25 (pending) / UNCAPPED
+ * (embeddings). A present-but-malformed `--dims-c`, `adjudicate` JSON value or
+ * `--ids` list is a HARD parse error (loud, not silent).
  *
  * ── `--dims` was RENAMED `--dims-c` in Phase 2 (design 2026-07-31 §3) ────────
  * It used to carry the memory's FINAL salience signature. It now carries the
@@ -249,6 +250,13 @@ export interface AdjudicateParsed {
   /** Raw adjudicated-vector JSON string (validated), mirroring RememberParsed.dims. */
   dims: string
 }
+export interface EmbeddingsParsed {
+  verb: "embeddings"
+  /** Explicit row ids to dump; empty means "every row". */
+  ids: number[]
+  /** Row cap, or null for UNCAPPED — see `parseEmbeddingsArgs` for why null is the default. */
+  n: number | null
+}
 
 export type ParsedCommand =
   | RememberParsed
@@ -259,6 +267,7 @@ export type ParsedCommand =
   | PromoteParsed
   | PendingParsed
   | AdjudicateParsed
+  | EmbeddingsParsed
 
 export type ParseResult<T> = T | { error: string }
 
@@ -351,6 +360,47 @@ export function parseAdjudicateArgs(argv: ReadonlyArray<string>): ParseResult<Ad
 }
 
 /**
+ * Parse `embeddings [--ids 1,2,3] [-n N]` — the OFFLINE embedding dump.
+ *
+ * Two deliberate departures from the other row-listing verbs:
+ *
+ *  - `-n` defaults to NULL (uncapped), not to a number. Every other verb feeds
+ *    something on a live path where an unbounded page is a hazard; this one
+ *    exists to dump a whole corpus once, for analysis, and a silent default cap
+ *    would truncate a study's dataset while looking like it succeeded. It is not
+ *    reachable from any tick.
+ *  - `--ids` is validated element by element. The ids become SQL LITERALS
+ *    (`buildEmbeddingsSql`; vec0's read path has no bind seam), so a
+ *    non-integer element is rejected here rather than interpolated.
+ *
+ * Like `recent`, this has no host-side ENCODER: nothing in core shells it. It is
+ * invoked by hand for a study. An encoder is added if/when a host caller appears.
+ */
+export function parseEmbeddingsArgs(argv: ReadonlyArray<string>): ParseResult<EmbeddingsParsed> {
+  const afterIds = takeFlag([...argv.slice(1)], "--ids")
+  const afterN = takeFlag(afterIds.rest, "-n")
+  const ids: number[] = []
+  if (afterIds.value !== undefined) {
+    const raw = afterIds.value
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    if (raw.length === 0) return { error: `--ids needs at least one id (got "${afterIds.value}")` }
+    for (const s of raw) {
+      const id = Number(s)
+      if (!Number.isInteger(id) || id <= 0) {
+        return { error: `--ids entries must be positive integers (got "${s}")` }
+      }
+      ids.push(id)
+    }
+  }
+  if (afterN.value === undefined) return { verb: "embeddings", ids, n: null }
+  const n = parseIntFlag(afterN.value, "-n", 0)
+  if ("error" in n) return n
+  return { verb: "embeddings", ids, n: n.n }
+}
+
+/**
  * Dispatch a full CLI argv to its typed command. The container entrypoint calls
  * this; unknown/empty verbs and malformed value flags surface `{ error }`.
  */
@@ -372,6 +422,8 @@ export function parseCommand(argv: ReadonlyArray<string>): ParseResult<ParsedCom
       return parsePendingArgs(argv)
     case "adjudicate":
       return parseAdjudicateArgs(argv)
+    case "embeddings":
+      return parseEmbeddingsArgs(argv)
     default:
       return { error: `unknown verb "${argv[0] ?? ""}". ${MEMORY_USAGE}` }
   }

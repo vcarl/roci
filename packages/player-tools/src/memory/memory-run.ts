@@ -21,11 +21,20 @@ import {
   buildRecentSql,
   buildPendingSql,
   buildAdjudicateSql,
+  buildEmbeddingsSql,
   PROMOTE_MARK_KEY,
   STAGE_BASE,
 } from "./memory-sql.js"
-import { formatResults, formatPending, splitTags, type MemoryRow } from "./memory-format.js"
+import {
+  formatResults,
+  formatPending,
+  formatEmbeddings,
+  splitTags,
+  type EmbeddingRow,
+  type MemoryRow,
+} from "./memory-format.js"
 import { classify } from "./memory-provenance.js"
+import { computeLineage, lineageBindValues } from "./memory-lineage.js"
 import { parseCommand } from "./command-codec.js"
 import {
   buildAxisSpecs,
@@ -251,6 +260,10 @@ export async function runMemory(argv: ReadonlyArray<string>, deps: MemoryDeps): 
       const specs = resolveAxisSpecs(deps)
       const gloss = await loadGlossVectors(deps, specs)
       const scored = scoreRow(specs, gloss, vec, cmd.dims)
+      // LINEAGE runs HERE — after the embedding exists and BEFORE the insert, so
+      // the neighbour set is exactly "the memories that already existed". It
+      // never throws; a failed lookup stores `unknown` and the write proceeds.
+      const lineage = computeLineage(db, vec, err)
       const info = db
         .prepare(buildInsertSql())
         .run(
@@ -263,6 +276,7 @@ export async function runMemory(argv: ReadonlyArray<string>, deps: MemoryDeps): 
           scored.dimsA,
           scored.dimsC,
           STAGE_BASE,
+          ...lineageBindValues(lineage),
         )
       const id = Number(info.lastInsertRowid)
       db.prepare(buildVecInsertSql()).run(id, JSON.stringify(vec))
@@ -323,6 +337,12 @@ export async function runMemory(argv: ReadonlyArray<string>, deps: MemoryDeps): 
         const vec = await embed(text)
         const prov = classify("promotion")
         const scored = scoreRow(specs, gloss, vec, null)
+        // Per entry, INSIDE the loop and before each insert: within one promote
+        // batch an earlier entry IS a prior for a later one, and a diary tail is
+        // exactly where consecutive entries restate each other. Hoisting this
+        // out of the loop would make every entry in a batch blind to its
+        // siblings — the restatements lineage most needs to catch.
+        const lineage = computeLineage(db, vec, err)
         const info = db
           .prepare(buildInsertSql())
           .run(
@@ -335,6 +355,7 @@ export async function runMemory(argv: ReadonlyArray<string>, deps: MemoryDeps): 
             scored.dimsA,
             null,
             STAGE_BASE,
+            ...lineageBindValues(lineage),
           )
         db.prepare(buildVecInsertSql()).run(Number(info.lastInsertRowid), JSON.stringify(vec))
         n++
@@ -355,6 +376,17 @@ export async function runMemory(argv: ReadonlyArray<string>, deps: MemoryDeps): 
       // base. Only `dims` and `dims_stage` move; `dims_a`/`dims_c` are kept so an
       // adjudication stays auditable, and the log of record is never touched.
       db.prepare(buildAdjudicateSql()).run(cmd.dims, cmd.id)
+      return 0
+    }
+
+    case "embeddings": {
+      // Offline embedding readback. Read-only, no embed call, and — the point of
+      // it being its own verb — never reached from a tick: the 384 floats per row
+      // stay off the recall wire entirely (see buildEmbeddingsSql's header).
+      const rows = db
+        .query(buildEmbeddingsSql({ ids: cmd.ids, n: cmd.n ?? undefined }))
+        .all() as unknown as EmbeddingRow[]
+      out(formatEmbeddings(rows))
       return 0
     }
   }

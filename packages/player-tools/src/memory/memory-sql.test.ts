@@ -55,11 +55,12 @@ describe("buildSchemaSql — provenance column", () => {
 
 describe("buildInsertSql — provenance column", () => {
   it("inserts provenance in the fixed column order", () => {
-    // Phase 2 extended the 6-column form to 9 (dims_a, dims_c, dims_stage); see
-    // "phase 2 salience columns" below for the exact pinned string.
+    // Phase 2 extended the 6-column form to 9 (dims_a, dims_c, dims_stage) and
+    // lineage extended it to 13; see "phase 2 salience columns" below for the
+    // exact pinned string.
     const sql = buildInsertSql()
-    expect(sql).toContain("(ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage)")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    expect(sql).toContain("(ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage,")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
   })
 })
 
@@ -79,7 +80,7 @@ describe("buildInsertSql / buildVecInsertSql", () => {
     expect(sql).toContain("text")
     expect(sql).toContain("provenance")
     expect(sql).toContain("dims")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
   })
   it("inserts the vector row keyed by the same id", () => {
     const sql = buildVecInsertSql()
@@ -139,10 +140,18 @@ describe("buildSchemaSql — dims column", () => {
 })
 
 describe("buildInsertSql — dims column", () => {
-  it("inserts nine columns in a fixed order with nine binds (Phase 2: + dims_a, dims_c, dims_stage)", () => {
+  it("inserts thirteen columns in a fixed order with thirteen binds (Phase 2 salience + lineage)", () => {
     const sql = buildInsertSql()
-    expect(sql).toContain("(ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage)")
-    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    expect(sql).toContain(
+      "(ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage, " +
+        "lineage_state, lineage_prior_id, lineage_distance, lineage_similarity)",
+    )
+    expect(sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    // The count is the thing that silently rots: a column added to the list and
+    // not to the VALUES stores every later value one slot to the left.
+    const cols = sql.slice(sql.indexOf("(") + 1, sql.indexOf(")")).split(",").length
+    const binds = (sql.match(/\?/g) ?? []).length
+    expect(cols).toBe(binds)
   })
 })
 
@@ -163,10 +172,11 @@ describe("phase 2 salience columns", () => {
     expect(sql).toContain("dims_stage TEXT NOT NULL DEFAULT 'legacy'")
   })
 
-  it("the insert binds all nine columns in a fixed order", () => {
+  it("the insert binds every column in a fixed order", () => {
     expect(buildInsertSql()).toBe(
-      "INSERT INTO memories (ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO memories (ts, source, tags, text, provenance, dims, dims_a, dims_c, dims_stage, " +
+        "lineage_state, lineage_prior_id, lineage_distance, lineage_similarity) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
   })
 
@@ -181,12 +191,16 @@ describe("phase 2 salience columns", () => {
     expect(sql).not.toContain("AS stage")
   })
 
-  it("recent selects the same field set as knn, minus the distance", () => {
+  it("recent selects the same field set as knn, minus the vec0 distance", () => {
     const sql = buildRecentSql(10)
     expect(sql).toContain("dims_stage")
     expect(sql).not.toContain("AS stage")
     expect(sql).toContain("LIMIT 10")
-    expect(sql).not.toContain("distance")
+    // `recent` does not embed, so there is no vec0 distance to select. It DOES
+    // carry `lineage_distance`, which is a stored column, not the query metric.
+    expect(sql).not.toContain("v.distance")
+    expect(sql).not.toContain(" distance")
+    expect(sql).toContain("lineage_distance")
   })
 
   it("pending selects only base-stage rows with both producer vectors, oldest first", () => {

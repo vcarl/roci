@@ -319,6 +319,34 @@ describe("adjudicate", () => {
   })
 })
 
+describe("embeddings — the offline readback verb", () => {
+  it("defaults to UNCAPPED and to every row", () => {
+    // Deliberately unlike `recent`/`pending`, which cap. This verb dumps a whole
+    // corpus for one study; a silent default cap would truncate the dataset
+    // while looking like it succeeded. It is not reachable from any tick.
+    expect(parseCommand(["embeddings"])).toEqual({ verb: "embeddings", ids: [], n: null })
+  })
+
+  it("parses an explicit id set and cap", () => {
+    expect(parseCommand(["embeddings", "--ids", "3, 1 ,3", "-n", "2"])).toEqual({
+      verb: "embeddings",
+      ids: [3, 1, 3],
+      n: 2,
+    })
+  })
+
+  it("rejects a non-integer id, because ids become SQL LITERALS", () => {
+    for (const bad of ["1,x", "0", "-3", "1.5", "1,2; DROP TABLE memories", ""]) {
+      const r = parseCommand(["embeddings", "--ids", bad])
+      expect("error" in r, bad).toBe(true)
+    }
+  })
+
+  it("is absent from MEMORY_USAGE — it is a host/offline verb, not an agent surface", () => {
+    expect(MEMORY_USAGE).not.toContain("embeddings")
+  })
+})
+
 describe("parseCommand dispatch", () => {
   it("routes both new verbs", () => {
     expect(parseCommand(["pending", "-n", "5"])).toEqual({ verb: "pending", n: 5 })
