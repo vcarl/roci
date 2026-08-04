@@ -127,7 +127,6 @@ const BASE_STATE: GameState = {
     credits: 0,
     current_system: "",
     current_poi: "",
-    current_ship_id: "",
     home_base: "",
     docked_at_base: null,
     faction_id: null,

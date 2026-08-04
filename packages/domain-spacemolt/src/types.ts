@@ -9,7 +9,6 @@ export interface PlayerState {
 	credits: number;
 	current_system: string;
 	current_poi: string;
-	current_ship_id: string;
 	home_base: string;
 	docked_at_base: string | null;
 	faction_id: string | null;
@@ -27,7 +26,6 @@ export interface PlayerState {
 
 export interface ShipState {
 	id: string;
-	owner_id?: string;
 	class_id: string;
 	name: string;
 	hull: number;
@@ -51,7 +49,6 @@ export interface ShipState {
 	damage_penalty?: number;
 	speed_penalty?: number;
 	disruption_ticks_remaining?: number;
-	active_buffs?: Array<Record<string, unknown>>;
 	modules: string[];
 	cargo: CargoItem[];
 }
@@ -67,7 +64,6 @@ export interface PoiState {
 	type: string;
 	name: string;
 	description: string;
-	hidden?: boolean;
 	position: { x: number; y: number };
 	resources: PoiResource[];
 	base_id: string | null;
@@ -78,26 +74,11 @@ export interface PoiResource {
 	name?: string;
 	richness: string;
 	remaining: number;
-	remaining_display?: string;
 }
 
 export interface SystemConnection {
 	system_id: string;
 	name: string;
-	distance?: number;
-}
-
-export interface SystemPoi {
-	id: string;
-	name: string;
-	type: string;
-	description?: string;
-	base_id: string | null;
-	has_base?: boolean;
-	base_name?: string;
-	online?: number;
-	position?: { x: number; y: number };
-	resources?: PoiResource[];
 }
 
 export interface SystemState {
@@ -108,8 +89,6 @@ export interface SystemState {
 	police_level: number;
 	security_status?: string;
 	connections: SystemConnection[];
-	pois: SystemPoi[];
-	position?: { x: number; y: number };
 }
 
 export interface NearbyPlayer {

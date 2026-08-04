@@ -67,11 +67,6 @@ const ensureContainer = (containerName: string, rd: ResolvedDomain) =>
       catch: (e) => new DockerError("Failed to start container", e),
     })
 
-    // Run domain-specific container setup
-    if (rd.config.containerSetup) {
-      rd.config.containerSetup(containerId)
-    }
-
     yield* logToConsole("orchestrator", "main", `Container ${containerName} created and started`)
 
     return containerId

@@ -27,13 +27,11 @@
     "@effect/cli": "^0.73.2",
     "@effect/platform": "^0.94.5",
     "@effect/platform-node": "^0.104.1",
-    "effect": "^3.19.19",
-    "ws": "^8.19.0"
+    "effect": "^3.19.19"
   },
   "devDependencies": {
     "@effect/language-service": "^0.77.0",
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   }

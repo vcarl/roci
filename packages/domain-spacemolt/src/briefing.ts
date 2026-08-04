@@ -141,34 +141,15 @@ function formatCargoItem(item: CargoItem): string {
 }
 
 function systemPoiSection(system: SystemState): string {
-	// Defensive: SystemState declares pois/connections as non-optional arrays,
-	// but the in-SPACE get_state snapshot can leave them unpopulated while
-	// `system` itself is still truthy. Never assume they're iterable.
-	const pois = Array.isArray(system.pois) ? system.pois : [];
+	// Defensive: SystemState declares connections as a non-optional array, but
+	// the in-SPACE get_state snapshot can leave it unpopulated while `system`
+	// itself is still truthy. Never assume it's iterable.
 	const conns = Array.isArray(system.connections) ? system.connections : [];
 
-	const lines: string[] = [];
-	lines.push("System locations:");
-	for (const poi of pois) {
-		const typeName = poi.type.replace(/_/g, " ");
-		const dockable = poi.base_id ? " (dockable)" : "";
-		let detail = `- ${poi.name} [${poi.id}] — ${typeName}${dockable}`;
-		if (poi.resources && poi.resources.length > 0) {
-			const res = poi.resources
-				.map((r) => `${r.resource_id.replace(/_/g, " ")} ${r.richness}`)
-				.join(", ");
-			detail += ` — resources: ${res}`;
-		}
-		lines.push(detail);
-	}
 	const connections = conns.map((conn) => {
 		const label = conn.name ?? conn.system_id;
-		const dist = conn.distance ? ` (${conn.distance} GU)` : "";
-		return `${label} [${conn.system_id}]${dist}`;
+		return `${label} [${conn.system_id}]`;
 	});
-	lines.push(
-		`Connected systems: ${connections.join(", ") || "none"}. Use find_route to plan multi-jump routes.`,
-	);
-	return lines.join("\n");
+	return `Connected systems: ${connections.join(", ") || "none"}. Use find_route to plan multi-jump routes.`;
 }
 

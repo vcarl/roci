@@ -110,7 +110,7 @@ describe("situation — structured location metrics (D3 ground truth)", () => {
   it("undocked in space: system/location from state, docked=false, no dockedAt", () => {
     const summary = spaceMoltSituationClassifier.summarize(
       makeState({
-        system: { id: "sysA", name: "Horizon", description: "", empire: "Federation", police_level: 3, connections: [], pois: [] },
+        system: { id: "sysA", name: "Horizon", description: "", empire: "Federation", police_level: 3, connections: [] },
         poi: { id: "poiX", system_id: "sysA", type: "asteroid_belt", name: "Rubble Field", description: "", position: { x: 0, y: 0 }, resources: [], base_id: null },
       }),
     )
@@ -140,7 +140,7 @@ describe("situation — structured location metrics (D3 ground truth)", () => {
           cargo: [],
           modules: [],
         } as unknown as GameState["ship"],
-        system: { id: "sysA", name: "First Step", description: "", empire: "Federation", police_level: 3, connections: [], pois: [] },
+        system: { id: "sysA", name: "First Step", description: "", empire: "Federation", police_level: 3, connections: [] },
         poi: { id: "poiA", system_id: "sysA", type: "station", name: "First Step Memorial Station", description: "", position: { x: 0, y: 0 }, resources: [], base_id: "baseA" },
       }),
     )

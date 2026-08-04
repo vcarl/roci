@@ -60,8 +60,6 @@ export interface DomainConfig {
 	readonly phaseRegistry: PhaseRegistry;
 	/** Container volume mounts for the domain. */
 	readonly containerMounts: ContainerMount[];
-	/** Optional setup to run after container starts (e.g. symlinks). */
-	readonly containerSetup?: (containerId: string) => void;
 	/** Docker image name for the domain. */
 	readonly imageName: string;
 	/** Domain-specific Effect service layer (e.g. GameSocket for SpaceMolt, GitHubClient for GitHub). */
@@ -70,8 +68,6 @@ export interface DomainConfig {
 	readonly dockerfilePath?: string;
 	/** Docker build context directory, relative to project root. */
 	readonly dockerContext?: string;
-	/** Additional domains for firewall allowlist. */
-	readonly firewallExtraDomains?: string[];
 	/** Container --add-dir paths for claude subagent. */
 	readonly containerAddDirs?: string[];
 	/** Per-character setup procedure — creates domain-specific config files interactively. */

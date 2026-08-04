@@ -203,7 +203,6 @@ export function libStateToSnapshot(cache: Readonly<LibGameState>): FullStateSnap
 						connections: (loc.connections ?? []).map(
 							(id): SystemConnection => ({ system_id: id, name: id }),
 						),
-						pois: [],
 					} satisfies SystemState)
 				: undefined;
 		poi =
